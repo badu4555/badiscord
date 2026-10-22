@@ -1,6 +1,6 @@
 // BADISCORD PC - Lógica de Servidores, Voz, Mudo/Fone e Transmissão 1080p
 
-const API_URL = 'http://localhost:3000/api/token';
+const API_URL = 'https://badiscord.onrender.com/api/token';
 const LIVEKIT_URL = 'wss://your-project.livekit.cloud';
 
 // Estado da Aplicação
@@ -3397,7 +3397,7 @@ async function measurePing() {
   let latency = 0;
 
   try {
-    const res = await fetch('http://localhost:3000/health', {
+    const res = await fetch('https://badiscord.onrender.com/health', {
       method: 'GET',
       cache: 'no-store'
     });
