@@ -19,7 +19,7 @@ npm install
 
 ### Passo 2: Iniciar a aplicação
 ```powershell
-npm start
+npm run desktop
 ```
 *O aplicativo abrirá diretamente em uma janela nativa no seu Windows!*
 

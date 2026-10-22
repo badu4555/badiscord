@@ -5,7 +5,8 @@
   "description": "Aplicativo Desktop de Voz e Streaming 1080p inspirado no Discord",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "node server/server.js",
+    "desktop": "electron .",
     "server": "node server/server.js",
     "dev": "concurrently \"node server/server.js\" \"electron .\"",
     "build:exe": "electron-builder --win dir",
