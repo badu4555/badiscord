@@ -1,0 +1,36 @@
+{
+  "name": "badiscord",
+  "productName": "BADISCORD",
+  "version": "1.0.0",
+  "description": "Aplicativo Desktop de Voz e Streaming 1080p inspirado no Discord",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "server": "node server/server.js",
+    "dev": "concurrently \"node server/server.js\" \"electron .\"",
+    "build:exe": "electron-builder --win dir",
+    "build:zip": "electron-builder --win zip"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "livekit-client": "^2.6.0",
+    "livekit-server-sdk": "^2.9.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.badiscord.app",
+    "productName": "BADISCORD",
+    "win": {
+      "target": [
+        "dir",
+        "zip"
+      ],
+      "signAndEditExecutable": false
+    }
+  }
+}

@@ -1,0 +1,2005 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BADISCORD</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- TELA DE AUTENTICAÇÃO: LOGIN, REGISTRO E RECUPERAÇÃO COM 2FA -->
+  <div class="auth-overlay" id="authOverlay" style="display: none;">
+    <!-- Fundo estilizado do Discord com partículas sutis -->
+    <div class="auth-bg-art"></div>
+
+    <div class="auth-modal-card">
+      <!-- 1. ABA DE LOGIN -->
+      <div class="auth-view-pane" id="viewAuthLogin">
+        <div class="auth-header-wrap">
+          <h2 class="auth-title">Boas-vindas de volta!</h2>
+          <p class="auth-subtitle">Estamos muito animados em ver você novamente!</p>
+        </div>
+
+        <form class="auth-form" id="formLogin" onsubmit="return false;">
+          <div class="auth-field-group">
+            <label class="auth-field-label">E-MAIL OU NÚMERO DE TELEFONE <span class="auth-required">*</span></label>
+            <input type="text" class="auth-input" id="loginEmail" placeholder="seu-email@exemplo.com" required>
+          </div>
+
+          <div class="auth-field-group">
+            <label class="auth-field-label">SENHA <span class="auth-required">*</span></label>
+            <input type="password" class="auth-input" id="loginPassword" placeholder="••••••••" required>
+            <span class="auth-link-forgot" id="btnGoToForgot">Esqueceu sua senha?</span>
+          </div>
+
+          <button type="submit" class="auth-submit-btn" id="btnLoginSubmit">Entrar</button>
+        </form>
+
+        <div class="auth-footer-prompt">
+          <span>Precisando de uma conta?</span>
+          <span class="auth-link-primary" id="btnGoToRegister">Registre-se</span>
+        </div>
+      </div>
+
+      <!-- 2. ABA DE REGISTRO / CRIAR CONTA -->
+      <div class="auth-view-pane" id="viewAuthRegister" style="display: none;">
+        <div class="auth-header-wrap">
+          <h2 class="auth-title">Criar uma conta</h2>
+        </div>
+
+        <form class="auth-form" id="formRegister" onsubmit="return false;">
+          <div class="auth-field-group">
+            <label class="auth-field-label">E-MAIL <span class="auth-required">*</span></label>
+            <input type="email" class="auth-input" id="regEmail" placeholder="seu-email@exemplo.com" required>
+          </div>
+
+          <div class="auth-field-group">
+            <label class="auth-field-label">NOME DE EXIBIÇÃO</label>
+            <input type="text" class="auth-input" id="regDisplayName" placeholder="Como as pessoas devem te chamar?">
+          </div>
+
+          <div class="auth-field-group">
+            <label class="auth-field-label">NOME DE USUÁRIO <span class="auth-required">*</span></label>
+            <input type="text" class="auth-input" id="regUsername" placeholder="exemplo_user" required>
+          </div>
+
+          <div class="auth-field-group">
+            <label class="auth-field-label">SENHA <span class="auth-required">*</span></label>
+            <input type="password" class="auth-input" id="regPassword" placeholder="Mínimo 6 caracteres" required>
+          </div>
+
+          <button type="submit" class="auth-submit-btn" id="btnRegisterSubmit">Continuar</button>
+        </form>
+
+        <div class="auth-footer-prompt">
+          <span class="auth-link-primary" id="btnGoToLoginFromReg">Já tem uma conta?</span>
+        </div>
+      </div>
+
+      <!-- 3. ABA DE RECUPERAÇÃO DE CONTA (DIGITAR E-MAIL) -->
+      <div class="auth-view-pane" id="viewAuthForgot" style="display: none;">
+        <div class="auth-header-wrap">
+          <h2 class="auth-title">Recuperar sua conta</h2>
+          <p class="auth-subtitle">Informe seu e-mail para enviarmos o código de autenticação de dois fatores (2FA).</p>
+        </div>
+
+        <form class="auth-form" id="formForgot" onsubmit="return false;">
+          <div class="auth-field-group">
+            <label class="auth-field-label">E-MAIL <span class="auth-required">*</span></label>
+            <input type="email" class="auth-input" id="forgotEmail" placeholder="seu-email@exemplo.com" required>
+          </div>
+
+          <button type="submit" class="auth-submit-btn" id="btnSend2FACode">Enviar código 2FA</button>
+        </form>
+
+        <div class="auth-footer-prompt">
+          <span class="auth-link-primary" id="btnBackToLoginFromForgot">← Voltar para o Login</span>
+        </div>
+      </div>
+
+      <!-- 4. ABA DE VALIDAÇÃO DO CÓDIGO 2FA E NOVA SENHA -->
+      <div class="auth-view-pane" id="viewAuth2FA" style="display: none;">
+        <div class="auth-header-wrap">
+          <div class="auth-2fa-shield">🛡️</div>
+          <h2 class="auth-title">Verificação de 2 Fatores</h2>
+          <p class="auth-subtitle">Digite o código de 6 dígitos gerado e sua nova senha.</p>
+        </div>
+
+        <!-- Alerta com código simulado gerado -->
+        <div class="auth-2fa-notice" id="auth2FANotice">
+          <span>Seu código 2FA de recuperação é: <strong id="authGenerated2FACode">123456</strong></span>
+        </div>
+
+        <form class="auth-form" id="form2FA" onsubmit="return false;">
+          <div class="auth-field-group">
+            <label class="auth-field-label">CÓDIGO DE AUTENTICAÇÃO (6 DÍGITOS) <span class="auth-required">*</span></label>
+            <input type="text" class="auth-input auth-code-input" id="input2FACode" maxlength="6" placeholder="000000" required>
+          </div>
+
+          <div class="auth-field-group">
+            <label class="auth-field-label">NOVA SENHA <span class="auth-required">*</span></label>
+            <input type="password" class="auth-input" id="inputNewPassword2FA" placeholder="Nova senha segura" required>
+          </div>
+
+          <button type="submit" class="auth-submit-btn" id="btnConfirm2FAReset">Redefinir Senha e Entrar</button>
+        </form>
+
+        <div class="auth-footer-prompt">
+          <span class="auth-link-primary" id="btnBackToLoginFrom2FA">Cancelar</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-layout">
+    <!-- Barra de Servidores (Extrema Esquerda) -->
+    <nav class="guild-sidebar">
+      <div class="guild-icon dm-icon" id="btnHomeDM" title="Mensagens Diretas / Início">
+        <svg width="26" height="20" viewBox="0 0 28 20" fill="currentColor">
+          <path d="M23.0212 1.67671C21.3107 0.879656 19.5079 0.318797 17.6584 0C17.4062 0.461742 17.1149 1.06995 16.9108 1.56417C14.9392 1.26554 12.9814 1.26554 11.0371 1.56417C10.833 1.06995 10.5303 0.461742 10.2781 0C8.42858 0.318797 6.62582 0.880948 4.91404 1.6793C1.48002 6.89297 0.548906 11.9682 1.01428 16.9691C3.29215 18.6811 5.49502 19.7186 7.6627 20C8.20455 19.2483 8.68652 18.4475 9.09849 17.6042C8.30756 17.3006 7.55018 16.9092 6.83758 16.4429C7.03061 16.2995 7.21855 16.1497 7.40058 15.9961C11.6841 17.9944 16.3359 17.9944 20.5735 15.9961C20.7568 16.1497 20.9434 16.2995 21.1378 16.4429C20.4225 16.9118 19.6625 17.3032 18.869 17.6068C19.2836 18.4488 19.7682 19.2509 20.3074 20C22.4777 19.7199 24.6832 18.6824 26.961 16.9691C27.5097 11.1969 26.0125 6.16668 23.0212 1.67671ZM9.68041 13.9147C8.37568 13.9147 7.30455 12.6961 7.30455 11.2064C7.30455 9.71671 8.34969 8.49808 9.68041 8.49808C11.0238 8.49808 12.0835 9.72834 12.0562 11.2064C12.0562 12.6961 11.0121 13.9147 9.68041 13.9147ZM18.3146 13.9147C17.0099 13.9147 15.9388 12.6961 15.9388 11.2064C15.9388 9.71671 16.9839 8.49808 18.3146 8.49808C19.658 8.49808 20.7177 9.72834 20.6904 11.2064C20.6904 12.6961 19.658 13.9147 18.3146 13.9147Z"/>
+        </svg>
+      </div>
+      <div class="guild-separator"></div>
+      <div id="guildList" class="guild-list"></div>
+      <div class="guild-separator"></div>
+      <div class="guild-icon add-guild" id="btnAddGuild" title="Criar um Servidor">+</div>
+    </nav>
+
+    <!-- Barra Lateral de Canais / DMs -->
+    <aside class="channels-sidebar">
+      <!-- 1. HEADER DO SERVIDOR (com Menu Dropdown - Foto 1) -->
+      <div class="server-header-wrapper" id="serverHeaderWrapper">
+        <header class="guild-header" id="guildHeader">
+          <div class="guild-header-left">
+            <span class="guild-verified-badge" id="guildBadge">🍺</span>
+            <h2 id="guildTitle">Bar do BH</h2>
+          </div>
+          <span class="dropdown-icon" id="guildDropdownIcon">▼</span>
+        </header>
+
+        <!-- Menu Suspenso do Servidor (Idêntico à Foto 1) -->
+        <div class="server-dropdown-menu" id="serverDropdownMenu" style="display: none;">
+          <div class="dropdown-item boost-item" id="menuItemBoost">
+            <span class="dropdown-item-icon">🚀</span>
+            <span class="dropdown-item-text">Impulso de servidor</span>
+            <span class="dropdown-badge-nitro">NÍVEL 3</span>
+          </div>
+          <div class="dropdown-divider"></div>
+          <div class="dropdown-item" id="menuItemInvite">
+            <span class="dropdown-item-icon">👥</span>
+            <span class="dropdown-item-text">Convidar para o servidor</span>
+          </div>
+          <div class="dropdown-item" id="menuItemCreateChannel">
+            <span class="dropdown-item-icon">➕</span>
+            <span class="dropdown-item-text">Criar Canal</span>
+          </div>
+          <div class="dropdown-item" id="menuItemApps">
+            <span class="dropdown-item-icon">🧩</span>
+            <span class="dropdown-item-text">Diretório de Apps</span>
+          </div>
+          <div class="dropdown-divider"></div>
+          <div class="dropdown-item" id="menuItemNotifications">
+            <span class="dropdown-item-icon">🔔</span>
+            <span class="dropdown-item-text">Config. de notificação</span>
+          </div>
+          <div class="dropdown-item" id="menuItemPrivacy">
+            <span class="dropdown-item-icon">🔒</span>
+            <span class="dropdown-item-text">Config. de privacidade</span>
+          </div>
+          <div class="dropdown-item" id="menuItemEditProfile">
+            <span class="dropdown-item-icon">✏️</span>
+            <span class="dropdown-item-text">Configurações do Servidor</span>
+          </div>
+          <div class="dropdown-divider"></div>
+          <div class="dropdown-item danger-item" id="menuItemLeave">
+            <span class="dropdown-item-icon">🚪</span>
+            <span class="dropdown-item-text">Sair do servidor</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. NAVEGAÇÃO DE DMs / AMIGOS (Quando no Início - Foto 2) -->
+      <div class="dm-nav-wrapper" id="dmNavWrapper" style="display: none;">
+        <div class="dm-search-bar-btn" id="btnFindConversation">
+          <span>Encontre ou comece uma conversa</span>
+        </div>
+        <div class="dm-menu-list">
+          <div class="dm-menu-item active" id="dmMenuFriends">
+            <span class="dm-menu-icon">👥</span>
+            <span>Amigos</span>
+            <span class="dm-badge" id="dmBadgeCount" style="display:none">0</span>
+          </div>
+          <div class="dm-menu-item" id="dmMenuRequests">
+            <span class="dm-menu-icon">💬</span>
+            <span>Solicitações de mensagens</span>
+            <span class="dm-badge" id="requestsBadgeCount" style="display:none">0</span>
+          </div>
+          <div class="dm-menu-item" id="dmMenuNitro">
+            <span class="dm-menu-icon">⚡</span>
+            <span>Nitro</span>
+          </div>
+          <div class="dm-menu-item" id="dmMenuShop">
+            <span class="dm-menu-icon">🛍️</span>
+            <span>Loja</span>
+          </div>
+          <div class="dm-menu-item" id="dmMenuQuests">
+            <span class="dm-menu-icon">🎯</span>
+            <span>Missões</span>
+          </div>
+        </div>
+
+        <div class="dm-header-row">
+          <span class="category-title">MENSAGENS DIRETAS</span>
+          <button class="add-channel-btn" id="btnAddDM" title="Criar DM">+</button>
+        </div>
+        <div class="dm-conversations-list" id="dmConversationsList"></div>
+      </div>
+
+      <!-- 3. ROLAGEM DE CANAIS DO SERVIDOR (Foto 1) -->
+      <div class="channels-scroll" id="channelsScroll">
+        <!-- SEÇÃO: CANAIS DE TEXTO -->
+        <div class="category-header">
+          <div class="category-toggle-title">
+            <span class="category-toggle">▼</span>
+            <span class="category-title">CANAIS DE TEXTO</span>
+          </div>
+          <button class="add-channel-btn" id="btnAddTextChannel" title="Criar Canal de Texto">+</button>
+        </div>
+        <div id="textChannelsContainer" class="channels-group"></div>
+
+        <!-- SEÇÃO: CANAIS DE VOZ -->
+        <div class="category-header">
+          <div class="category-toggle-title">
+            <span class="category-toggle">▼</span>
+            <span class="category-title">CANAIS DE VOZ</span>
+          </div>
+          <button class="add-channel-btn" id="btnAddVoiceChannel" title="Criar Canal de Voz">+</button>
+        </div>
+        <div id="voiceChannelsContainer" class="channels-group"></div>
+      </div>
+
+      <!-- 4. PAINEL DE ATIVIDADE DE JOGO DINÂMICO (Atualiza em tempo real com o jogo aberto) -->
+      <div class="game-activity-panel" id="gameActivityPanel">
+        <div class="game-activity-icon-box" id="gameActivityIconBox">🎮</div>
+        <div class="game-activity-info">
+          <span class="game-activity-title" id="gameActivityTitle">Detectando jogos...</span>
+          <span class="game-activity-status" id="gameActivityStatus">Não Compartilhando</span>
+        </div>
+        <button class="game-activity-share-btn" id="btnGameQuickStream" title="Transmitir Jogo em 1080p 60FPS">
+          🖥️
+        </button>
+      </div>
+
+      <!-- 5. PAINEL DE VOZ CONECTADA COM ATALHOS RÁPIDOS FUNCIONAIS (Idêntico à Imagem) -->
+      <div class="voice-connection-panel" id="voiceConnectionPanel" style="display: none;">
+        <div class="vc-top-row">
+          <div class="vc-left-wrap">
+            <div class="vc-signal-box" id="vcSignalBox" title="Status de Voz">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#23a55a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 13a10 10 0 0 1 14 0" />
+                <path d="M8.5 16.5a5 5 0 0 1 7 0" />
+                <path d="M2 9.5a15 15 0 0 1 20 0" />
+                <circle cx="12" cy="20" r="1.2" fill="#23a55a" />
+              </svg>
+            </div>
+            <div class="vc-info">
+              <span class="vc-status-title">Voz conectada</span>
+              <span class="vc-channel-text" id="vcChannelText">🔫 • VAVA / Bar do BH</span>
+            </div>
+          </div>
+          <div class="vc-actions-top">
+            <button class="vc-rtc-waves-btn" id="vcPingBadge">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M4 10a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0v-2a1 1 0 0 1 1-1zm5-4a1 1 0 0 1 1 1v10a1 1 0 1 1-2 0V7a1 1 0 0 1 1-1zm5 2a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0V9a1 1 0 0 1 1-1zm5 3a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0v-2a1 1 0 0 1 1-1z"/>
+              </svg>
+              <!-- Tooltip flutuante de ping estilo Discord no botão de ondas/latência -->
+              <div class="vc-ping-tooltip" id="vcPingTooltip">
+                <span id="vcPingTooltipText">-- ms</span>
+              </div>
+            </button>
+            <button class="vc-disconnect-btn" id="btnQuickDisconnect" title="Desconectar da Chamada">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 4a12.5 12.5 0 0 0-8.8 3.7c-.5.5-.5 1.3 0 1.8l2.2 2.2c.4.4 1.1.5 1.6.1L9 10.3c.4-.3.6-.8.6-1.3V6.2A10.5 10.5 0 0 1 12 6c.8 0 1.6.1 2.4.2v2.8c0 .5.2 1 .6 1.3l2 1.5c.5.4 1.2.3 1.6-.1l2.2-2.2c.5-.5.5-1.3 0-1.8A12.5 12.5 0 0 0 12 4z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- DOCK COM 4 ATALHOS RÁPIDOS ESTILIZADOS -->
+        <div class="voice-actions-dock">
+          <button class="dock-action-btn" id="dockBtnCam" title="Ativar / Desativar Câmera">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M4 5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H4zm14.5 3.5-3.5 2.6v1.8l3.5 2.6c.6.5 1.5 0 1.5-.8V9.3c0-.8-.9-1.3-1.5-.8z"/>
+            </svg>
+          </button>
+          <button class="dock-action-btn" id="dockBtnStream" title="Transmitir Tela ou Janela de Jogo">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3 4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h6v2H7a1 1 0 1 0 0 2h10a1 1 0 1 0 0-2h-2v-2h6a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H3zm9 3a5 5 0 0 1 5 5h-2a3 3 0 0 0-3-3v2l-3.5-3.5L12 5v2z"/>
+            </svg>
+          </button>
+          <button class="dock-action-btn" id="dockBtnActivities" title="Atividades / Mini-jogos">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M5.5 3.5a2 2 0 0 1 2.8 0l1.2 1.2a2 2 0 0 1 0 2.8L8.3 8.7a2 2 0 0 1-2.8 0L4.3 7.5a2 2 0 0 1 0-2.8l1.2-1.2zm10.5.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm-11 11a3 3 0 0 1 3-3h1a3 3 0 0 1 3 3v1a3 3 0 0 1-3 3h-1a3 3 0 0 1-3-3v-1zm11.5-.5 3 4.5a1 1 0 0 1-.8 1.5h-5.4a1 1 0 0 1-.8-1.5l3-4.5a1 1 0 0 1 1.6 0z"/>
+            </svg>
+          </button>
+          <button class="dock-action-btn" id="dockBtnSoundboard" title="Soundboard (Efeitos Sonoros)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12.8 3.2a1 1 0 0 0-1.1.2L6.4 8H3a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h3.4l5.3 4.6a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4.1a1 1 0 0 0-.6-.9zm4.7 4.3a1 1 0 0 0-1.4 1.4 4.5 4.5 0 0 1 0 6.2 1 1 0 0 0 1.4 1.4 6.5 6.5 0 0 0 0-9zm2.8-2.8a1 1 0 0 0-1.4 1.4 8.5 8.5 0 0 1 0 12 1 1 0 0 0 1.4 1.4 10.5 10.5 0 0 0 0-14.8z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 6. RODAPÉ DO USUÁRIO (Idêntico à Imagem) -->
+      <footer class="user-panel">
+        <div class="user-panel-left" id="userPanelLeft" title="Abrir menu de status e perfil">
+          <div class="user-avatar-wrapper">
+            <div class="user-avatar" id="myAvatar">B</div>
+            <span class="user-status-indicator invisible" id="myStatusIndicator"></span>
+          </div>
+          <div class="user-info">
+            <span class="username" id="myUsername">Bads</span>
+            <span class="user-status" id="myStatusText">Invisível</span>
+          </div>
+        </div>
+        <div class="user-actions">
+          <!-- Botão Microfone com Chevron -->
+          <div class="user-btn-combo" id="btnToggleMicCombo" title="Desativar/Ativar Microfone">
+            <button id="btnToggleMic" class="user-combo-main" title="Microfone">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21H9a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-2v-3.08A7 7 0 0 0 19 11h-2z"/>
+              </svg>
+            </button>
+            <button class="user-combo-chevron" id="btnMicChevron" title="Configurações de Microfone">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Botão Fone / Áudio com Chevron -->
+          <div class="user-btn-combo" id="btnToggleDeafCombo" title="Desativar/Ativar Áudio">
+            <button id="btnToggleDeaf" class="user-combo-main" title="Áudio">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 3a9 9 0 0 0-9 9v7a3 3 0 0 0 3 3h1a2 2 0 0 0 2-2v-5a2 2 0 0 0-2-2H5v-1a7 7 0 0 1 14 0v1h-2a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h1a3 3 0 0 0 3-3v-7a9 9 0 0 0-9-9z"/>
+              </svg>
+            </button>
+            <button class="user-combo-chevron" id="btnDeafChevron" title="Configurações de Saída de Áudio">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Botão Configurações -->
+          <button id="btnOpenSettings" class="user-solo-btn" title="Configurações do Usuário">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54A.48.48 0 0 0 14 2h-4c-.25 0-.46.18-.49.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.63 8.47c-.13.22-.08.49.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.49-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+            </svg>
+          </button>
+        </div>
+      </footer>
+    </aside>
+
+    <!-- Palco Principal (Voz, Chat de Texto e Amigos) -->
+    <main class="stage-container" id="mainStageContainer">
+      <!-- 1. VISÃO DE SALA DE VOZ (Chamada e Transmissão 1080p) -->
+      <div class="view-pane" id="voiceStageView">
+        <header class="stage-header">
+          <div class="header-left">
+            <span class="channel-header-icon">🔊</span>
+            <h3 id="currentChannelTitle">VAVA</h3>
+          </div>
+          <div class="header-right" id="connectionBadge" style="display: none;">
+            <span class="status-dot ping-good" id="pingDot"></span>
+            <span id="rtcStatusText">Voz Conectada</span>
+            <span class="ping-pill ping-good" id="stagePingPill">📶 -- ms</span>
+          </div>
+        </header>
+
+        <!-- Área de Vídeo / Streaming 1080p -->
+        <section class="stage-content" id="stageContent">
+          <div class="empty-state" id="emptyState">
+            <div class="empty-icon">🎧</div>
+            <h3>Você ainda não está em um canal</h3>
+            <p>Clique em qualquer canal de voz à esquerda para conversar e transmitir sua tela.</p>
+          </div>
+
+          <!-- Player de Live -->
+          <div class="stream-viewer-wrapper" id="streamViewerWrapper" style="display: none;">
+            <div class="stream-header-tag">
+              <span class="live-pill">AO VIVO</span>
+              <span class="res-pill">1080p 60FPS</span>
+              <span id="streamerName">Transmitindo Tela</span>
+              <span id="streamLoopbackBadge" class="stream-loopback-badge" style="display: none;">
+                🎧 Prévia Local Mudo (Anti-Eco)
+              </span>
+            </div>
+
+            <video id="remoteVideoPlayer" autoplay playsinline muted></video>
+
+            <!-- Indicador HUD de Volume (Ao rolar o scroll) -->
+            <div class="stream-volume-hud" id="streamVolumeHud">
+              <span class="stream-volume-hud-icon" id="streamVolumeHudIcon">🔊</span>
+              <span class="stream-volume-hud-val" id="streamVolumeHudVal">100%</span>
+            </div>
+
+            <!-- Barra Flutuante de Controles da Live (Estilo Discord / Twitch) -->
+            <div class="stream-player-controls" id="streamPlayerControls">
+              <div class="stream-controls-left">
+                <button class="stream-ctrl-btn" id="btnStreamAudioMute" title="Silenciar / Ativar Som da Live">
+                  <span id="streamMuteIcon">🔊</span>
+                </button>
+                <div class="stream-volume-container">
+                  <input type="range" id="streamVolumeSlider" min="0" max="100" value="100" class="stream-vol-slider" title="Ajustar Volume da Live (Ou use a rolagem do mouse)">
+                  <span id="streamVolumePercent" class="stream-vol-percent">100%</span>
+                </div>
+              </div>
+
+              <div class="stream-controls-right">
+                <button class="stream-ctrl-btn stream-ctrl-subtle" id="btnToggleLoopbackAudio" title="Ativar/Desativar retorno de áudio da sua própria prévia local">
+                  <span id="loopbackBtnIcon">🔇</span> Retorno Local
+                </button>
+                <button class="stream-ctrl-btn" id="btnStreamFullscreen" title="Tela Cheia">
+                  ⛶
+                </button>
+                <button class="stream-ctrl-btn stream-ctrl-stop" id="btnStopStreamDirect" title="Encerrar Transmissão">
+                  ⏹️ Parar Live
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Grid de Participantes de Voz -->
+          <div class="participants-grid" id="participantsGrid" style="display: none;"></div>
+        </section>
+
+        <!-- Barra Flutuante de Controles da Chamada (Estilo Discord - Foto 1) -->
+        <div class="voice-floating-bar" id="voiceFloatingBar" style="display: none;">
+          <button id="btnStageMic" class="dock-circle-btn" title="Microfone (Ativar / Mutar)">
+            <span id="stageMicIcon">🎙️</span>
+          </button>
+          <button id="btnShareCam" class="dock-circle-btn" title="Câmera">
+            <span>📹</span>
+          </button>
+          <button id="btnShareScreen" class="dock-btn live-btn" title="Transmitir Tela ou Janela de Jogo em 1080p">
+            <span>🖥️</span> Transmitir Tela (1080p)
+          </button>
+          <button id="btnStageActivities" class="dock-circle-btn" title="Atividades / Mini-jogos">
+            <span>🚀</span>
+          </button>
+          <button id="btnStageSoundboard" class="dock-circle-btn" title="Painel de Efeitos Sonoros">
+            <span>🔊</span>
+          </button>
+          <button id="btnDisconnectVoice" class="dock-circle-btn disconnect-circle-btn" title="Desconectar da Chamada">
+            <svg class="disconnect-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6.6 10.8c1.5 1.4 3.2 2.5 5.1 3.3l1.7-1.7c.2-.2.5-.3.8-.2 1 .3 2 .4 3 .4.5 0 .8.4.8.8v2.7c0 .5-.3.8-.8.8C10.5 16.9 7.1 13.5 7.1 9.3c0-.5.4-.8.8-.8h2.7c.5 0 .8.3.8.8 0 1 .1 2 .4 3 .1.3 0 .6-.2.8l-1.7 1.7c.8 1.9 1.9 3.6 3.3 5.1l-1.6 1.6C8.8 18.9 5.1 15.2 2.5 10.4l1.6-1.6 2.5 2z" transform="rotate(-45 12 12)"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 2. VISÃO DE CANAL DE CHAT DE TEXTO (Foto 1) -->
+      <div class="view-pane" id="textChatView" style="display: none;">
+        <header class="chat-header">
+          <div class="chat-header-left">
+            <span class="chat-header-hash">#</span>
+            <h3 class="chat-channel-title" id="chatChannelTitle">regras-da-casa</h3>
+            <span class="chat-header-divider"></span>
+            <span class="chat-channel-topic" id="chatChannelTopic">Regras da casa e avisos importantes</span>
+          </div>
+          <div class="chat-header-actions">
+            <button class="chat-header-btn" id="btnChatNotifications" title="Notificações do Canal">🔔</button>
+            <button class="chat-header-btn" id="btnChatPinned" title="Mensagens Fixadas">📌</button>
+            <button class="chat-header-btn" id="btnToggleMembers" title="Alternar Lista de Membros">👥</button>
+            <div class="chat-search-box">
+              <input type="text" placeholder="Buscar no canal..." class="chat-search-input">
+              <span>🔍</span>
+            </div>
+          </div>
+        </header>
+
+        <!-- Faixa de Conexão de Voz Ativa (Permite voltar para a sala de voz com 1 clique) -->
+        <div class="voice-connected-strip" id="voiceConnectedStrip" style="display: none;">
+          <div class="strip-left">
+            <span class="strip-dot"></span>
+            <span>Você está conectado na sala de voz: <strong id="stripChannelName">VAVA</strong></span>
+          </div>
+          <button class="strip-jump-btn" id="btnJumpToVoice">Abrir Sala de Voz 🔊</button>
+        </div>
+
+        <!-- Área de Rolagem de Mensagens do Chat -->
+        <div class="chat-messages-scroll" id="chatMessagesScroll">
+          <div class="chat-welcome-box" id="chatWelcomeBox">
+            <div class="chat-welcome-icon">#</div>
+            <h2 id="chatWelcomeTitle">Bem-vindo a #regras-da-casa!</h2>
+            <p id="chatWelcomeDesc">Este é o início do canal #regras-da-casa.</p>
+          </div>
+          <div class="messages-list" id="messagesList"></div>
+        </div>
+
+        <!-- Barra Inferior de Envio de Mensagem com Seletor de Emojis -->
+        <div class="chat-input-container">
+          <!-- Popover Seletor de Emojis (Estilo Discord) -->
+          <div class="emoji-picker-popup" id="emojiPickerPopup" style="display: none;">
+            <div class="emoji-picker-header">
+              <input type="text" id="emojiSearchInput" class="emoji-search-input" placeholder="🔍 Buscar emoji...">
+            </div>
+            <div class="emoji-picker-categories" id="emojiPickerCategories">
+              <button type="button" class="emoji-cat-btn active" data-category="all">Todos</button>
+              <button type="button" class="emoji-cat-btn" data-category="faces">😀 Carinhas</button>
+              <button type="button" class="emoji-cat-btn" data-category="games">🎮 Games</button>
+              <button type="button" class="emoji-cat-btn" data-category="hands">👍 Gestos</button>
+              <button type="button" class="emoji-cat-btn" data-category="symbols">❤️ Símbolos</button>
+            </div>
+            <div class="emoji-picker-body" id="emojiPickerBody"></div>
+          </div>
+
+          <form class="chat-input-form" id="chatInputForm">
+            <button type="button" class="chat-attach-btn" title="Enviar Anexo">+</button>
+            <input type="text" id="chatInputText" class="chat-input-text" placeholder="Conversar em #regras-da-casa" autocomplete="off">
+            <button type="button" class="chat-emoji-btn" id="btnChatEmoji" title="Abrir Seletor de Emojis">😀</button>
+            <button type="submit" class="chat-send-btn" id="btnChatSend" title="Enviar Mensagem">➤</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- 3. VISÃO DE INÍCIO / AMIGOS / MENSAGENS DIRETAS (Foto 2) -->
+      <div class="view-pane" id="friendsView" style="display: none;">
+        <header class="friends-header">
+          <div class="friends-header-left">
+            <span class="friends-header-icon">👥</span>
+            <h3>Amigos</h3>
+            <span class="friends-header-divider"></span>
+            <div class="friends-tabs">
+              <button class="friends-tab-btn active" data-tab="online">Disponível</button>
+              <button class="friends-tab-btn" data-tab="all">Todos</button>
+              <button class="friends-tab-btn" data-tab="pending">
+                Pendente
+                <span class="pending-tab-badge" id="pendingTabBadge" style="display:none">0</span>
+              </button>
+              <button class="friends-tab-btn btn-add-friend" data-tab="add">Adicionar amigo</button>
+            </div>
+          </div>
+        </header>
+
+        <div class="friends-content-layout">
+          <!-- Coluna de Amigos -->
+          <div class="friends-list-wrapper">
+            <div class="friends-search-box" id="friendsSearchBox">
+              <input type="text" id="inputFriendsSearch" placeholder="Buscar amigos..." class="friends-search-input">
+              <span>🔍</span>
+            </div>
+            <div class="friends-count-label" id="friendsCountLabel">ONLINE — 0</div>
+            <div class="friends-cards-list" id="friendsCardsList"></div>
+
+            <!-- Painel Adicionar Amigo (Aba Adicionar Amigo) -->
+            <div class="add-friend-panel" id="addFriendPanel" style="display: none;">
+              <h2 class="add-friend-title">ADICIONAR AMIGO</h2>
+              <p class="add-friend-subtitle">Você pode adicionar amigos usando o nome de usuário ou a tag (ex: <strong>bads#0000</strong> ou apenas <strong>bads</strong>).</p>
+              <form class="add-friend-form" id="formAddFriend">
+                <div class="add-friend-input-box">
+                  <input type="text" id="inputAddFriendName" class="add-friend-input" placeholder="Ex: bads#0000 ou apenas nome do amigo" autocomplete="off" maxlength="37">
+                  <button type="submit" class="btn-send-friend-req" id="btnSubmitAddFriend">Enviar pedido de amizade</button>
+                </div>
+              </form>
+              <div class="add-friend-help">
+                <span class="add-friend-help-icon">💡</span>
+                <span>Seu nome de usuário com tag para outras pessoas te adicionarem: <strong id="myUsernameDisplay">bads#0001</strong></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Coluna Direita: Ativo Agora (Foto 2) -->
+          <aside class="active-now-column">
+            <h3 class="active-now-title">Ativo agora</h3>
+            <div class="active-now-list" id="activeNowList"></div>
+          </aside>
+        </div>
+      </div>
+    </main>
+
+    <!-- 4. BARRA LATERAL DIREITA: LISTA DE MEMBROS DO SERVIDOR (Foto 1) -->
+    <aside class="members-sidebar" id="membersSidebar">
+      <div class="members-scroll" id="membersScroll"></div>
+    </aside>
+  </div>
+
+  <!-- Popup Flutuante de Soundboard Rápido -->
+  <div class="soundboard-quick-popup" id="soundboardQuickPopup" style="display: none;">
+    <div class="sb-header">
+      <span>🔊 Efeitos Sonoros</span>
+      <button class="sb-close" id="btnCloseSoundboardQuick">✕</button>
+    </div>
+    <div class="sb-grid">
+      <button class="sb-btn" data-sound="airhorn">📢 Airhorn</button>
+      <button class="sb-btn" data-sound="quack">🦆 Quack</button>
+      <button class="sb-btn" data-sound="bell">🔔 Sino</button>
+      <button class="sb-btn" data-sound="gameover">💀 Game Over</button>
+      <button class="sb-btn" data-sound="laser">⚡ Laser</button>
+      <button class="sb-btn" data-sound="correct">✨ Vitória GG</button>
+    </div>
+  </div>
+
+  <!-- Modal de Criação de Canal (Voz ou Texto) -->
+  <div class="modal-overlay" id="createChannelModal" style="display: none;">
+    <div class="modal-card modal-channel-card">
+      <header class="modal-header">
+        <div>
+          <h3>Criar Canal</h3>
+          <p class="modal-subtitle" id="createChannelSubtitle">em Bar do BH</p>
+        </div>
+        <button class="close-modal" id="btnCloseChannelModal">✕</button>
+      </header>
+
+      <div class="modal-body-pad">
+        <label class="modal-field-label">TIPO DE CANAL</label>
+        <div class="channel-type-options">
+          <label class="channel-type-option active" id="optTypeText">
+            <input type="radio" name="channelTypeRadio" value="text" checked>
+            <div class="channel-type-icon">#</div>
+            <div class="channel-type-info">
+              <strong>Texto</strong>
+              <span>Poste mensagens, imagens, memes e resenhas</span>
+            </div>
+          </label>
+          <label class="channel-type-option" id="optTypeVoice">
+            <input type="radio" name="channelTypeRadio" value="voice">
+            <div class="channel-type-icon">🔊</div>
+            <div class="channel-type-info">
+              <strong>Voz</strong>
+              <span>Converse por voz, vídeo e transmissão de tela 1080p</span>
+            </div>
+          </label>
+        </div>
+
+        <div style="margin-top: 18px;">
+          <label class="modal-field-label">NOME DO CANAL</label>
+          <div class="channel-input-box">
+            <span class="channel-input-prefix" id="channelInputPrefix">#</span>
+            <input type="text" id="inputNewChannelName" class="modal-text-input channel-text-input" placeholder="novo-canal" maxlength="32">
+          </div>
+        </div>
+      </div>
+
+      <footer class="modal-footer">
+        <button class="cancel-btn" id="btnCancelCreateChannel">Cancelar</button>
+        <button class="confirm-btn" id="btnConfirmCreateChannel">Criar Canal</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Notificação Toast (Ex: "Link copiado!") -->
+  <div class="toast-notification" id="toastNotification" style="display: none;">
+    <span class="toast-icon" id="toastIcon">📋</span>
+    <span class="toast-msg" id="toastMsg">Link copiado!</span>
+  </div>
+
+  <!-- Modal de Seleção de Tela e Janelas de Jogos (Estilo Discord) -->
+  <div class="modal-overlay" id="screenShareModal" style="display: none;">
+    <div class="modal-card modal-stream-card">
+      <header class="modal-header">
+        <div class="modal-header-info">
+          <div class="modal-header-icon">🎮</div>
+          <div>
+            <h3>Transmitir Jogo ou Janela</h3>
+            <p class="modal-subtitle">Escolha especificamente a janela do seu jogo. Sua área de trabalho, outras janelas e notificações não serão transmitidas.</p>
+          </div>
+        </div>
+        <button class="close-modal" id="btnCloseModal">✕</button>
+      </header>
+
+      <div class="modal-tabs-bar">
+        <div class="modal-tabs">
+          <button class="tab-btn active" id="tabWindows">
+            <span class="tab-icon">🎮</span> Janelas & Jogos
+            <span class="tab-badge-rec">Recomendado</span>
+          </button>
+          <button class="tab-btn" id="tabScreens">
+            <span class="tab-icon">🖥️</span> Telas Inteiras
+          </button>
+        </div>
+        <div class="modal-search-wrapper">
+          <input type="text" id="inputSearchSources" class="source-search-input" placeholder="🔍 Filtrar jogos ou janelas...">
+        </div>
+        <button class="refresh-sources-btn" id="btnRefreshSources" title="Recarregar Janelas e Jogos Abertos">
+          <span class="refresh-icon">🔄</span> Atualizar
+        </button>
+      </div>
+
+      <div class="game-privacy-banner" id="gamePrivacyBanner">
+        <span class="privacy-shield-icon">🛡️</span>
+        <div class="privacy-text">
+          <strong>Modo Janela Focada:</strong> Apenas a janela do jogo selecionado é enviada para os participantes da chamada. Se você minimizar o jogo, seu desktop continua 100% privado e protegido.
+        </div>
+      </div>
+
+      <div class="sources-grid" id="sourcesGrid"></div>
+
+      <!-- Barra de Janela Selecionada & Áudio -->
+      <div class="selected-target-bar" id="selectedTargetBar">
+        <div class="target-info">
+          <span class="target-indicator-dot"></span>
+          <span class="target-label">Janela Selecionada:</span>
+          <strong id="selectedTargetName" class="target-name">Nenhuma janela escolhida ainda</strong>
+        </div>
+        <div class="target-audio-opt">
+          <label class="stream-audio-checkbox-label" title="Transmitir o som do jogo junto com o vídeo">
+            <input type="checkbox" id="chkStreamAudio" checked>
+            <span>🔊 Áudio do Jogo</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="stream-quality-settings">
+        <div class="quality-item">
+          <label>QUALIDADE DE VÍDEO:</label>
+          <select id="selectResolution" class="discord-select-sm">
+            <option value="1080" selected>1080p (Full HD - Alta Fidelidade)</option>
+            <option value="1440">1440p (2K Quad HD Ultra)</option>
+            <option value="720">720p (HD 60FPS)</option>
+          </select>
+        </div>
+        <div class="quality-item">
+          <label>TAXA DE QUADROS:</label>
+          <select id="selectFps" class="discord-select-sm">
+            <option value="60" selected>60 FPS (Máxima Fluidez Gamer)</option>
+            <option value="30">30 FPS</option>
+          </select>
+        </div>
+      </div>
+
+      <footer class="modal-footer">
+        <button class="cancel-btn" id="btnCancelShare">Cancelar</button>
+        <button class="confirm-btn live-confirm-btn" id="btnConfirmShare" disabled>
+          <span class="live-dot-pulse"></span> Iniciar Transmissão do Jogo
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Modal de Criação e Exploração de Servidores (Atalho + da Barra Lateral) -->
+  <div class="modal-overlay" id="createServerModal" style="display: none;">
+    <div class="modal-card modal-server-wizard">
+      <header class="modal-header">
+        <div class="modal-tabs" style="border:none; padding:0;">
+          <button type="button" class="tab-btn active" id="tabCreateServerMode">➕ Criar Servidor</button>
+          <button type="button" class="tab-btn" id="tabExploreServersMode">🧭 Explorar Comunidades</button>
+        </div>
+        <button class="close-modal" id="btnCloseServerModal">✕</button>
+      </header>
+
+      <!-- ABA 1: CRIAR MEU SERVIDOR -->
+      <div id="paneCreateServer" class="modal-body-pad">
+        <p class="modal-desc">Seu servidor é onde você e seus amigos conversam por voz, texto e transmitem ao vivo em 1080p 60FPS.</p>
+        
+        <label class="modal-field-label">ÍCONE DO SERVIDOR</label>
+        <div class="server-icon-picker" id="serverIconPicker">
+          <button type="button" class="server-icon-choice active" data-icon="🎮">🎮</button>
+          <button type="button" class="server-icon-choice" data-icon="🍺">🍺</button>
+          <button type="button" class="server-icon-choice" data-icon="💻">💻</button>
+          <button type="button" class="server-icon-choice" data-icon="🚀">🚀</button>
+          <button type="button" class="server-icon-choice" data-icon="🎧">🎧</button>
+          <button type="button" class="server-icon-choice" data-icon="⚡">⚡</button>
+          <button type="button" class="server-icon-choice" data-icon="🏆">🏆</button>
+          <button type="button" class="server-icon-choice" data-icon="🔥">🔥</button>
+        </div>
+
+        <label class="modal-field-label" style="margin-top:14px;">NOME DO SERVIDOR</label>
+        <input type="text" id="inputServerName" class="modal-text-input" placeholder="Ex: Servidor dos Amigos" maxlength="32">
+        
+        <div class="modal-footer" style="padding:16px 0 0 0; margin-top:16px;">
+          <button class="cancel-btn" id="btnCancelServer">Cancelar</button>
+          <button class="confirm-btn" id="btnConfirmServer">Criar Servidor</button>
+        </div>
+      </div>
+
+      <!-- ABA 2: EXPLORAR SERVIDORES PÚBLICOS DA COMUNIDADE -->
+      <div id="paneExploreServers" class="modal-body-pad" style="display: none;">
+        <p class="modal-desc">Encontre e participe de servidores públicos criados pela comunidade:</p>
+        <div class="explore-servers-list" id="exploreServersList">
+          <!-- Renderizado via JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Popover / Modal de Perfil de Usuário com Atividade e Moderação (Idêntico à Foto 1) -->
+  <div class="user-profile-popover" id="userProfilePopover" style="display: none;">
+    <div class="user-popover-banner" id="userPopoverBanner">
+      <button class="user-popover-close" id="btnCloseUserPopover">✕</button>
+      <div class="user-popover-avatar-wrap">
+        <div class="user-popover-avatar" id="userPopoverAvatar">B</div>
+        <span class="user-popover-status-dot online" id="userPopoverStatusDot"></span>
+      </div>
+    </div>
+    
+    <div class="user-popover-body">
+      <div class="user-popover-header-row">
+        <div>
+          <h3 class="user-popover-name" id="userPopoverName">Bruninho</h3>
+          <span class="user-popover-tag" id="userPopoverTag">#0001</span>
+        </div>
+        <div class="user-popover-badges" id="userPopoverBadges">
+          <span class="popover-badge" title="Proprietário">👑</span>
+          <span class="popover-badge" title="Nitro">⚡</span>
+        </div>
+      </div>
+
+      <div class="user-popover-about" id="userPopoverAbout">Usando o BADISCORD!</div>
+
+      <!-- Caixa de Atividade (Jogando / Ouvindo Música - Foto 1) -->
+      <div class="user-popover-activity" id="userPopoverActivity">
+        <div class="activity-top-header">
+          <span class="activity-badge-type" id="userActivityType">JOGANDO</span>
+        </div>
+        <div class="activity-content-row">
+          <div class="activity-game-icon" id="userActivityIcon">🎮</div>
+          <div class="activity-game-meta">
+            <strong class="activity-game-title" id="userActivityTitle">VALORANT</strong>
+            <span class="activity-game-detail" id="userActivityDetail">Competitivo • 36:03</span>
+          </div>
+        </div>
+        <button class="btn-activity-action" id="btnUserActivityAction">🎮 Pedir para entrar / Assistir</button>
+      </div>
+
+      <!-- Ações de Moderação (Banir 1h/permanente, Expulsar, Silenciar) -->
+      <div class="user-popover-mod-actions" id="userPopoverModActions">
+        <button class="btn-mod-action btn-mod-ban" id="btnOpenBanModal" title="Banir Membro do Servidor">
+          🔨 Banir Membro
+        </button>
+        <button class="btn-mod-action" id="btnKickMember" title="Expulsar do Servidor">
+          🚪 Expulsar
+        </button>
+        <button class="btn-mod-action" id="btnMuteMember" title="Silenciar no Servidor">
+          🔇 Silenciar
+        </button>
+      </div>
+
+      <!-- Envio Rápido de Mensagem -->
+      <div class="user-popover-quick-chat">
+        <input type="text" id="inputPopoverQuickChat" placeholder="Conversar com o usuário..." autocomplete="off">
+        <button id="btnSendPopoverQuickChat">➤</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Confirmação de Banimento (1h, 24h, 7d, Permanente) -->
+  <div class="modal-overlay" id="banMemberModal" style="display: none;">
+    <div class="modal-card modal-small">
+      <header class="modal-header">
+        <h3 id="banModalTitle">🔨 Banir Membro</h3>
+        <button class="close-modal" id="btnCloseBanModal">✕</button>
+      </header>
+      <div class="modal-body-pad">
+        <p class="modal-desc" id="banModalDesc">Escolha o tempo de banimento para este membro no servidor:</p>
+        
+        <label class="modal-field-label">DURAÇÃO DO BANIMENTO</label>
+        <div class="ban-duration-options">
+          <label class="ban-radio-label">
+            <input type="radio" name="banDuration" value="1h" checked>
+            <span>⏱️ 1 Hora</span>
+          </label>
+          <label class="ban-radio-label">
+            <input type="radio" name="banDuration" value="24h">
+            <span>📅 24 Horas</span>
+          </label>
+          <label class="ban-radio-label">
+            <input type="radio" name="banDuration" value="7d">
+            <span>🗓️ 7 Dias</span>
+          </label>
+          <label class="ban-radio-label danger-radio">
+            <input type="radio" name="banDuration" value="perm">
+            <span>⛔ Permanente</span>
+          </label>
+        </div>
+
+        <label class="modal-field-label" style="margin-top:12px;">MOTIVO (OPCIONAL)</label>
+        <input type="text" id="inputBanReason" class="modal-text-input" placeholder="Violação das regras do servidor...">
+      </div>
+      <footer class="modal-footer">
+        <button class="cancel-btn" id="btnCancelBan">Cancelar</button>
+        <button class="confirm-btn danger-btn" id="btnConfirmBan">Aplicar Banimento</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Menu de Contexto do Servidor (Foto 3 - Clique no ícone do servidor) -->
+  <div class="server-context-menu" id="serverContextMenu" style="display: none;">
+    <div class="ctx-item" id="ctxMarkAsRead">
+      <span>Marcar como lida</span>
+    </div>
+    <div class="ctx-item" id="ctxInvitePeople">
+      <span>Convidar para o servidor</span>
+      <span class="ctx-icon">👥</span>
+    </div>
+    <div class="ctx-divider"></div>
+    <div class="ctx-item" id="ctxMuteServer">
+      <span id="ctxMuteText">Silenciar servidor</span>
+      <span class="ctx-icon">🔕</span>
+    </div>
+    <div class="ctx-item" id="ctxNotificationSettings">
+      <span>Config. de notificação</span>
+      <span class="ctx-icon">🔔</span>
+    </div>
+    <div class="ctx-item" id="ctxCreateChannel">
+      <span>Criar canal</span>
+      <span class="ctx-icon">➕</span>
+    </div>
+    <div class="ctx-item" id="ctxServerSettings">
+      <span>Configurações do Servidor</span>
+      <span class="ctx-icon">⚙️</span>
+    </div>
+    <div class="ctx-divider"></div>
+    <div class="ctx-item danger" id="ctxLeaveServer">
+      <span>Sair do servidor</span>
+      <span class="ctx-icon">🚪</span>
+    </div>
+    <div class="ctx-item danger" id="ctxDeleteServer">
+      <span>Excluir servidor</span>
+      <span class="ctx-icon">🗑️</span>
+    </div>
+  </div>
+
+  <!-- Modal de Mensagens Fixadas -->
+  <div class="modal-overlay" id="pinnedMessagesModal" style="display: none;">
+    <div class="modal-card modal-medium">
+      <header class="modal-header">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:18px;">📌</span>
+          <h3>Mensagens Fixadas</h3>
+        </div>
+        <button class="close-modal" id="btnClosePinnedModal">✕</button>
+      </header>
+      <div class="pinned-messages-list" id="pinnedMessagesList">
+        <!-- Renderizado dinamicamente via JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Convidar Amigos para o Servidor -->
+  <div class="modal-overlay" id="inviteToServerModal" style="display: none;">
+    <div class="modal-card modal-small">
+      <header class="modal-header">
+        <h3>Convidar Amigos</h3>
+        <button class="close-modal" id="btnCloseInviteModal">✕</button>
+      </header>
+      <div class="modal-body-pad">
+        <p class="modal-desc">Compartilhe o link do servidor ou convide diretamente da sua lista de amigos:</p>
+        <label class="modal-field-label">LINK DE CONVITE</label>
+        <div class="invite-link-box">
+          <input type="text" id="inputInviteLink" readonly value="https://badiscord.gg/live-1080p">
+          <button id="btnCopyInviteLink" class="btn-send-friend-req">Copiar</button>
+        </div>
+
+        <label class="modal-field-label" style="margin-top:14px;">SEUS AMIGOS</label>
+        <div class="invite-friends-list" id="inviteFriendsList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Menu Flutuante do Perfil do Usuário e Status (Idêntico à Imagem do Usuário) -->
+  <div class="user-presence-menu" id="userPresenceMenu" style="display: none;">
+    <!-- Topo: Avatar, Status Button, Nome, Pronomes, Insígnias -->
+    <div class="presence-header-card">
+      <div class="presence-avatar-row">
+        <div class="presence-avatar-box">
+          <div class="presence-avatar-img" id="presenceAvatarImg">B</div>
+          <span class="user-status-indicator invisible" id="presenceStatusIndicator"></span>
+        </div>
+        <button class="btn-add-custom-status" id="btnAddCustomStatus">
+          <span>➕</span> Adicionar status
+        </button>
+      </div>
+
+      <div class="presence-name-row">
+        <span class="presence-display-name" id="presenceDisplayName">Bads</span>
+        <span class="presence-mood-icon" id="presenceMoodIcon">🌙</span>
+      </div>
+
+      <div class="presence-custom-status" id="presenceCustomStatus" style="display: none;"></div>
+
+      <div class="presence-sub-row">
+        <span class="presence-handle" id="presenceHandle">badscaps</span>
+        <span class="presence-bullet">•</span>
+        <span class="presence-pronouns" id="presencePronouns">elu-delu</span>
+        <span class="presence-clan-badge" id="presenceClanBadge">🗡️ KBM!</span>
+      </div>
+
+      <!-- Fileira de Insígnias -->
+      <div class="presence-badges-row">
+        <span class="presence-badge" title="Desenvolvedor Ativo">💻</span>
+        <span class="presence-badge" title="Gamer">🎮</span>
+        <span class="presence-badge" title="Lutador">🗡️</span>
+        <span class="presence-badge" title="HypeSquad">🐍</span>
+        <span class="presence-badge" title="BADISCORD Early Supporter">#</span>
+        <span class="presence-badge" title="Impulso de Servidor">🛡️</span>
+      </div>
+    </div>
+
+    <!-- Banner Nitro / Loja -->
+    <div class="presence-nitro-promo">
+      <div class="promo-header">
+        <span>Faça seu perfil bombar</span>
+        <button class="btn-close-promo" id="btnClosePresencePromo">✕</button>
+      </div>
+      <div class="promo-btns-row">
+        <button class="btn-promo-nitro" id="btnPromoNitro">
+          <span>🚀</span> Obter o Nitro
+        </button>
+        <button class="btn-promo-shop" id="btnPromoShop">
+          <span>🛍️</span> Loja
+        </button>
+      </div>
+    </div>
+
+    <!-- Lista de Itens do Menu -->
+    <div class="presence-menu-items">
+      <div class="presence-menu-item" id="menuItemPresenceEditProfile">
+        <div class="item-left">
+          <span class="item-icon">✏️</span>
+          <span>Editar perfil</span>
+        </div>
+        <span class="item-badge-new">NOVO</span>
+      </div>
+
+      <!-- Item de Status Ativo com Submenu -->
+      <div class="presence-menu-item" id="menuItemStatusTrigger">
+        <div class="item-left">
+          <span class="status-bubble invisible" id="menuCurrentStatusDot"></span>
+          <span id="menuCurrentStatusText">Invisível</span>
+          <span class="status-warning-icon">⚠️</span>
+        </div>
+        <span class="item-arrow">❯</span>
+      </div>
+
+      <div class="presence-menu-item" id="menuItemBadges">
+        <div class="item-left">
+          <span class="item-icon">🎖️</span>
+          <span>Insígnias</span>
+        </div>
+      </div>
+
+      <div class="presence-divider"></div>
+
+      <div class="presence-menu-item" id="menuItemSwitchAccount">
+        <div class="item-left">
+          <span class="item-icon">👤</span>
+          <span>Mudar de conta</span>
+        </div>
+        <span class="item-arrow">❯</span>
+      </div>
+    </div>
+
+    <!-- Submenu de Status Suspenso (Aparece ao lado ou abaixo de Invisível) -->
+    <div class="presence-submenu" id="presenceStatusSubmenu" style="display: none;">
+      <div class="submenu-status-item" data-status="online">
+        <div class="status-option-left">
+          <span class="status-bubble online"></span>
+          <div class="status-text-wrap">
+            <span class="status-name">Disponível</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="submenu-status-item" data-status="idle">
+        <div class="status-option-left">
+          <span class="status-bubble idle"></span>
+          <div class="status-text-wrap">
+            <span class="status-name">Ausente</span>
+          </div>
+        </div>
+        <span class="item-arrow">❯</span>
+      </div>
+
+      <div class="submenu-status-item" data-status="dnd">
+        <div class="status-option-left">
+          <span class="status-bubble dnd"></span>
+          <div class="status-text-wrap">
+            <span class="status-name">Não perturbar</span>
+            <span class="status-desc">Você não receberá notificação na área de trabalho</span>
+          </div>
+        </div>
+        <span class="item-arrow">❯</span>
+      </div>
+
+      <div class="submenu-status-item active" data-status="invisible">
+        <div class="status-option-left">
+          <span class="status-bubble invisible"></span>
+          <div class="status-text-wrap">
+            <span class="status-name">Invisível</span>
+            <span class="status-desc">Você vai aparecer Off-line</span>
+          </div>
+        </div>
+        <span class="item-arrow">❯</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Menu de Contexto do Usuário no Canal de Voz (Idêntico ao Discord) -->
+  <div class="voice-user-context-menu" id="voiceUserContextMenu" style="display: none;">
+    <!-- Botão de stream do jogo -->
+    <div class="vctx-stream-header" id="vctxStreamHeader" style="display: none;">
+      <span class="vctx-stream-icon">🖥️</span>
+      <span id="vctxStreamGame">Pedir para transmitir</span>
+    </div>
+
+    <div class="vctx-section">
+      <div class="vctx-item" data-action="profile">Perfil</div>
+      <div class="vctx-item" data-action="mention">Mencionar</div>
+      <div class="vctx-item" data-action="message">Mensagem</div>
+      <div class="vctx-item" data-action="call">Iniciar chamada</div>
+      <div class="vctx-item" data-action="note">
+        <span>Adicionar nota</span>
+        <span class="vctx-hint">Visível apenas para você</span>
+      </div>
+      <div class="vctx-item" data-action="nickname">Adicionar apelido de amigo</div>
+    </div>
+
+    <div class="vctx-divider"></div>
+
+    <!-- Volume do Usuário -->
+    <div class="vctx-volume-section">
+      <div class="vctx-volume-label">Volume do usuário</div>
+      <div class="vctx-volume-slider-wrap">
+        <input type="range" id="vctxVolumeSlider" class="vctx-volume-slider" min="0" max="200" value="100">
+      </div>
+    </div>
+
+    <div class="vctx-divider"></div>
+
+    <!-- Info de entrada -->
+    <div class="vctx-info-section" id="vctxInfoSection">
+      <div class="vctx-info-label">Entrou</div>
+      <div class="vctx-info-value" id="vctxInfoValue">Canal de Voz</div>
+    </div>
+
+    <div class="vctx-divider"></div>
+
+    <!-- Opções de moderação do canal de voz -->
+    <div class="vctx-section">
+      <div class="vctx-item vctx-toggle" data-action="server-mute">
+        <span>Silenciar</span>
+        <div class="vctx-checkbox" id="vctxCheckMute"></div>
+      </div>
+      <div class="vctx-item vctx-toggle" data-action="server-deaf">
+        <span>Silenciar efeitos sonoros</span>
+        <div class="vctx-checkbox" id="vctxCheckDeaf"></div>
+      </div>
+      <div class="vctx-item vctx-toggle" data-action="disable-video">
+        <span>Desativar vídeo</span>
+        <div class="vctx-checkbox" id="vctxCheckVideo"></div>
+      </div>
+    </div>
+
+    <div class="vctx-divider"></div>
+
+    <div class="vctx-section">
+      <div class="vctx-item" data-action="verification">Ver Código de Verificação</div>
+      <div class="vctx-item vctx-has-sub" data-action="apps">
+        <span>Apps</span>
+        <span class="vctx-arrow">❯</span>
+      </div>
+      <div class="vctx-item vctx-has-sub" data-action="invite-server">
+        <span>Convidar para o servidor</span>
+        <span class="vctx-arrow">❯</span>
+      </div>
+    </div>
+
+    <div class="vctx-divider"></div>
+
+    <div class="vctx-section">
+      <div class="vctx-item" data-action="unfriend">Desfazer amizade</div>
+      <div class="vctx-item" data-action="ignore">Ignorar</div>
+      <div class="vctx-item vctx-danger" data-action="block">Bloquear</div>
+    </div>
+
+    <div class="vctx-divider"></div>
+
+    <div class="vctx-section">
+      <div class="vctx-item vctx-has-sub" data-action="roles">
+        <span>Cargo</span>
+        <span class="vctx-arrow">❯</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input invisível para upload de foto de perfil -->
+  <input type="file" id="inputAvatarFile" accept="image/*" style="display: none;">
+
+  <!-- Tela Completa de Configurações (Estilo Discord) -->
+  <div class="settings-overlay" id="settingsOverlay" style="display: none;">
+    <!-- Barra Lateral de Configurações -->
+    <aside class="settings-sidebar">
+      <div class="settings-user-header" id="btnSidebarProfileHeader" title="Editar perfil">
+        <div class="settings-user-avatar" id="settingsUserAvatar">
+          <span id="settingsAvatarInitial">B</span>
+          <img id="settingsAvatarImg" src="" style="display: none;" alt="Avatar">
+        </div>
+        <div class="settings-user-details">
+          <span class="settings-user-name" id="settingsUserName">Bads</span>
+          <span class="settings-edit-profile" id="btnEditProfileLink">Editar perfil ✏️</span>
+        </div>
+      </div>
+
+      <div class="settings-search-wrapper">
+        <input type="text" class="settings-search-input" id="settingsSearchInput" placeholder="🔍 Buscar">
+      </div>
+
+      <div class="settings-nav-scroll">
+        <div class="settings-nav-header">CONTA</div>
+        <div class="settings-nav-item" data-tab="account">
+          <span>Conta / Perfil</span>
+          <span class="nav-badge-new">NOVO</span>
+        </div>
+        <div class="settings-nav-item" data-tab="privacy">Dados e privacidade</div>
+        <div class="settings-nav-item" data-tab="permissions">Permissões de mensagens</div>
+        <div class="settings-nav-item" data-tab="notifications">Notificações</div>
+
+        <div class="settings-nav-header">COBRANÇA</div>
+        <div class="settings-nav-item" data-tab="nitro">Nitro</div>
+        <div class="settings-nav-item" data-tab="boost">Impulso de servidor</div>
+        <div class="settings-nav-item" data-tab="subscriptions">Assinaturas</div>
+        <div class="settings-nav-item" data-tab="gift-inventory">Inventário de presentes</div>
+        <div class="settings-nav-item" data-tab="billing">Cobrança</div>
+
+        <div class="settings-nav-header">EXPERIÊNCIA</div>
+        <div class="settings-nav-item active" data-tab="voice">
+          <span>Voz e vídeo</span>
+        </div>
+        <div class="settings-subnav">
+          <div class="settings-subnav-item active" data-tab="voice">Voz</div>
+          <div class="settings-subnav-item" data-tab="stream">Transmissão</div>
+          <div class="settings-subnav-item" data-tab="sounds">Sons</div>
+          <div class="settings-subnav-item" data-tab="soundboard">Painel de efeitos sonoros</div>
+          <div class="settings-subnav-item" data-tab="advanced">Avançado</div>
+        </div>
+        <div class="settings-nav-item" data-tab="appearance">Aparência</div>
+      </div>
+    </aside>
+
+    <!-- Conteúdo Principal de Configurações -->
+    <main class="settings-content">
+      <header class="settings-header">
+        <div class="settings-header-left">
+          <h3 id="settingsHeaderCategory">Voz e vídeo</h3>
+        </div>
+        <div class="esc-close-wrapper" id="btnCloseSettings" title="Fechar configurações (ESC)">
+          <div class="esc-circle">✕</div>
+          <span class="esc-text">ESC</span>
+        </div>
+      </header>
+
+      <div class="settings-scrollable-body">
+
+        <!-- ABA: CONTA / EDITAR PERFIL -->
+        <div class="settings-tab-pane" id="pane-account" style="display: none;">
+          <h2 class="settings-section-title">Perfil do Usuário</h2>
+
+          <!-- Pré-visualização do Perfil -->
+          <div class="profile-preview-card">
+            <div class="profile-banner-preview" id="profileBannerPreview" style="background-color: #5865F2;">
+              <label class="change-banner-btn" title="Alterar cor do banner">
+                🎨 Cor do Banner
+                <input type="color" id="inputBannerColor" value="#5865F2" style="display:none">
+              </label>
+            </div>
+
+            <div class="profile-avatar-row">
+              <div class="profile-avatar-container">
+                <div class="profile-avatar-preview" id="profileAvatarPreview">
+                  <span id="profileAvatarInitial">B</span>
+                  <img id="profileAvatarImg" src="" style="display: none;" alt="Avatar">
+                </div>
+                <button class="change-avatar-badge" id="btnChangeAvatar" title="Escolher foto do computador">📷 Mudar Foto</button>
+              </div>
+              <div class="profile-identity-preview">
+                <h3 id="previewDisplayName">Bads</h3>
+                <span id="previewUsername">@bads</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Formulário de Edição -->
+          <div class="profile-edit-form">
+            <div class="form-group">
+              <label class="setting-field-label">NOME DE EXIBIÇÃO</label>
+              <input type="text" id="inputDisplayName" class="discord-input" placeholder="Seu nome exibido no aplicativo" maxlength="32" value="Bads">
+            </div>
+
+            <div class="form-group">
+              <label class="setting-field-label">NOME DE USUÁRIO (TAG)</label>
+              <input type="text" id="inputUsername" class="discord-input" placeholder="seu_usuario" maxlength="32" value="bads">
+            </div>
+
+            <div class="form-group">
+              <label class="setting-field-label">SOBRE MIM</label>
+              <textarea id="inputAboutMe" class="discord-textarea" placeholder="Conte um pouco sobre você..." maxlength="190">Usando o BADISCORD!</textarea>
+            </div>
+
+            <div class="profile-form-actions">
+              <button class="discord-btn-primary" id="btnSaveProfile">Salvar Alterações</button>
+              <span class="save-status-msg" id="saveStatusMsg"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ABA: VOZ -->
+        <div class="settings-tab-pane" id="pane-voice">
+          <h2 class="settings-section-title">Voz</h2>
+
+          <!-- Grid de Dispositivos e Volumes -->
+          <div class="audio-settings-grid">
+            <!-- Coluna Microfone -->
+            <div class="audio-setting-col">
+              <label class="setting-field-label">MICROFONE</label>
+              <div class="select-wrapper">
+                <span class="select-icon">🎤</span>
+                <select id="selectMicDevice" class="discord-select"></select>
+              </div>
+              <div class="slider-header-row">
+                <span class="setting-field-label">VOLUME DO MICROFONE</span>
+                <span id="micVolPercent" class="slider-value-text">100%</span>
+              </div>
+              <input type="range" id="micVolumeSlider" min="0" max="100" value="100" class="discord-range-slider">
+            </div>
+
+            <!-- Coluna Alto-falante -->
+            <div class="audio-setting-col">
+              <label class="setting-field-label">ALTO-FALANTE</label>
+              <div class="select-wrapper">
+                <span class="select-icon">🎧</span>
+                <select id="selectSpeakerDevice" class="discord-select"></select>
+              </div>
+              <div class="slider-header-row">
+                <span class="setting-field-label">VOLUME DO ALTO-FALANTE</span>
+                <span id="speakerVolPercent" class="slider-value-text">100%</span>
+              </div>
+              <input type="range" id="speakerVolumeSlider" min="0" max="100" value="100" class="discord-range-slider">
+            </div>
+          </div>
+
+          <!-- Área de Teste do Microfone -->
+          <div class="mic-test-section">
+            <div class="mic-test-controls">
+              <button id="btnTestMic" class="discord-test-btn">Teste do microfone</button>
+              <div class="mic-meter-bars" id="micMeterBars"></div>
+            </div>
+            <p class="mic-help-text">Precisa de ajuda? Confira nosso <a href="#" class="discord-link">guia de solução de problemas</a>.</p>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <!-- Perfil de Entrada -->
+          <div class="input-profile-section">
+            <h3 class="profile-section-title">Perfil de entrada</h3>
+
+            <label class="discord-radio-option">
+              <input type="radio" name="inputProfile" value="isolation">
+              <div class="radio-custom-indicator"></div>
+              <div class="radio-info">
+                <span class="radio-title">Isolamento de Voz</span>
+                <span class="radio-desc">Só a sua linda voz: deixe o Discord equalizar o ruído</span>
+              </div>
+            </label>
+
+            <label class="discord-radio-option">
+              <input type="radio" name="inputProfile" value="studio">
+              <div class="radio-custom-indicator"></div>
+              <div class="radio-info">
+                <span class="radio-title">Estúdio</span>
+                <span class="radio-desc">Áudio puro: microfone aberto e sem processamento</span>
+              </div>
+            </label>
+
+            <label class="discord-radio-option">
+              <input type="radio" name="inputProfile" value="custom" checked>
+              <div class="radio-custom-indicator"></div>
+              <div class="radio-info">
+                <span class="radio-title">Personalizado</span>
+                <span class="radio-desc">Modo avançado: me dê todos os botões e mostradores!</span>
+              </div>
+            </label>
+          </div>
+
+          <!-- Ajustar Automaticamente Sensibilidade -->
+          <div class="sensitivity-section">
+            <div class="toggle-row">
+              <div class="toggle-text">
+                <span class="toggle-title">Ajustar Automaticamente a Sensibilidade de Entrada</span>
+                <span class="toggle-desc">Controla quanto som o Discord transmite do seu microfone. Fale para testar seu microfone — se o medidor estiver cheio, o Discord está transmitindo sua bela voz.</span>
+              </div>
+              <label class="discord-switch">
+                <input type="checkbox" id="autoSensitivityToggle" checked>
+                <span class="discord-switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="sensitivity-meter-bg">
+              <div class="sensitivity-meter-fill" id="sensitivityMeterFill"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ABA: TRANSMISSÃO & JOGOS -->
+        <div class="settings-tab-pane" id="pane-stream" style="display: none;">
+          <h2 class="settings-section-title">Transmissão & Captura de Jogos</h2>
+          
+          <div class="stream-settings-hero">
+            <div class="hero-icon">🎮</div>
+            <div class="hero-text">
+              <h3>Transmissão Focada de Janela de Jogo</h3>
+              <p>Transmita especificamente a janela do jogo que você está jogando com áudio e 60 FPS, sem expor sua área de trabalho, navegador ou notificações pessoais.</p>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="setting-field-label">MODO DE TRANSMISSÃO PADRÃO</label>
+            <div class="stream-mode-cards">
+              <label class="stream-mode-card active" id="cardModeWindow">
+                <input type="radio" name="streamDefaultMode" value="window" checked>
+                <div class="mode-card-content">
+                  <div class="mode-icon">🎮</div>
+                  <div class="mode-info">
+                    <span class="mode-title">Focar Apenas no Jogo (Recomendado)</span>
+                    <span class="mode-desc">Transmite unicamente a janela do jogo selecionado. Notificações, área de trabalho e outros programas nunca vazam.</span>
+                  </div>
+                </div>
+              </label>
+              <label class="stream-mode-card" id="cardModeScreen">
+                <input type="radio" name="streamDefaultMode" value="screen">
+                <div class="mode-card-content">
+                  <div class="mode-icon">🖥️</div>
+                  <div class="mode-info">
+                    <span class="mode-title">Permitir Monitor Inteiro</span>
+                    <span class="mode-desc">Transmite todo o seu monitor selecionado (útil caso o jogo use tela cheia exclusiva ou anti-cheat rígido).</span>
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="form-group">
+            <label class="setting-field-label">QUALIDADE DE TRANSMISSÃO PADRÃO</label>
+            <div class="settings-two-col">
+              <div>
+                <label class="sub-label">Resolução Padrão</label>
+                <select id="prefResolution" class="discord-select">
+                  <option value="1080" selected>1080p (Full HD 60FPS - Recomendado)</option>
+                  <option value="1440">1440p (2K Quad HD Ultra)</option>
+                  <option value="720">720p (HD 60FPS - Economia de Banda)</option>
+                </select>
+              </div>
+              <div>
+                <label class="sub-label">Taxa de Quadros (FPS)</label>
+                <select id="prefFps" class="discord-select">
+                  <option value="60" selected>60 FPS (Fluidez Máxima para Jogos)</option>
+                  <option value="30">30 FPS (Padrão)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="setting-field-label">CODEC DE VÍDEO & ENCODER GPU</label>
+            <select id="prefCodec" class="discord-select">
+              <option value="h264" selected>H.264 (Aceleração por Hardware GPU - NVENC / Intel QuickSync / AMD AMF)</option>
+              <option value="vp8">VP8 (Compatibilidade Universal)</option>
+              <option value="av1">AV1 (Alta Fidelidade em Menor Bitrate)</option>
+            </select>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <span class="toggle-title">🔊 Transmitir Áudio do Jogo / Aplicativo</span>
+              <span class="toggle-desc">Captura o áudio estéreo da aplicação em alta definição junto com a stream.</span>
+            </div>
+            <label class="discord-switch">
+              <input type="checkbox" id="streamAudioDefaultToggle" checked>
+              <span class="discord-switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <span class="toggle-title">🚀 Aceleração de Hardware para Transmissões (GPU)</span>
+              <span class="toggle-desc">Usa sua placa de vídeo dedicada para codificar o vídeo sem perder FPS no jogo.</span>
+            </div>
+            <label class="discord-switch">
+              <input type="checkbox" id="hwAccelToggle" checked>
+              <span class="discord-switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <span class="toggle-title">⚡ Modo de Baixa Latência Gamer (Ultra-Low Delay)</span>
+              <span class="toggle-desc">Reduz o atraso da transmissão WebRTC para menos de 100ms para reações em tempo real.</span>
+            </div>
+            <label class="discord-switch">
+              <input type="checkbox" id="lowLatencyToggle" checked>
+              <span class="discord-switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <span class="toggle-title">🛡️ Proteção de Privacidade ao Minimizar</span>
+              <span class="toggle-desc">Impede que sua tela pessoal seja exposta caso você minimize ou feche o jogo transmitido.</span>
+            </div>
+            <label class="discord-switch">
+              <input type="checkbox" id="privacyPauseToggle" checked>
+              <span class="discord-switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="test-stream-box">
+            <div class="test-stream-info">
+              <h4>Testar Seleção de Janela de Jogo</h4>
+              <p>Abra seu jogo e veja como ele é detectado pelo seletor de janelas do BADISCORD.</p>
+            </div>
+            <button class="test-stream-btn" id="btnTestGameSelect">🎮 Abrir Seletor de Janela de Jogo</button>
+          </div>
+        </div>
+
+        <!-- ABA: SONS -->
+        <div class="settings-tab-pane" id="pane-sounds" style="display: none;">
+          <h2 class="settings-section-title">Sons do Sistema</h2>
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <span class="toggle-title">Som ao entrar na sala de voz</span>
+              <span class="toggle-desc">Toca o sinal harmônico ascendente quando você se conecta a um canal.</span>
+            </div>
+            <label class="discord-switch"><input type="checkbox" id="soundJoinToggle" checked><span class="discord-switch-slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <span class="toggle-title">Som ao sair da sala de voz</span>
+              <span class="toggle-desc">Toca o sinal sonoro descendente ao desconectar de um canal.</span>
+            </div>
+            <label class="discord-switch"><input type="checkbox" id="soundLeaveToggle" checked><span class="discord-switch-slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <span class="toggle-title">Som de microfone mudo</span>
+              <span class="toggle-desc">Emite um clique sutil de confirmação ao mutar ou desmutar.</span>
+            </div>
+            <label class="discord-switch"><input type="checkbox" id="soundMuteToggle" checked><span class="discord-switch-slider"></span></label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <span class="toggle-title">Som de fone ensurdecido (Deafen)</span>
+              <span class="toggle-desc">Emite aviso sonoro ao ensurdecer ou desensurdecer.</span>
+            </div>
+            <label class="discord-switch"><input type="checkbox" id="soundDeafenToggle" checked><span class="discord-switch-slider"></span></label>
+          </div>
+        </div>
+
+        <!-- ABA: PAINEL DE EFEITOS SONOROS (SOUNDBOARD) -->
+        <div class="settings-tab-pane" id="pane-soundboard" style="display: none;">
+          <h2 class="settings-section-title">Painel de Efeitos Sonoros (Soundboard)</h2>
+          <p class="section-desc">Clique nos botões abaixo para tocar sons instantâneos na chamada:</p>
+          <div class="soundboard-grid">
+            <button class="soundboard-btn" data-sound="airhorn">📢 Airhorn (Corneta)</button>
+            <button class="soundboard-btn" data-sound="badumtss">🥁 Ba-Dum-Tss</button>
+            <button class="soundboard-btn" data-sound="applause">👏 Aplausos</button>
+            <button class="soundboard-btn" data-sound="bell">🔔 Sino</button>
+            <button class="soundboard-btn" data-sound="quack">🦆 Quack</button>
+            <button class="soundboard-btn" data-sound="siren">🚨 Sirene</button>
+            <button class="soundboard-btn" data-sound="gameover">🎮 8-Bit Over</button>
+            <button class="soundboard-btn" data-sound="laser">🔫 Laser</button>
+          </div>
+        </div>
+
+        <!-- ABA: APARÊNCIA -->
+        <div class="settings-tab-pane" id="pane-appearance" style="display: none;">
+          <h2 class="settings-section-title">Aparência</h2>
+          <label class="setting-field-label">TEMA DO APLICATIVO</label>
+          <div class="theme-cards-grid">
+            <div class="theme-card active" data-theme="dark">
+              <div class="theme-preview dark-preview"></div>
+              <span>Escuro (Padrão)</span>
+            </div>
+            <div class="theme-card" data-theme="midnight">
+              <div class="theme-preview midnight-preview"></div>
+              <span>Meia-noite (AMOLED)</span>
+            </div>
+            <div class="theme-card" data-theme="light">
+              <div class="theme-preview light-preview"></div>
+              <span>Claro</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ABA: NITRO -->
+        <div class="settings-tab-pane" id="pane-nitro" style="display: none;">
+          <div class="nitro-banner-card">
+            <div class="nitro-badge-pill">BADISCORD NITRO</div>
+            <h2>Transmita em 1080p 60FPS sem limites</h2>
+            <p>Todos os recursos de voz em alta fidelidade e lives em 1080p já estão liberados para você no BADISCORD!</p>
+          </div>
+        </div>
+
+        <!-- ABA: NOTIFICAÇÕES -->
+        <div class="settings-tab-pane" id="pane-notifications" style="display: none;">
+          <h2 class="settings-section-title">Notificações</h2>
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <span class="toggle-title">Notificações na área de trabalho</span>
+              <span class="toggle-desc">Exibe avisos do sistema quando alguém entrar no canal ou iniciar live.</span>
+            </div>
+            <label class="discord-switch"><input type="checkbox" id="desktopNotifsToggle" checked><span class="discord-switch-slider"></span></label>
+          </div>
+        </div>
+
+        <!-- ABA: AVANÇADO -->
+        <div class="settings-tab-pane" id="pane-advanced" style="display: none;">
+          <h2 class="settings-section-title">Avançado</h2>
+          <div class="toggle-row">
+            <div class="toggle-text">
+              <span class="toggle-title">Qualidade de Serviço de Pacotes de Voz (QoS)</span>
+              <span class="toggle-desc">Sinaliza para o seu roteador que os pacotes do BADISCORD são de alta prioridade.</span>
+            </div>
+            <label class="discord-switch"><input type="checkbox" checked><span class="discord-switch-slider"></span></label>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal Iniciar Nova Conversa / DM (Atalho do +) -->
+  <div class="screen-modal-backdrop" id="newDmModal" style="display: none;">
+    <div class="screen-modal-box new-dm-modal-card">
+      <header class="screen-modal-header">
+        <div class="modal-title-wrap">
+          <h2 class="modal-main-title">SELECIONAR AMIGOS</h2>
+          <p class="modal-sub-title">Inicie uma conversa privada direta com seus amigos.</p>
+        </div>
+        <button class="close-modal" id="btnCloseNewDmModal">✕</button>
+      </header>
+
+      <div class="new-dm-search-wrap">
+        <input type="text" id="inputSearchDmFriends" placeholder="Digite o nome ou a tag de um amigo..." class="source-search-input">
+      </div>
+
+      <div class="new-dm-friends-list" id="newDmFriendsList">
+        <!-- Renderizado dinamicamente via JS -->
+      </div>
+
+      <div class="modal-footer-bar">
+        <button class="btn-cancel-share" id="btnCancelNewDm">Cancelar</button>
+        <button class="btn-confirm-share" id="btnStartDmChat" disabled>Iniciar Conversa</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tela Completa de Configurações do Servidor (Idêntico ao Discord / Imagem enviada) -->
+  <div class="server-settings-overlay" id="serverSettingsOverlay" style="display: none;">
+    <!-- Barra Lateral de Navegação do Servidor -->
+    <aside class="server-settings-sidebar">
+      <div class="srv-nav-server-title" id="srvSettingsTitle">Bads House</div>
+
+      <div class="srv-nav-scroll">
+        <div class="srv-nav-item active" data-srv-tab="profile">Perfil do servidor</div>
+        <div class="srv-nav-item" data-srv-tab="tag">Tag do servidor</div>
+        <div class="srv-nav-item" data-srv-tab="engagement">Engajamento</div>
+        <div class="srv-nav-item" data-srv-tab="boost">Vantagens de Impulso</div>
+
+        <div class="srv-nav-header">Expressões</div>
+        <div class="srv-nav-item" data-srv-tab="emoji">Emoji</div>
+        <div class="srv-nav-item" data-srv-tab="stickers">Figurinhas</div>
+        <div class="srv-nav-item" data-srv-tab="soundboard">Painel de efeitos sonoros</div>
+
+        <div class="srv-nav-header">Pessoas</div>
+        <div class="srv-nav-item srv-nav-external" data-srv-tab="members">
+          <span>Membros</span>
+          <span class="srv-external-icon">↗</span>
+        </div>
+        <div class="srv-nav-item" data-srv-tab="roles">Cargos</div>
+        <div class="srv-nav-item" data-srv-tab="invites">Convites</div>
+        <div class="srv-nav-item" data-srv-tab="access">Acesso</div>
+
+        <div class="srv-nav-header">Apps</div>
+        <div class="srv-nav-item" data-srv-tab="integrations">Integrações</div>
+        <div class="srv-nav-item srv-nav-external" data-srv-tab="apps">
+          <span>Diretório de Apps</span>
+          <span class="srv-external-icon">↗</span>
+        </div>
+
+        <div class="srv-nav-header">Moderação</div>
+        <div class="srv-nav-item" data-srv-tab="safety">Configurações de Segurança</div>
+        <div class="srv-nav-item" data-srv-tab="audit">Registro de auditoria</div>
+        <div class="srv-nav-item" data-srv-tab="bans">Banimentos</div>
+
+        <div class="srv-nav-header">Comunidade</div>
+        <div class="srv-nav-item" data-srv-tab="community">Visão geral da comunidade</div>
+        <div class="srv-nav-item" data-srv-tab="onboarding">Onboarding</div>
+        <div class="srv-nav-item" data-srv-tab="analytics">Análises do servidor</div>
+        <div class="srv-nav-item" data-srv-tab="welcome">Tela de Boas-vindas</div>
+
+        <div class="srv-nav-divider"></div>
+        <div class="srv-nav-item danger" id="srvSettingsBtnDelete">Excluir Servidor</div>
+      </div>
+    </aside>
+
+    <!-- Conteúdo Principal de Edição do Servidor -->
+    <main class="server-settings-content">
+      <!-- ABA 1: PERFIL DO SERVIDOR -->
+      <div class="server-settings-inner" id="paneSrvProfile">
+        <!-- Coluna da Esquerda: Formulários de Configuração -->
+        <div class="srv-content-left">
+          <!-- Seção: Ícone -->
+          <div class="srv-form-section">
+            <h3 class="srv-section-heading">Ícone</h3>
+            <p class="srv-section-sub">Recomendamos uma imagem de, pelo menos, 512x512.</p>
+            <div class="srv-btn-row">
+              <button class="srv-btn-primary" id="btnChangeServerIcon">Altere o ícone do servidor</button>
+              <button class="srv-btn-danger-outline" id="btnRemoveServerIcon">Remover o Ícone</button>
+            </div>
+            <input type="file" id="inputServerIconFile" accept="image/*" style="display: none;">
+          </div>
+
+          <div class="srv-divider"></div>
+
+          <!-- Seção: Faixa / Banner -->
+          <div class="srv-form-section">
+            <h3 class="srv-section-heading">Faixa</h3>
+            <div class="srv-banner-color-palette" id="srvBannerPalette">
+              <div class="srv-color-swatch active" data-color="#eab308" style="background:#eab308;"></div>
+              <div class="srv-color-swatch" data-color="#ec4899" style="background:#ec4899;"></div>
+              <div class="srv-color-swatch" data-color="#ef4444" style="background:#ef4444;"></div>
+              <div class="srv-color-swatch" data-color="#f97316" style="background:#f97316;"></div>
+              <div class="srv-color-swatch" data-color="#eab308" style="background:#eab308;"></div>
+              <div class="srv-color-swatch" data-color="#a855f7" style="background:#a855f7;"></div>
+              <div class="srv-color-swatch" data-color="#06b6d4" style="background:#06b6d4;"></div>
+              <div class="srv-color-swatch" data-color="#10b981" style="background:#10b981;"></div>
+              <div class="srv-color-swatch" data-color="#84cc16" style="background:#84cc16;"></div>
+              <div class="srv-color-swatch" data-color="#2b2d31" style="background:#2b2d31;"></div>
+            </div>
+          </div>
+
+          <div class="srv-divider"></div>
+
+          <!-- Seção: Características -->
+          <div class="srv-form-section">
+            <h3 class="srv-section-heading">Características</h3>
+            <p class="srv-section-sub">Adicione até 5 características para mostrar os interesses e a personalidade do seu servidor.</p>
+            <div class="srv-traits-grid">
+              <input type="text" class="srv-trait-input" placeholder="🙂 Jogos" id="trait1">
+              <input type="text" class="srv-trait-input" placeholder="🙂 Amizades" id="trait2">
+              <input type="text" class="srv-trait-input" placeholder="🙂 Música" id="trait3">
+              <input type="text" class="srv-trait-input" placeholder="🙂 Tecnologia" id="trait4">
+              <input type="text" class="srv-trait-input" placeholder="🙂 Comunidade" id="trait5">
+            </div>
+          </div>
+
+          <div class="srv-divider"></div>
+
+          <!-- Seção: Descrição -->
+          <div class="srv-form-section">
+            <h3 class="srv-section-heading">Descrição</h3>
+            <p class="srv-section-sub">Como seu servidor começou? Por que as pessoas devem participar?</p>
+            <textarea class="srv-textarea" id="srvDescriptionInput" placeholder="Conte ao mundo mais sobre esse servidor." rows="4"></textarea>
+          </div>
+
+          <div class="srv-divider"></div>
+
+          <!-- Seção: Jogos Jogados -->
+          <div class="srv-form-section">
+            <h3 class="srv-section-heading">Jogos Jogados</h3>
+            <p class="srv-section-sub">Quais jogos os seus membros do servidor estão jogando?</p>
+            <select class="srv-select" id="srvGamesSelect">
+              <option value="">Procurar um jogo...</option>
+              <option value="VALORANT">VALORANT</option>
+              <option value="Counter-Strike 2">Counter-Strike 2</option>
+              <option value="League of Legends">League of Legends</option>
+              <option value="Dota 2">Dota 2</option>
+              <option value="Minecraft">Minecraft</option>
+              <option value="GTA V">Grand Theft Auto V</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Coluna da Direita: Card Preview (Idêntico ao Discord) -->
+        <div class="srv-content-right">
+          <div class="srv-preview-card" id="srvPreviewCard">
+            <div class="srv-preview-banner" id="srvPreviewBanner"></div>
+            <div class="srv-preview-body">
+              <div class="srv-preview-avatar" id="srvPreviewAvatar">
+                <span id="srvPreviewInitial">B</span>
+                <img id="srvPreviewImg" style="display: none;" alt="Ícone">
+              </div>
+              <div class="srv-preview-name-row">
+                <h4 id="srvPreviewName">Bads House</h4>
+                <span class="srv-verified-icon">🛡️</span>
+              </div>
+              <div class="srv-preview-stats">
+                <span class="srv-stat-dot"></span>
+                <span id="srvPreviewOnline">9 online</span>
+                <span class="srv-stat-bullet">•</span>
+                <span id="srvPreviewMembers">156 membros</span>
+              </div>
+              <div class="srv-preview-created" id="srvPreviewCreated">
+                Desde dez. de 2016
+              </div>
+              <div class="srv-preview-badges">
+                <span class="srv-badge-chip">👾</span>
+                <span class="srv-badge-chip">🎮</span>
+                <span class="srv-badge-chip">🛡️</span>
+                <span class="srv-badge-chip">🗡️</span>
+                <span class="srv-badge-chip srv-badge-count">+2</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ABA 2: TAG DO SERVIDOR (100% DESBLOQUEADA — IDÊNTICA À FOTO DO USUÁRIO) -->
+      <div class="server-settings-inner" id="paneSrvTag" style="display: none;">
+        <!-- Coluna da Esquerda: Formulários da Tag -->
+        <div class="srv-content-left">
+          <h2 class="srv-main-heading">Tag do servidor</h2>
+          <p class="srv-section-sub" style="margin-top: 8px; line-height: 1.5;">
+            Crie uma tag que os membros do servidor possam exibir ao lado do nome deles! Qualquer pessoa fora do servidor pode visualizar seu <span class="srv-link-text">perfil de servidor</span> através da tag do servidor e, se as solicitações estiverem habilitadas, eles podem <span class="srv-link-text">pedir para entrar</span>.
+          </p>
+
+          <!-- Aviso Informativo -->
+          <div class="srv-info-callout">
+            <div class="srv-callout-icon">ℹ️</div>
+            <div class="srv-callout-text">
+              Seu perfil do servidor é privado. Usuários não poderão vê-lo a partir de uma tag do servidor. <span class="srv-link-text">Editar configuração</span>
+            </div>
+          </div>
+
+          <!-- Badge Desbloqueado com Sucesso -->
+          <div class="srv-boost-unlocked-badge">
+            <span class="srv-boost-icon">✨</span>
+            <span class="srv-boost-unlocked-text"><strong>Desbloqueado com impulso</strong> — Nível 3 Ativo</span>
+            <span class="srv-unlocked-check">✓ Ativo</span>
+          </div>
+
+          <!-- Campo: Escolha um nome da Tag -->
+          <div class="srv-form-section" style="margin-top: 20px;">
+            <label class="srv-input-label">Escolha um nome</label>
+            <div class="srv-tag-input-row">
+              <div class="srv-tag-preview-box">
+                <span class="srv-tag-badge-icon" id="tagBadgeIconDisplay">🗡️</span>
+                <input type="text" class="srv-tag-text-input" id="inputServerTagText" value="KBM!" maxlength="4" placeholder="TAG">
+              </div>
+              <span class="srv-tag-helper-text">
+                Você pode usar no máximo 4 caracteres, alfabeto e números.
+              </span>
+            </div>
+          </div>
+
+          <!-- Aviso de Atualização -->
+          <div class="srv-info-callout" style="margin-top: 14px;">
+            <div class="srv-callout-icon">ℹ️</div>
+            <div class="srv-callout-text">
+              Atualizar a tag do servidor exigirá que todos os membros apliquem manualmente a tag ao perfil deles. Fazemos isso para evitar abusos. <span class="srv-link-text">Saiba mais</span>
+            </div>
+          </div>
+
+          <!-- Seletor: Escolha uma Insígnia -->
+          <div class="srv-form-section" style="margin-top: 24px;">
+            <label class="srv-input-label">Escolha uma insígnia</label>
+            <p class="srv-section-sub">Mudar apenas a insígnia não removerá a tag do servidor dos assinantes.</p>
+            <div class="srv-badges-grid" id="srvBadgesGrid">
+              <div class="srv-badge-select-item" data-badge="🍃">🍃</div>
+              <div class="srv-badge-select-item active" data-badge="🗡️">🗡️</div>
+              <div class="srv-badge-select-item" data-badge="💖">💖</div>
+              <div class="srv-badge-select-item" data-badge="🔥">🔥</div>
+              <div class="srv-badge-select-item" data-badge="💧">💧</div>
+              <div class="srv-badge-select-item" data-badge="💀">💀</div>
+              <div class="srv-badge-select-item" data-badge="🌙">🌙</div>
+              <div class="srv-badge-select-item" data-badge="⚡">⚡</div>
+              <div class="srv-badge-select-item" data-badge="✨">✨</div>
+              <div class="srv-badge-select-item" data-badge="🍄">🍄</div>
+            </div>
+          </div>
+
+          <!-- Seletor: Escolha cor -->
+          <div class="srv-form-section" style="margin-top: 24px;">
+            <label class="srv-input-label">Escolha cor</label>
+            <div class="srv-badge-colors-row" id="srvBadgeColorsRow">
+              <div class="srv-badge-color-item active" data-color="#eb459e" style="border-color:#eb459e;">
+                <span style="filter: drop-shadow(0 0 4px #eb459e)">🗡️</span>
+              </div>
+              <div class="srv-badge-color-item" data-color="#f97316" style="border-color:#f97316;">
+                <span style="filter: drop-shadow(0 0 4px #f97316)">🗡️</span>
+              </div>
+              <div class="srv-badge-color-item" data-color="#eab308" style="border-color:#eab308;">
+                <span style="filter: drop-shadow(0 0 4px #eab308)">🗡️</span>
+              </div>
+              <div class="srv-badge-color-item" data-color="#10b981" style="border-color:#10b981;">
+                <span style="filter: drop-shadow(0 0 4px #10b981)">🗡️</span>
+              </div>
+              <div class="srv-badge-color-item" data-color="#06b6d4" style="border-color:#06b6d4;">
+                <span style="filter: drop-shadow(0 0 4px #06b6d4)">🗡️</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coluna da Direita: Mockup de Chat com a Tag (Idêntico à Foto do Usuário) -->
+        <div class="srv-content-right">
+          <div class="srv-chat-preview-box">
+            <!-- Mensagem 1 -->
+            <div class="srv-chat-msg">
+              <div class="srv-chat-avatar" style="background:#9333ea;">R</div>
+              <div class="srv-chat-msg-body">
+                <span class="srv-chat-author">Roka</span>
+                <p class="srv-chat-text">alguém a fim de aram</p>
+              </div>
+            </div>
+            <!-- Mensagem 2 -->
+            <div class="srv-chat-msg">
+              <div class="srv-chat-avatar" style="background:#06b6d4;">H</div>
+              <div class="srv-chat-msg-body">
+                <span class="srv-chat-author">hongo</span>
+                <p class="srv-chat-text">sim, bora nóis</p>
+              </div>
+            </div>
+            <!-- Mensagem 3 (COM A TAG EM DESTAQUE) -->
+            <div class="srv-chat-msg srv-chat-highlight">
+              <div class="srv-chat-avatar" style="background:#eab308;">L</div>
+              <div class="srv-chat-msg-body">
+                <div class="srv-chat-author-line">
+                  <span class="srv-chat-author" style="color:#f2f3f5;">Lily</span>
+                  <span class="srv-chat-tag-pill" id="srvChatTagPill">
+                    <span id="previewTagIcon">🗡️</span>
+                    <strong id="previewTagText">KBM!</strong>
+                  </span>
+                </div>
+                <p class="srv-chat-text">dá uma olhada na minha tag!</p>
+              </div>
+            </div>
+            <!-- Mensagem 4 -->
+            <div class="srv-chat-msg">
+              <div class="srv-chat-avatar" style="background:#10b981;">S</div>
+              <div class="srv-chat-msg-body">
+                <span class="srv-chat-author">sharon</span>
+                <p class="srv-chat-text">eita, como você conseguiu isso</p>
+              </div>
+            </div>
+            <!-- Mensagem 5 -->
+            <div class="srv-chat-msg">
+              <div class="srv-chat-avatar" style="background:#f97316;">L</div>
+              <div class="srv-chat-msg-body">
+                <span class="srv-chat-author">Lily</span>
+                <p class="srv-chat-text">qualquer um aqui pode conseguir!</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Barra de Salvar Alterações Geral -->
+      <div class="srv-save-bar" id="srvSaveBar" style="display: none;">
+        <span>Aviso — Você tem alterações não salvas!</span>
+        <div class="srv-save-actions">
+          <button class="srv-btn-reset" id="btnResetServerSettings">Redefinir</button>
+          <button class="srv-btn-save" id="btnSaveServerSettings">Salvar alterações</button>
+        </div>
+      </div>
+
+      <!-- Botão ESC para Fechar -->
+      <div class="esc-close-wrapper srv-esc-btn" id="btnCloseServerSettings" title="Fechar configurações do servidor (ESC)">
+        <div class="esc-circle">✕</div>
+        <span class="esc-text">ESC</span>
+      </div>
+    </main>
+  </div>
+
+  <!-- LiveKit Client SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
