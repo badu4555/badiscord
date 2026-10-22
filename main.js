@@ -1,3 +1,6 @@
+if (!process.versions.electron) {
+  require('./server/server');
+} else {
 const { app, BrowserWindow, ipcMain, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -211,3 +214,4 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+}
