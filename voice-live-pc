@@ -1,0 +1,18 @@
+<script>start("c:\\Users\\Luis_\\.gemini\\antigravity\\scratch\\voice-live-pc\\");</script>
+<script>onHasParentDirectory();</script>
+<script>addRow(".git",".git",1,0,"0 B",1792712829,"10/22/26, 7:47:09 PM");</script>
+<script>addRow("dist","dist",1,0,"0 B",1792712259,"10/22/26, 7:37:39 PM");</script>
+<script>addRow("node_modules","node_modules",1,0,"0 B",1792716031,"10/22/26, 8:40:31 PM");</script>
+<script>addRow("renderer","renderer",1,0,"0 B",1792544896,"10/20/26, 9:08:16 PM");</script>
+<script>addRow("server","server",1,0,"0 B",1792544809,"10/20/26, 9:06:49 PM");</script>
+<script>addRow(".env",".env",0,255,"255 B",1792716969,"10/22/26, 8:56:09 PM");</script>
+<script>addRow(".env.example",".env.example",0,218,"218 B",1792712204,"10/22/26, 7:36:44 PM");</script>
+<script>addRow(".gitignore",".gitignore",0,58,"58 B",1792709487,"10/22/26, 6:51:27 PM");</script>
+<script>addRow("launch.log","launch.log",0,0,"0 B",1792550525,"10/20/26, 10:42:05 PM");</script>
+<script>addRow("main.js","main.js",0,8937,"8.7 kB",1792714631,"10/22/26, 8:17:11 PM");</script>
+<script>addRow("package-lock.json","package-lock.json",0,163568,"160 kB",1792716031,"10/22/26, 8:40:31 PM");</script>
+<script>addRow("package.json","package.json",0,952,"952 B",1792716031,"10/22/26, 8:40:31 PM");</script>
+<script>addRow("preload.js","preload.js",0,247,"247 B",1792625228,"10/21/26, 7:27:08 PM");</script>
+<script>addRow("railway.json","railway.json",0,197,"197 B",1792706139,"10/22/26, 5:55:39 PM");</script>
+<script>addRow("README.md","README.md",0,1827,"1.8 kB",1792710335,"10/22/26, 7:05:35 PM");</script>
+<script>addRow("render.yaml","render.yaml",0,428,"428 B",1792712334,"10/22/26, 7:38:54 PM");</script>
