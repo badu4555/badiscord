@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BADISCORD</title>
   <link rel="stylesheet" href="styles.css">
+  <script src="../node_modules/livekit-client/dist/livekit-client.umd.js"></script>
 </head>
 <body>
   <!-- TELA DE AUTENTICAÇÃO: LOGIN, REGISTRO E RECUPERAÇÃO COM 2FA -->
@@ -618,6 +619,32 @@
       <button class="sb-btn" data-sound="gameover">💀 Game Over</button>
       <button class="sb-btn" data-sound="laser">⚡ Laser</button>
       <button class="sb-btn" data-sound="correct">✨ Vitória GG</button>
+    </div>
+  </div>
+
+  <!-- Modal de Confirmação ao trocar de canal de voz -->
+  <div class="modal-overlay voice-switch-modal" id="voiceSwitchModal" style="display: none;">
+    <div class="voice-switch-card">
+      <div class="voice-switch-header">
+        <h3>Você tem certeza?</h3>
+        <button class="close-modal voice-switch-close" id="btnCloseVoiceSwitchModal" aria-label="Fechar">✕</button>
+      </div>
+
+      <div class="voice-switch-body">
+        <p id="voiceSwitchText">Parece que você está em outro canal de voz. Deseja mesmo mudar para <strong id="voiceSwitchTargetName">VAVA</strong>?</p>
+      </div>
+
+      <div class="voice-switch-actions">
+        <label class="voice-switch-dont-ask">
+          <input type="checkbox" id="chkDontAskVoiceSwitch">
+          <span>Não perguntar de novo</span>
+        </label>
+
+        <div class="voice-switch-buttons">
+          <button class="cancel-btn" id="btnCancelVoiceSwitch">Cancelar</button>
+          <button class="confirm-btn" id="btnConfirmVoiceSwitch">Confirmar</button>
+        </div>
+      </div>
     </div>
   </div>
 

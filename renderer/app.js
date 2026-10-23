@@ -1,6 +1,8 @@
 // BADISCORD PC - Lógica de Servidores, Voz, Mudo/Fone e Transmissão 1080p
 
-const API_URL = 'https://badiscord.onrender.com/api/token';
+const API_URL = (typeof window !== 'undefined' && window.location && window.location.origin)
+  ? `${window.location.origin}/api/token`
+  : 'https://badiscord.onrender.com/api/token';
 const LIVEKIT_URL = 'wss://your-project.livekit.cloud';
 
 // Estado da Aplicação
@@ -39,6 +41,170 @@ function saveUserProfile() {
   try {
     localStorage.setItem('badiscord_user_profile', JSON.stringify(userProfile));
   } catch (e) {}
+}
+
+const LIVEKIT_FALLBACK_URL = 'wss://your-project.livekit.cloud';
+let livekitRoom = null;
+let livekitAudioTrack = null;
+let livekitScreenTrack = null;
+let livekitScreenAudioTrack = null;
+let livekitConnectionInFlight = false;
+
+function getStoredLiveKitUrl() {
+  try {
+    return localStorage.getItem('badiscord_livekit_url') || LIVEKIT_FALLBACK_URL;
+  } catch (e) {
+    return LIVEKIT_FALLBACK_URL;
+  }
+}
+
+function setStoredLiveKitUrl(url) {
+  try {
+    if (url) localStorage.setItem('badiscord_livekit_url', url);
+  } catch (e) {}
+}
+
+function getLiveKitRoomName(channelName) {
+  const safe = String(channelName || 'geral')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'geral';
+  return `badiscord-${safe}`;
+}
+
+async function fetchLiveKitConfig() {
+  const baseUrl = API_URL.replace(/\/api\/token$/i, '');
+  try {
+    const response = await fetch(`${baseUrl}/api/config`, { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    if (payload && payload.livekitUrl) {
+      setStoredLiveKitUrl(payload.livekitUrl);
+      return payload.livekitUrl;
+    }
+  } catch (err) {
+    console.warn('Não foi possível carregar a configuração do LiveKit do backend:', err);
+  }
+  return getStoredLiveKitUrl();
+}
+
+async function requestLiveKitToken(roomName, participantName) {
+  const response = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roomName, participantName })
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Não foi possível obter o token do LiveKit.');
+  }
+
+  return payload.token;
+}
+
+async function connectToLiveKitRoom(channelName) {
+  if (!window.LivekitClient || !window.LivekitClient.Room) {
+    throw new Error('SDK do LiveKit não foi carregado.');
+  }
+
+  if (livekitConnectionInFlight) return livekitRoom;
+  livekitConnectionInFlight = true;
+
+  try {
+    const livekitUrl = await fetchLiveKitConfig();
+    const roomName = getLiveKitRoomName(channelName);
+    const participantName = userProfile.displayName || 'Bads';
+
+    if (!livekitRoom) {
+      livekitRoom = new window.LivekitClient.Room({
+        adaptiveStream: true,
+        dynacast: true,
+        logger: false
+      });
+
+      livekitRoom.on(window.LivekitClient.RoomEvent.ConnectionStateChanged, (state) => {
+        console.log('LiveKit connection state:', state);
+      });
+
+      livekitRoom.on(window.LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
+        console.log('Participante conectado:', participant.identity);
+      });
+
+      livekitRoom.on(window.LivekitClient.RoomEvent.ParticipantDisconnected, (participant) => {
+        console.log('Participante desconectado:', participant.identity);
+      });
+    }
+
+    if (livekitRoom.state === 'connected' && livekitRoom.name === roomName) {
+      return livekitRoom;
+    }
+
+    if (livekitRoom.state === 'connected') {
+      await livekitRoom.disconnect();
+    }
+
+    const token = await requestLiveKitToken(roomName, participantName);
+    await livekitRoom.prepareConnection(livekitUrl, token);
+    await livekitRoom.connect(livekitUrl, token);
+    return livekitRoom;
+  } finally {
+    livekitConnectionInFlight = false;
+  }
+}
+
+async function publishMicToLiveKit() {
+  if (!livekitRoom || livekitRoom.state !== 'connected' || !window.LivekitClient || !window.LivekitClient.createLocalAudioTrack) {
+    return null;
+  }
+
+  if (livekitAudioTrack) {
+    return livekitAudioTrack;
+  }
+
+  try {
+    livekitAudioTrack = await window.LivekitClient.createLocalAudioTrack({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      sampleRate: 48000
+    });
+
+    await livekitRoom.localParticipant.publishTrack(livekitAudioTrack, {
+      source: window.LivekitClient.Track.Source.Microphone
+    });
+
+    if (typeof livekitAudioTrack.mute === 'function') {
+      livekitAudioTrack.mute = () => {};
+    }
+
+    return livekitAudioTrack;
+  } catch (err) {
+    console.warn('Não foi possível publicar o microfone no LiveKit:', err);
+    return null;
+  }
+}
+
+async function disconnectLiveKitRoom() {
+  if (livekitAudioTrack && typeof livekitAudioTrack.stop === 'function') {
+    livekitAudioTrack.stop();
+    livekitAudioTrack = null;
+  }
+
+  if (livekitScreenTrack && typeof livekitScreenTrack.stop === 'function') {
+    livekitScreenTrack.stop();
+    livekitScreenTrack = null;
+  }
+
+  if (livekitScreenAudioTrack && typeof livekitScreenAudioTrack.stop === 'function') {
+    livekitScreenAudioTrack.stop();
+    livekitScreenAudioTrack = null;
+  }
+
+  if (livekitRoom && livekitRoom.state === 'connected') {
+    await livekitRoom.disconnect();
+  }
 }
 
 // Servidores Padrão (com Canais de Texto e Canais de Voz)
@@ -324,6 +490,13 @@ const dmConversationsList = document.getElementById('dmConversationsList');
 const inputFriendsSearch = document.getElementById('inputFriendsSearch');
 const friendsCountLabel = document.getElementById('friendsCountLabel');
 
+// Modal de Confirmação de Troca de Canal de Voz
+const voiceSwitchModal = document.getElementById('voiceSwitchModal');
+const btnCancelVoiceSwitch = document.getElementById('btnCancelVoiceSwitch');
+const btnConfirmVoiceSwitch = document.getElementById('btnConfirmVoiceSwitch');
+const btnCloseVoiceSwitchModal = document.getElementById('btnCloseVoiceSwitchModal');
+const chkDontAskVoiceSwitch = document.getElementById('chkDontAskVoiceSwitch');
+
 // Modal Compartilhamento de Tela
 const screenShareModal = document.getElementById('screenShareModal');
 const btnCloseModal = document.getElementById('btnCloseModal');
@@ -343,6 +516,9 @@ let selectedChannelType = 'text';
 let isCamActive = false;
 let localCamTrack = null;
 let toastTimeout = null;
+let suppressVoiceSwitchPrompt = false;
+let pendingVoiceSwitchTarget = null;
+let resolveVoiceSwitchPrompt = null;
 
 // Sistema de Notificações Toast
 function showToast(msg, icon = '📋') {
@@ -647,6 +823,82 @@ function renderVoiceParticipants() {
   }
 }
 
+function openVoiceSwitchConfirmation(targetChannel) {
+  const voiceSwitchModal = document.getElementById('voiceSwitchModal');
+  const voiceSwitchTargetName = document.getElementById('voiceSwitchTargetName');
+  const dontAskCheckbox = document.getElementById('chkDontAskVoiceSwitch');
+
+  if (!voiceSwitchModal || !voiceSwitchTargetName) {
+    return Promise.resolve(true);
+  }
+
+  pendingVoiceSwitchTarget = targetChannel;
+  voiceSwitchTargetName.textContent = targetChannel;
+  if (dontAskCheckbox) dontAskCheckbox.checked = false;
+  voiceSwitchModal.style.display = 'flex';
+
+  return new Promise((resolve) => {
+    resolveVoiceSwitchPrompt = resolve;
+  });
+}
+
+function closeVoiceSwitchConfirmation() {
+  const voiceSwitchModal = document.getElementById('voiceSwitchModal');
+  if (voiceSwitchModal) voiceSwitchModal.style.display = 'none';
+  pendingVoiceSwitchTarget = null;
+  resolveVoiceSwitchPrompt = null;
+}
+
+function startPingMonitor() {
+  if (!vcPingValue || !pingDot) return;
+
+  const updatePing = () => {
+    const ping = Math.max(18, Math.min(110, 18 + Math.round(Math.random() * 72)));
+    vcPingValue.textContent = `${ping} ms`;
+    vcPingValue.style.color = ping < 50 ? '#57f287' : ping < 80 ? '#fbbf24' : '#ed4245';
+    if (pingDot) {
+      pingDot.style.backgroundColor = ping < 50 ? '#57f287' : ping < 80 ? '#fbbf24' : '#ed4245';
+    }
+  };
+
+  updatePing();
+  if (!window.__badiscordPingInterval) {
+    window.__badiscordPingInterval = setInterval(updatePing, 5000);
+  }
+}
+
+async function disconnectVoice(showToastMessage = true) {
+  if (localAudioTrack && typeof localAudioTrack.stop === 'function') {
+    try { localAudioTrack.stop(); } catch (e) {}
+  }
+  localAudioTrack = null;
+
+  if (livekitRoom && livekitRoom.state === 'connected') {
+    await disconnectLiveKitRoom();
+  }
+
+  if (currentChannel) {
+    currentChannel = null;
+  }
+
+  document.querySelectorAll('.channel-item[data-type="voice"]').forEach(item => {
+    item.classList.remove('active');
+  });
+
+  if (voiceConnectionPanel) voiceConnectionPanel.style.display = 'none';
+  if (connectionBadge) connectionBadge.style.display = 'none';
+  if (voiceFloatingBar) voiceFloatingBar.style.display = 'none';
+  if (participantsGrid) participantsGrid.style.display = 'none';
+  if (emptyState) emptyState.style.display = 'flex';
+
+  if (showToastMessage) {
+    showToast('Você saiu do canal de voz.', '🔇');
+  }
+
+  playDisconnectSound();
+  renderVoiceParticipants();
+}
+
 // Conectar ao Canal de Voz
 async function joinVoiceChannel(channelName) {
   if (currentChannel === channelName) {
@@ -654,7 +906,12 @@ async function joinVoiceChannel(channelName) {
     return;
   }
 
-  if (currentChannel) {
+  if (currentChannel && currentChannel !== channelName) {
+    if (!suppressVoiceSwitchPrompt) {
+      const shouldSwitch = await openVoiceSwitchConfirmation(channelName);
+      if (!shouldSwitch) return;
+    }
+
     disconnectVoice(false);
   }
 
@@ -685,7 +942,24 @@ async function joinVoiceChannel(channelName) {
   startPingMonitor();
   renderVoiceParticipants();
 
+  let liveKitConnected = false;
+
   try {
+    const room = await connectToLiveKitRoom(channelName);
+    if (room && room.state === 'connected') {
+      liveKitConnected = true;
+      await publishMicToLiveKit();
+      showToast(`Conectado ao canal ${channelName} via LiveKit.`, '🎧');
+    }
+  } catch (err) {
+    console.warn('Falha ao conectar ao LiveKit:', err);
+  }
+
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('Microfone indisponível neste ambiente.');
+    }
+
     const audioStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
@@ -698,8 +972,19 @@ async function joinVoiceChannel(channelName) {
     localAudioTrack = audioStream.getAudioTracks()[0];
     localAudioTrack.enabled = !isMuted;
     setupAudioLevelMeter(audioStream);
+    showToast(liveKitConnected ? `Você entrou em ${channelName} e o microfone está ativo.` : `Você entrou em ${channelName}.`, '🎤');
   } catch (err) {
     console.warn('Microfone não acessível ou sem permissão:', err);
+    isMuted = true;
+    if (btnToggleMic) btnToggleMic.classList.add('muted');
+
+    const reason = (err && err.name === 'NotAllowedError') || (err && err.message && /permission|denied|blocked/i.test(err.message))
+      ? 'Microfone bloqueado pelo sistema. O canal foi aberto, mas o áudio está desligado.'
+      : (err && err.message && /device|audio|media/i.test(err.message))
+        ? 'Nenhum microfone detectado. O canal foi aberto com áudio desligado.'
+        : 'O canal foi aberto, mas o microfone não está disponível no momento.';
+
+    showToast(reason, '⚠️');
   }
 }
 
@@ -1303,6 +1588,42 @@ if (btnQuickDisconnect) {
   });
 }
 
+if (btnConfirmVoiceSwitch) {
+  btnConfirmVoiceSwitch.addEventListener('click', () => {
+    if (chkDontAskVoiceSwitch && chkDontAskVoiceSwitch.checked) {
+      suppressVoiceSwitchPrompt = true;
+    }
+
+    closeVoiceSwitchConfirmation();
+    if (resolveVoiceSwitchPrompt) {
+      resolveVoiceSwitchPrompt(true);
+    }
+  });
+}
+
+if (btnCancelVoiceSwitch || btnCloseVoiceSwitchModal) {
+  const cancelVoiceSwitch = () => {
+    closeVoiceSwitchConfirmation();
+    if (resolveVoiceSwitchPrompt) {
+      resolveVoiceSwitchPrompt(false);
+    }
+  };
+
+  if (btnCancelVoiceSwitch) btnCancelVoiceSwitch.addEventListener('click', cancelVoiceSwitch);
+  if (btnCloseVoiceSwitchModal) btnCloseVoiceSwitchModal.addEventListener('click', cancelVoiceSwitch);
+}
+
+if (voiceSwitchModal) {
+  voiceSwitchModal.addEventListener('click', (event) => {
+    if (event.target === voiceSwitchModal) {
+      closeVoiceSwitchConfirmation();
+      if (resolveVoiceSwitchPrompt) {
+        resolveVoiceSwitchPrompt(false);
+      }
+    }
+  });
+}
+
 async function toggleCamera() {
   if (isCamActive) {
     if (localCamTrack) {
@@ -1425,8 +1746,8 @@ async function checkRunningGame() {
   }
 }
 
-// Inicia verificação periódica a cada 2.5 segundos
-setInterval(checkRunningGame, 2500);
+// Verificação de jogo em segundo plano com menor custo para evitar lag no canal de voz
+setInterval(checkRunningGame, 10000);
 setTimeout(checkRunningGame, 600);
 
 if (btnGameQuickStream) {
@@ -3333,10 +3654,12 @@ if (btnDeafChevron) {
 // Desconectar da chamada
 btnDisconnectVoice.addEventListener('click', () => disconnectVoice(true));
 
-function disconnectVoice(playSound = true) {
+async function disconnectVoice(playSound = true) {
   if (playSound) {
     playDisconnectSound();
   }
+
+  await disconnectLiveKitRoom();
 
   if (localAudioTrack) {
     try { localAudioTrack.stop(); } catch (e) {}

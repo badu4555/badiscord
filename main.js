@@ -5,6 +5,32 @@ const { app, BrowserWindow, ipcMain, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+function ensureWritableElectronPaths() {
+  const os = require('os');
+  const baseDir = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'BADISCORD');
+  const userDataDir = path.join(baseDir, 'User Data');
+  const cacheDir = path.join(baseDir, 'Cache');
+  const logsDir = path.join(baseDir, 'Logs');
+
+  for (const dir of [baseDir, userDataDir, cacheDir, logsDir]) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (err) {
+      console.warn(`Não foi possível criar ${dir}:`, err.message);
+    }
+  }
+
+  app.setPath('userData', userDataDir);
+  app.setPath('cache', cacheDir);
+  app.setPath('logs', logsDir);
+
+  app.commandLine.appendSwitch('user-data-dir', userDataDir);
+  app.commandLine.appendSwitch('disk-cache-dir', cacheDir);
+  app.commandLine.appendSwitch('disable-gpu-shader-disk-cache', 'true');
+}
+
+ensureWritableElectronPaths();
+
 process.on('uncaughtException', (err) => {
   try {
     fs.writeFileSync(path.join(__dirname, 'crash.log'), (err.stack || String(err)) + '\n');
@@ -204,6 +230,19 @@ ipcMain.handle('get-detected-game', async () => {
 });
 
 app.whenReady().then(() => {
+  app.on('web-contents-created', (event, contents) => {
+    contents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+      const allowedPermissions = ['media', 'camera', 'microphone', 'display-capture'];
+
+      if (allowedPermissions.includes(permission)) {
+        callback(true);
+        return;
+      }
+
+      callback(false);
+    });
+  });
+
   createWindow();
 
   app.on('activate', () => {

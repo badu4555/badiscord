@@ -12,5 +12,7 @@ services:
         sync: false
       - key: LIVEKIT_API_SECRET
         sync: false
+      - key: LIVEKIT_WS_URL
+        sync: false
       - key: ALLOWED_ORIGINS
         sync: false
