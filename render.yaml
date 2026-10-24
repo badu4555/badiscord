@@ -12,6 +12,8 @@ services:
     envVars:
       - key: PORT
         value: "10000"
+      - key: PUBLIC_APP_URL
+        value: https://badiscord.onrender.com
       - key: LIVEKIT_API_KEY
         sync: false
       - key: LIVEKIT_API_SECRET

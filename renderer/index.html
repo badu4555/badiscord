@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>BADISCORD</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="styles.css">
@@ -236,7 +236,7 @@
           </div>
           <div class="dm-menu-item" id="dmMenuRequests">
             <span class="dm-menu-icon">💬</span>
-            <span>Solicitações de mensagens</span>
+            <span>Solicitações de amizade</span>
             <span class="dm-badge" id="requestsBadgeCount" style="display:none">0</span>
           </div>
           <div class="dm-menu-item" id="dmMenuNitro">
@@ -437,6 +437,7 @@
               <span class="live-pill">AO VIVO</span>
               <span class="res-pill">1080p 60FPS</span>
               <span id="streamerName">Transmitindo Tela</span>
+              <span class="live-viewer-count" id="liveViewerCount" aria-live="polite">👁 0</span>
               <span id="streamLoopbackBadge" class="stream-loopback-badge" style="display: none;">
                 🎧 Prévia Local Mudo (Anti-Eco)
               </span>
@@ -581,6 +582,14 @@
 
           <form class="chat-input-form" id="chatInputForm">
             <button type="button" class="chat-attach-btn" title="Enviar Anexo">+</button>
+            <div class="chat-attach-menu" id="chatAttachMenu" style="display: none;">
+              <button type="button" data-chat-action="image">🖼️ <span>Enviar imagem</span></button>
+              <button type="button" data-chat-action="file">📎 <span>Enviar arquivo</span></button>
+              <button type="button" data-chat-action="poll">📊 <span>Criar enquete</span></button>
+              <button type="button" data-chat-action="topic">🧵 <span>Criar tópico</span></button>
+            </div>
+            <input type="file" id="chatImageInput" accept="image/*" multiple hidden>
+            <input type="file" id="chatFileInput" multiple hidden>
             <input type="text" id="chatInputText" class="chat-input-text" placeholder="Conversar em #regras-da-casa" autocomplete="off">
             <button type="button" class="chat-emoji-btn" id="btnChatEmoji" title="Abrir Seletor de Emojis">😀</button>
             <button type="submit" class="chat-send-btn" id="btnChatSend" title="Enviar Mensagem">➤</button>
@@ -624,7 +633,7 @@
               <p class="add-friend-subtitle">Você pode adicionar amigos usando o nome de usuário ou a tag (ex: <strong>bads#0000</strong> ou apenas <strong>bads</strong>).</p>
               <form class="add-friend-form" id="formAddFriend">
                 <div class="add-friend-input-box">
-                  <input type="text" id="inputAddFriendName" class="add-friend-input" placeholder="Ex: bads#0000 ou apenas nome do amigo" autocomplete="off" maxlength="37">
+                  <input type="text" id="inputAddFriendName" class="add-friend-input" placeholder="Ex: usuario#1234 ou apenas usuario" autocomplete="off" maxlength="37">
                   <button type="submit" class="btn-send-friend-req" id="btnSubmitAddFriend">Enviar pedido de amizade</button>
                 </div>
               </form>
@@ -1035,7 +1044,7 @@
       <header class="modal-header">
         <div>
           <h3>Convidar amigos para <span id="inviteServerName">o servidor</span></h3>
-          <p class="invite-modal-subtitle">Os destinatários receberão um convite para entrar no servidor</p>
+          <p class="invite-modal-subtitle">Compartilhe o link para permitir que outras pessoas entrem no servidor</p>
         </div>
         <button class="close-modal" id="btnCloseInviteModal">✕</button>
       </header>
@@ -1048,9 +1057,9 @@
         <div class="invite-friends-list" id="inviteFriendsList"></div>
 
         <div class="invite-divider"></div>
-        <strong class="invite-link-title">Ou, envie um convite do servidor a um amigo</strong>
+        <strong class="invite-link-title">Ou, compartilhe o link de convite</strong>
         <div class="invite-link-box">
-          <input type="text" id="inputInviteLink" readonly value="https://badiscord.gg/live-1080p">
+          <input type="text" id="inputInviteLink" readonly value="">
           <button id="btnCopyInviteLink" class="btn-send-friend-req">Copiar</button>
         </div>
       </div>
@@ -1767,9 +1776,9 @@
           <div class="toggle-row">
             <div class="toggle-text">
               <span class="toggle-title">Notificações na área de trabalho</span>
-              <span class="toggle-desc">Exibe avisos do sistema quando alguém entrar no canal ou iniciar live.</span>
+              <span class="toggle-desc">Receba um aviso do sistema quando alguém enviar uma solicitação de amizade. O navegador ou sistema pode pedir permissão.</span>
             </div>
-            <label class="discord-switch"><input type="checkbox" id="desktopNotifsToggle" checked><span class="discord-switch-slider"></span></label>
+            <label class="discord-switch"><input type="checkbox" id="desktopNotifsToggle"><span class="discord-switch-slider"></span></label>
           </div>
         </div>
 
@@ -2152,7 +2161,6 @@
   </div>
 
   <!-- LiveKit Client SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

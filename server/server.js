@@ -80,6 +80,7 @@ const LIVEKIT_API_KEY = isLiveKitConfigured ? livekitApiKey : DEV_LIVEKIT_KEY;
 const LIVEKIT_API_SECRET = isLiveKitConfigured ? livekitApiSecret : DEV_LIVEKIT_SECRET;
 const LIVEKIT_WS_URL = isLiveKitConfigured ? livekitWsUrl : (hasPlaceholderLiveKitUrl(livekitWsUrl) ? REAL_LIVEKIT_WS_URL : (livekitWsUrl || REAL_LIVEKIT_WS_URL));
 const REMOTE_BACKEND_URL = process.env.REMOTE_BACKEND_URL || 'https://badiscord.onrender.com';
+const PUBLIC_APP_URL = normalize(process.env.PUBLIC_APP_URL).replace(/\/+$/, '');
 const PORT = Number(process.env.PORT || 3000);
 const databasePath = process.env.DB_PATH || path.join(__dirname, 'data', 'badiscord.db');
 fs.mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -100,6 +101,13 @@ db.exec(`
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at INTEGER NOT NULL,
     created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS user_presence (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('online', 'idle', 'dnd', 'invisible')),
+    detail TEXT NOT NULL DEFAULT '',
+    game TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS recovery_codes (
     id TEXT PRIMARY KEY,
@@ -149,6 +157,32 @@ db.exec(`
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS server_invite_links (
+    token TEXT PRIMARY KEY,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS channel_messages (
+    id TEXT PRIMARY KEY,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    channel_name TEXT NOT NULL,
+    author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    author_name TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS dm_messages (
+    id TEXT PRIMARY KEY,
+    user_a TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_b TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    author_name TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS custom_sounds (
     id TEXT PRIMARY KEY,
     server_id TEXT NOT NULL DEFAULT 'legacy',
@@ -160,7 +194,12 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS friend_requests_receiver_idx ON friend_requests(receiver_id, status);
+  CREATE INDEX IF NOT EXISTS friend_requests_sender_idx ON friend_requests(sender_id, status);
   CREATE INDEX IF NOT EXISTS server_members_user_id_idx ON server_members(user_id);
+  CREATE INDEX IF NOT EXISTS channel_messages_channel_created_idx ON channel_messages(server_id, channel_name, created_at);
+  CREATE INDEX IF NOT EXISTS channel_messages_updated_at_idx ON channel_messages(updated_at);
+  CREATE INDEX IF NOT EXISTS dm_messages_conversation_created_idx ON dm_messages(user_a, user_b, created_at);
+  CREATE INDEX IF NOT EXISTS dm_messages_updated_at_idx ON dm_messages(updated_at);
 `);
 
 const serverColumns = new Set(db.pragma('table_info(servers)').map((column) => column.name));
@@ -420,7 +459,17 @@ app.get('/api/auth/me', (req, res) => {
 
 app.post('/api/auth/logout', (req, res) => {
   const token = parseCookies(req).badiscord_session;
-  if (token) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashSessionToken(token));
+  if (token) {
+    const tokenHash = hashSessionToken(token);
+    const session = db.prepare('SELECT user_id FROM sessions WHERE token_hash = ?').get(tokenHash);
+    if (session) {
+      db.prepare(`INSERT INTO user_presence (user_id, status, detail, game, updated_at)
+        VALUES (?, 'invisible', '', '', ?)
+        ON CONFLICT(user_id) DO UPDATE SET status = 'invisible', detail = '', game = '', updated_at = excluded.updated_at`)
+        .run(session.user_id, Date.now());
+    }
+    db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash);
+  }
   clearSessionCookie(res);
   return res.json({ ok: true });
 });
@@ -457,21 +506,149 @@ app.post('/api/auth/recovery/reset', async (req, res) => {
   return res.json({ user: publicUser(recovery) });
 });
 
-function formatFriend(user, status) {
+const PRESENCE_STALE_AFTER_MS = 45_000;
+
+function formatFriend(user, relationshipStatus) {
+  const presence = db.prepare(`SELECT status, detail, game, updated_at
+    FROM user_presence WHERE user_id = ?`).get(user.id);
+  const isStale = !presence || Date.now() - presence.updated_at > PRESENCE_STALE_AFTER_MS;
+  const visibleStatus = isStale || presence.status === 'invisible' ? 'offline' : presence.status;
   return {
     id: user.id,
     name: user.display_name,
     username: user.username,
     tag: user.tag,
     fullTag: `${user.username}#${user.tag}`,
-    status: 'online',
-    detail: 'Disponível',
-    relationshipStatus: status
+    status: visibleStatus,
+    detail: visibleStatus === 'offline' ? 'Offline' : (presence.detail || 'Disponível'),
+    game: visibleStatus === 'offline' ? '' : presence.game,
+    relationshipStatus
   };
 }
 
 function canAccessServer(userId, serverId) {
   return Boolean(db.prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, userId));
+}
+
+function canMessageFriendship(userId, friendId) {
+  return Boolean(db.prepare(`SELECT 1 FROM friendships
+    WHERE (user_a = ? AND user_b = ?) OR (user_a = ? AND user_b = ?)`)
+    .get(userId, friendId, friendId, userId));
+}
+
+function getDmParticipants(userId, friendId) {
+  const friend = db.prepare('SELECT id FROM users WHERE id = ?').get(friendId);
+  if (!friend || friend.id === userId || !canMessageFriendship(userId, friend.id)) return null;
+  return [userId, friend.id].sort();
+}
+
+function getAuthorizedTextChannel(req, res) {
+  const serverId = normalize(req.params.serverId);
+  const channelName = normalize(req.params.channelName).slice(0, 80);
+  if (!serverId || !channelName || !canAccessServer(req.user.id, serverId)) {
+    res.status(403).json({ error: 'Você não tem acesso a este servidor.' });
+    return null;
+  }
+  const server = db.prepare('SELECT text_channels_json FROM servers WHERE id = ?').get(serverId);
+  const textChannels = parseJsonValue(server?.text_channels_json, []);
+  if (!Array.isArray(textChannels) || !textChannels.includes(channelName)) {
+    res.status(404).json({ error: 'Canal de texto não encontrado.' });
+    return null;
+  }
+  return { serverId, channelName };
+}
+
+function formatChannelMessage(row) {
+  return {
+    ...parseJsonValue(row.content_json, {}),
+    id: row.id,
+    author: row.author_name,
+    authorId: row.author_id,
+    time: `Hoje às ${new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`,
+    updatedAt: row.updated_at
+  };
+}
+
+function normalizeChatMessageInput(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { error: 'Mensagem inválida.' };
+  }
+  const text = typeof input.text === 'string' ? input.text.trim().slice(0, 4000) : '';
+  if (input.attachments != null && !Array.isArray(input.attachments)) {
+    return { error: 'Anexos inválidos.' };
+  }
+  const attachments = Array.isArray(input.attachments) ? input.attachments : [];
+  if (attachments.length > 5) return { error: 'Envie no máximo cinco anexos por mensagem.' };
+  let attachmentBytes = 0;
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment.name !== 'string' || attachment.name.length > 255 ||
+      typeof attachment.data !== 'string' ||
+      !/^data:[^;,]+;base64,[a-z0-9+/]+=*$/i.test(attachment.data) || attachment.data.length > 1400000) {
+      return { error: 'Um dos anexos é inválido ou excede o limite de tamanho.' };
+    }
+    attachmentBytes += attachment.data.length;
+  }
+  if (attachmentBytes > 1400000) return { error: 'O tamanho total dos anexos por mensagem não pode exceder 1 MB.' };
+
+  let poll;
+  if (input.poll && typeof input.poll === 'object') {
+    const question = normalize(input.poll.question).slice(0, 200);
+    const options = Array.isArray(input.poll.options)
+      ? [...new Set(input.poll.options.map(normalize).filter(Boolean))].slice(0, 6)
+      : [];
+    if (!question || options.length < 2) return { error: 'A enquete precisa de uma pergunta e pelo menos duas opções.' };
+    poll = { question, options, votes: {} };
+  }
+
+  let topic;
+  if (input.topic && typeof input.topic === 'object') {
+    const title = normalize(input.topic.title).slice(0, 120);
+    if (!title) return { error: 'O tópico precisa de um título.' };
+    topic = {
+      title,
+      description: normalize(input.topic.description).slice(0, 1000),
+      replies: []
+    };
+  }
+
+  if (!text && attachments.length === 0 && !poll && !topic) {
+    return { error: 'A mensagem não pode estar vazia.' };
+  }
+
+  return {
+    content: {
+      text,
+      avatar: normalize(input.avatar).slice(0, 500000),
+      attachments,
+      ...(poll ? { poll } : {}),
+      ...(topic ? { topic } : {})
+    }
+  };
+}
+
+function nextChannelMessageTimestamp() {
+  const latest = db.prepare('SELECT updated_at FROM channel_messages ORDER BY updated_at DESC LIMIT 1').get();
+  const latestTime = latest ? Date.parse(latest.updated_at) : 0;
+  return new Date(Math.max(Date.now(), (Number.isFinite(latestTime) ? latestTime : 0) + 1)).toISOString();
+}
+
+function fitMessageResponse(rows, newestFirst = false) {
+  const messages = [];
+  let responseBytes = 0;
+  for (const row of rows) {
+    const message = formatChannelMessage(row);
+    const messageBytes = Buffer.byteLength(JSON.stringify(message));
+    if (messages.length > 0 && responseBytes + messageBytes > 4 * 1024 * 1024) break;
+    messages.push(message);
+    responseBytes += messageBytes;
+  }
+  if (newestFirst) messages.reverse();
+  return messages;
+}
+
+function liveKitRoomSlug(value, maxLength) {
+  return normalize(value).toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '').slice(0, maxLength) || 'geral';
 }
 
 function parseJsonValue(value, fallback) {
@@ -520,8 +697,14 @@ function ensurePersonalServer(user) {
   const serverId = `home-${user.id}`;
   const createdAt = new Date().toISOString();
   db.transaction(() => {
-    db.prepare(`INSERT OR IGNORE INTO servers (id, name, icon, owner_id, is_public, created_at)
-      VALUES (?, ?, '🎮', ?, 0, ?)`).run(serverId, user.display_name, user.id, createdAt);
+    db.prepare(`INSERT OR IGNORE INTO servers
+      (id, name, icon, text_channels_json, voice_channels_json, owner_id, is_public, created_at)
+      VALUES (?, ?, '🎮', '["geral"]', '["Geral 🔊"]', ?, 0, ?)`)
+      .run(serverId, user.display_name, user.id, createdAt);
+    db.prepare(`UPDATE servers SET
+      text_channels_json = CASE WHEN text_channels_json = '[]' THEN '["geral"]' ELSE text_channels_json END,
+      voice_channels_json = CASE WHEN voice_channels_json = '[]' THEN '["Geral 🔊"]' ELSE voice_channels_json END
+      WHERE id = ?`).run(serverId);
     db.prepare(`INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at)
       VALUES (?, ?, 'owner', ?)`).run(serverId, user.id, createdAt);
   })();
@@ -530,6 +713,153 @@ function ensurePersonalServer(user) {
 
 app.get('/api/servers', requireAuth, (req, res) => {
   return res.json({ servers: listAccessibleServers(req.user.id) });
+});
+
+app.get('/api/servers/:serverId/channels/:channelName/messages', requireAuth, (req, res) => {
+  const channel = getAuthorizedTextChannel(req, res);
+  if (!channel) return;
+  const since = normalize(req.query.since);
+  if (since && (since.length > 40 || !Number.isFinite(Date.parse(since)))) {
+    return res.status(400).json({ error: 'Cursor de mensagens inválido.' });
+  }
+  const messages = since
+    ? db.prepare(`SELECT * FROM channel_messages
+      WHERE server_id = ? AND channel_name = ? AND updated_at > ?
+      ORDER BY updated_at ASC LIMIT 100`).iterate(channel.serverId, channel.channelName, since)
+    : db.prepare(`SELECT * FROM (
+      SELECT * FROM channel_messages
+      WHERE server_id = ? AND channel_name = ?
+      ORDER BY created_at DESC
+      LIMIT 100
+    ) ORDER BY created_at DESC`).iterate(channel.serverId, channel.channelName);
+  return res.json({ messages: fitMessageResponse(messages, !since), full: !since });
+});
+
+app.get('/api/dms/:friendId/messages', requireAuth, (req, res) => {
+  const participants = getDmParticipants(req.user.id, normalize(req.params.friendId));
+  if (!participants) return res.status(403).json({ error: 'Somente amigos podem trocar mensagens diretas.' });
+  const since = normalize(req.query.since);
+  if (since && (since.length > 40 || !Number.isFinite(Date.parse(since)))) {
+    return res.status(400).json({ error: 'Cursor de mensagens inválido.' });
+  }
+  const messages = since
+    ? db.prepare(`SELECT * FROM dm_messages
+      WHERE user_a = ? AND user_b = ? AND updated_at > ?
+      ORDER BY updated_at ASC LIMIT 100`).iterate(participants[0], participants[1], since)
+    : db.prepare(`SELECT * FROM (
+      SELECT * FROM dm_messages WHERE user_a = ? AND user_b = ?
+      ORDER BY created_at DESC LIMIT 100
+    ) ORDER BY created_at DESC`).iterate(participants[0], participants[1]);
+  return res.json({ messages: fitMessageResponse(messages, !since), full: !since });
+});
+
+app.post('/api/dms/:friendId/messages', requireAuth, (req, res) => {
+  const participants = getDmParticipants(req.user.id, normalize(req.params.friendId));
+  if (!participants) return res.status(403).json({ error: 'Somente amigos podem trocar mensagens diretas.' });
+  const { content, error } = normalizeChatMessageInput(req.body?.message);
+  if (error) return res.status(400).json({ error });
+  const id = crypto.randomUUID();
+  const createdAt = nextChannelMessageTimestamp();
+  db.prepare(`INSERT INTO dm_messages
+    (id, user_a, user_b, author_id, author_name, content_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, participants[0], participants[1], req.user.id, req.user.display_name, JSON.stringify(content), createdAt, createdAt);
+  const message = db.prepare('SELECT * FROM dm_messages WHERE id = ?').get(id);
+  return res.status(201).json({ message: formatChannelMessage(message) });
+});
+
+app.post('/api/dms/:friendId/messages/:messageId/votes', requireAuth, (req, res) => {
+  const participants = getDmParticipants(req.user.id, normalize(req.params.friendId));
+  if (!participants) return res.status(403).json({ error: 'Somente amigos podem trocar mensagens diretas.' });
+  const row = db.prepare(`SELECT * FROM dm_messages WHERE id = ? AND user_a = ? AND user_b = ?`)
+    .get(req.params.messageId, participants[0], participants[1]);
+  if (!row) return res.status(404).json({ error: 'Enquete não encontrada.' });
+  const content = parseJsonValue(row.content_json, {});
+  if (!content.poll || !Array.isArray(content.poll.options)) return res.status(400).json({ error: 'Esta mensagem não contém uma enquete.' });
+  const optionIndex = Number(req.body?.optionIndex);
+  if (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= content.poll.options.length) {
+    return res.status(400).json({ error: 'Opção de voto inválida.' });
+  }
+  content.poll.votes = { ...(content.poll.votes || {}), [req.user.id]: optionIndex };
+  db.prepare('UPDATE dm_messages SET content_json = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(content), nextChannelMessageTimestamp(), row.id);
+  const message = db.prepare('SELECT * FROM dm_messages WHERE id = ?').get(row.id);
+  return res.json({ message: formatChannelMessage(message) });
+});
+
+app.post('/api/dms/:friendId/messages/:messageId/replies', requireAuth, (req, res) => {
+  const participants = getDmParticipants(req.user.id, normalize(req.params.friendId));
+  if (!participants) return res.status(403).json({ error: 'Somente amigos podem trocar mensagens diretas.' });
+  const row = db.prepare(`SELECT * FROM dm_messages WHERE id = ? AND user_a = ? AND user_b = ?`)
+    .get(req.params.messageId, participants[0], participants[1]);
+  if (!row) return res.status(404).json({ error: 'Tópico não encontrado.' });
+  const content = parseJsonValue(row.content_json, {});
+  if (!content.topic) return res.status(400).json({ error: 'Esta mensagem não contém um tópico.' });
+  const text = normalize(req.body?.text).slice(0, 500);
+  if (!text) return res.status(400).json({ error: 'A resposta do tópico não pode estar vazia.' });
+  content.topic.replies = Array.isArray(content.topic.replies) ? content.topic.replies : [];
+  content.topic.replies.push({ author: req.user.display_name, authorId: req.user.id, text, time: Date.now() });
+  db.prepare('UPDATE dm_messages SET content_json = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(content), nextChannelMessageTimestamp(), row.id);
+  const message = db.prepare('SELECT * FROM dm_messages WHERE id = ?').get(row.id);
+  return res.json({ message: formatChannelMessage(message) });
+});
+
+app.post('/api/servers/:serverId/channels/:channelName/messages', requireAuth, (req, res) => {
+  const channel = getAuthorizedTextChannel(req, res);
+  if (!channel) return;
+  const { content, error } = normalizeChatMessageInput(req.body?.message);
+  if (error) return res.status(400).json({ error });
+  const id = crypto.randomUUID();
+  const createdAt = nextChannelMessageTimestamp();
+  db.prepare(`INSERT INTO channel_messages
+    (id, server_id, channel_name, author_id, author_name, content_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, channel.serverId, channel.channelName, req.user.id, req.user.display_name, JSON.stringify(content), createdAt, createdAt);
+  const row = db.prepare('SELECT * FROM channel_messages WHERE id = ?').get(id);
+  return res.status(201).json({ message: formatChannelMessage(row) });
+});
+
+app.post('/api/servers/:serverId/channels/:channelName/messages/:messageId/votes', requireAuth, (req, res) => {
+  const channel = getAuthorizedTextChannel(req, res);
+  if (!channel) return;
+  const row = db.prepare(`SELECT * FROM channel_messages
+    WHERE id = ? AND server_id = ? AND channel_name = ?`).get(req.params.messageId, channel.serverId, channel.channelName);
+  if (!row) return res.status(404).json({ error: 'Enquete não encontrada.' });
+  const content = parseJsonValue(row.content_json, {});
+  if (!content.poll || !Array.isArray(content.poll.options)) return res.status(400).json({ error: 'Esta mensagem não contém uma enquete.' });
+  const optionIndex = Number(req.body?.optionIndex);
+  if (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= content.poll.options.length) {
+    return res.status(400).json({ error: 'Opção de voto inválida.' });
+  }
+  content.poll.votes = { ...(content.poll.votes || {}), [req.user.id]: optionIndex };
+  db.prepare('UPDATE channel_messages SET content_json = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(content), nextChannelMessageTimestamp(), row.id);
+  const updated = db.prepare('SELECT * FROM channel_messages WHERE id = ?').get(row.id);
+  return res.json({ message: formatChannelMessage(updated) });
+});
+
+app.post('/api/servers/:serverId/channels/:channelName/messages/:messageId/replies', requireAuth, (req, res) => {
+  const channel = getAuthorizedTextChannel(req, res);
+  if (!channel) return;
+  const row = db.prepare(`SELECT * FROM channel_messages
+    WHERE id = ? AND server_id = ? AND channel_name = ?`).get(req.params.messageId, channel.serverId, channel.channelName);
+  if (!row) return res.status(404).json({ error: 'Tópico não encontrado.' });
+  const content = parseJsonValue(row.content_json, {});
+  if (!content.topic) return res.status(400).json({ error: 'Esta mensagem não contém um tópico.' });
+  const text = normalize(req.body?.text).slice(0, 500);
+  if (!text) return res.status(400).json({ error: 'A resposta do tópico não pode estar vazia.' });
+  content.topic.replies = Array.isArray(content.topic.replies) ? content.topic.replies : [];
+  content.topic.replies.push({
+    author: req.user.display_name,
+    authorId: req.user.id,
+    text,
+    time: Date.now()
+  });
+  db.prepare('UPDATE channel_messages SET content_json = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(content), nextChannelMessageTimestamp(), row.id);
+  const updated = db.prepare('SELECT * FROM channel_messages WHERE id = ?').get(row.id);
+  return res.json({ message: formatChannelMessage(updated) });
 });
 
 app.get('/api/servers/public', (req, res) => {
@@ -734,22 +1064,55 @@ app.delete('/api/soundboard/:id', requireAuth, (req, res) => {
   return res.json({ ok: true });
 });
 
+app.post('/api/presence', requireAuth, (req, res) => {
+  const status = normalize(req.body?.status);
+  if (!['online', 'idle', 'dnd', 'invisible'].includes(status)) {
+    return res.status(400).json({ error: 'Status de presença inválido.' });
+  }
+  const detail = normalize(req.body?.detail).slice(0, 80);
+  const game = normalize(req.body?.game).slice(0, 100);
+  db.prepare(`INSERT INTO user_presence (user_id, status, detail, game, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      status = excluded.status,
+      detail = excluded.detail,
+      game = excluded.game,
+      updated_at = excluded.updated_at`)
+    .run(req.user.id, status, detail, game, Date.now());
+  return res.json({ ok: true });
+});
+
 app.get('/api/friends', requireAuth, (req, res) => {
   const friends = db.prepare(`SELECT users.* FROM friendships
     JOIN users ON users.id = CASE WHEN friendships.user_a = ? THEN friendships.user_b ELSE friendships.user_a END
     WHERE friendships.user_a = ? OR friendships.user_b = ?`).all(req.user.id, req.user.id, req.user.id)
     .map((user) => formatFriend(user, 'accepted'));
-  const requests = db.prepare(`SELECT friend_requests.id AS request_id, friend_requests.created_at, users.* FROM friend_requests
+  const incomingRequests = db.prepare(`SELECT friend_requests.id AS request_id, friend_requests.created_at AS request_created_at, users.* FROM friend_requests
     JOIN users ON users.id = friend_requests.sender_id
     WHERE friend_requests.receiver_id = ? AND friend_requests.status = 'pending'
     ORDER BY friend_requests.created_at DESC`).all(req.user.id)
-    .map((user) => ({ ...formatFriend(user, 'pending'), requestId: user.request_id }));
+    .map((user) => ({ ...formatFriend(user, 'pending'), requestId: user.request_id, type: 'incoming', createdAt: user.request_created_at }));
+  const outgoingRequests = db.prepare(`SELECT friend_requests.id AS request_id, friend_requests.created_at AS request_created_at, users.* FROM friend_requests
+    JOIN users ON users.id = friend_requests.receiver_id
+    WHERE friend_requests.sender_id = ? AND friend_requests.status = 'pending'
+    ORDER BY friend_requests.created_at DESC`).all(req.user.id)
+    .map((user) => ({ ...formatFriend(user, 'pending'), requestId: user.request_id, type: 'outgoing', createdAt: user.request_created_at }));
+  const requests = [...incomingRequests, ...outgoingRequests]
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   return res.json({ friends, requests });
 });
 
 app.post('/api/friends/requests', requireAuth, (req, res) => {
   const raw = normalize(req.body?.handle).toLowerCase();
-  const [username, tag] = raw.split('#');
+  const parts = raw.split('#');
+  if (parts.length > 2 || !parts[0]) return res.status(400).json({ error: 'Informe um nome de usuário válido.' });
+  const [username, tag] = parts;
+  if (!USERNAME_POLICY.test(username)) {
+    return res.status(400).json({ error: 'O nome de usuário deve ter de 3 a 24 caracteres: letras, números ou _.' });
+  }
+  if (tag !== undefined && !/^[a-z0-9]{4}$/.test(tag)) {
+    return res.status(400).json({ error: 'A tag deve conter quatro letras ou números.' });
+  }
   const target = tag
     ? db.prepare('SELECT * FROM users WHERE username = ? AND tag = ?').get(username, tag)
     : db.prepare('SELECT * FROM users WHERE username = ?').get(username);
@@ -761,7 +1124,15 @@ app.post('/api/friends/requests', requireAuth, (req, res) => {
   if (existingFriendship) return res.status(409).json({ error: 'Vocês já são amigos.' });
   const existingRequest = db.prepare(`SELECT 1 FROM friend_requests WHERE status = 'pending' AND ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))`)
     .get(req.user.id, target.id, target.id, req.user.id);
-  if (existingRequest) return res.status(409).json({ error: 'Já existe uma solicitação pendente.' });
+  if (existingRequest) {
+    const incomingRequest = db.prepare(`SELECT id FROM friend_requests
+      WHERE sender_id = ? AND receiver_id = ? AND status = 'pending'`).get(target.id, req.user.id);
+    return res.status(409).json({
+      error: incomingRequest
+        ? 'Essa pessoa já enviou uma solicitação para você. Confira a aba Pendente para aceitar.'
+        : 'Você já enviou uma solicitação para essa pessoa.'
+    });
+  }
 
   const requestId = crypto.randomUUID();
   db.prepare('INSERT INTO friend_requests (id, sender_id, receiver_id, created_at) VALUES (?, ?, ?, ?)')
@@ -836,6 +1207,36 @@ app.post('/api/server-invites/:id/accept', requireAuth, (req, res) => {
   return res.json({ server: formatServer(server, req.user.id) });
 });
 
+app.post('/api/server-invite-links', requireAuth, (req, res) => {
+  const serverId = normalize(req.body?.serverId);
+  const server = db.prepare('SELECT id FROM servers WHERE id = ?').get(serverId);
+  if (!server) return res.status(404).json({ error: 'Servidor não encontrado.' });
+  if (!canAccessServer(req.user.id, serverId)) return res.status(403).json({ error: 'Você não faz parte deste servidor.' });
+
+  const token = crypto.randomBytes(24).toString('hex');
+  const createdAt = new Date().toISOString();
+  db.prepare(`INSERT INTO server_invite_links (token, server_id, created_by, created_at)
+    VALUES (?, ?, ?, ?)`).run(token, serverId, req.user.id, createdAt);
+  const baseUrl = PUBLIC_APP_URL || getRequestBaseUrl(req).replace(/\/+$/, '');
+  return res.status(201).json({ inviteUrl: `${baseUrl}/?invite=${encodeURIComponent(token)}` });
+});
+
+app.post('/api/server-invite-links/:token/accept', requireAuth, (req, res) => {
+  const invite = db.prepare(`SELECT servers.id, servers.name, servers.icon
+    FROM server_invite_links
+    JOIN servers ON servers.id = server_invite_links.server_id
+    WHERE server_invite_links.token = ?`).get(normalize(req.params.token));
+  if (!invite) return res.status(404).json({ error: 'Este link de convite é inválido ou o servidor não existe mais.' });
+
+  const now = new Date().toISOString();
+  db.prepare(`INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at)
+    VALUES (?, ?, 'member', ?)`).run(invite.id, req.user.id, now);
+  const server = db.prepare(`SELECT servers.*, server_members.role FROM servers
+    JOIN server_members ON server_members.server_id = servers.id
+    WHERE servers.id = ? AND server_members.user_id = ?`).get(invite.id, req.user.id);
+  return res.json({ server: formatServer(server, req.user.id) });
+});
+
 app.get('/api/token', (req, res) => {
   return res.status(405).json({
     error: 'Use POST /api/token com { roomName, participantName } para gerar um token do LiveKit.',
@@ -845,51 +1246,31 @@ app.get('/api/token', (req, res) => {
 });
 
 app.post('/api/token', requireAuth, async (req, res) => {
-  const { roomName, participantName } = req.body;
+  const roomName = normalize(req.body?.roomName);
 
-  if (!roomName) {
-    return res.status(400).json({ error: 'roomName e participantName são obrigatórios' });
+  if (!roomName || roomName.length > 120) {
+    return res.status(400).json({ error: 'Nome do canal de voz inválido.' });
   }
 
-  const authenticatedParticipantName = req.user.display_name;
-
-  const usingDemoCredentials = !isLiveKitConfigured ||
-    normalize(process.env.LIVEKIT_API_KEY) === 'devkey' ||
-    normalize(process.env.LIVEKIT_API_SECRET) === 'secret' ||
-    isPlaceholderKey(process.env.LIVEKIT_API_KEY) ||
-    isPlaceholderSecret(process.env.LIVEKIT_API_SECRET) ||
-    hasPlaceholderLiveKitUrl(process.env.LIVEKIT_WS_URL || process.env.LIVEKIT_URL || '');
-
-  if (usingDemoCredentials) {
-    try {
-      const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
-        identity: req.user.id,
-        name: authenticatedParticipantName,
-        ttl: '24h'
-      });
-
-      at.addGrant({
-        roomJoin: true,
-        room: roomName,
-        canPublish: true,
-        canSubscribe: true,
-        canPublishData: true
-      });
-
-      const token = await at.toJwt();
-      return res.json({ token, livekitUrl: LIVEKIT_WS_URL, demoMode: true });
-    } catch (err) {
-      console.error('Erro ao gerar token em modo demo:', err);
-      return res.status(503).json({
-        error: 'Modo demo do LiveKit ativo. Configure LIVEKIT_API_KEY, LIVEKIT_API_SECRET e LIVEKIT_WS_URL para usar uma sala real.'
-      });
-    }
+  const accessibleVoiceChannels = db.prepare(`SELECT servers.id, servers.voice_channels_json FROM servers
+    JOIN server_members ON server_members.server_id = servers.id
+    WHERE server_members.user_id = ?`).all(req.user.id);
+  const canJoinRoom = accessibleVoiceChannels.some((server) => {
+    const serverSlug = liveKitRoomSlug(server.id, 48);
+    const channels = parseJsonValue(server.voice_channels_json, []);
+    return Array.isArray(channels) && channels.some((channel) => (
+      roomName === `badiscord-${serverSlug}-${liveKitRoomSlug(channel, 64)}`
+    ));
+  });
+  if (!canJoinRoom) return res.status(403).json({ error: 'Você não tem acesso a este canal de voz.' });
+  if (!isLiveKitConfigured) {
+    return res.status(503).json({ error: 'As chamadas de voz não estão configuradas. Configure as credenciais do LiveKit no servidor.' });
   }
 
   try {
     const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
       identity: req.user.id,
-      name: authenticatedParticipantName,
+      name: req.user.display_name,
       ttl: '24h'
     });
 

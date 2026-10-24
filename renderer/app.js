@@ -40,6 +40,9 @@ if (!userProfile.tag) {
 }
 
 let authenticatedAccount = null;
+let messageCacheAccountId = '';
+const channelMessagesCache = new Map();
+const directMessagesCache = new Map();
 let recaptchaSiteKey = '';
 const recaptchaWidgets = {};
 
@@ -171,20 +174,46 @@ function saveStoredPresenceMembers(members) {
   } catch (e) {}
 }
 
+function getPresenceIdentityKeys(entry) {
+  const keys = [];
+  const entryId = entry && typeof entry.id === 'string' ? entry.id.trim() : '';
+  if (entryId) keys.push(`id:${entryId.toLowerCase()}`);
+
+  const entryName = (entry?.name || entry?.displayName || 'Bads').toString().trim() || 'Bads';
+  const fullTag = (entry?.fullTag || '').toString().trim();
+  const tagSeparator = fullTag.lastIndexOf('#');
+  const fullTagName = tagSeparator >= 0 ? fullTag.slice(0, tagSeparator).trim() : '';
+  const fullTagValue = fullTagName.toLowerCase() === entryName.toLowerCase() ? fullTag.slice(tagSeparator + 1) : '';
+  const entryTag = (entry?.tag || fullTagValue || '0001').toString().trim() || '0001';
+  keys.push(`tag:${entryName.toLowerCase()}#${entryTag.toLowerCase()}`);
+  return keys;
+}
+
+function dedupePresenceEntries(entries) {
+  const seen = new Set();
+  return (Array.isArray(entries) ? entries : []).filter((entry) => {
+    const keys = getPresenceIdentityKeys(entry);
+    if (keys.some((key) => seen.has(key))) return false;
+    keys.forEach((key) => seen.add(key));
+    return true;
+  });
+}
+
 function syncPresenceRoster(account) {
   const activeMembers = getStoredPresenceMembers();
   const sessionAccount = account || authenticatedAccount;
   const memberName = (sessionAccount?.displayName || sessionAccount?.username || userProfile.displayName || 'Bads').trim();
   const memberTag = String(sessionAccount?.tag || userProfile.tag || '0001');
-  const memberKey = `${(memberName || 'Bads').toLowerCase()}#${memberTag}`;
+  const memberId = sessionAccount?.id ? String(sessionAccount.id).trim() : '';
+  const member = { id: memberId, name: memberName || 'Bads', tag: memberTag };
 
-  const next = activeMembers.filter((entry) => {
-    const key = `${(entry.name || 'Bads').toLowerCase()}#${String(entry.tag || '0001')}`;
-    return key !== memberKey;
-  });
+  const memberKeys = new Set(getPresenceIdentityKeys(member));
+  const next = dedupePresenceEntries(activeMembers.filter((entry) => (
+    !getPresenceIdentityKeys(entry).some((key) => memberKeys.has(key))
+  )));
 
   next.push({
-    id: sessionAccount?.id || `presence-${Date.now()}`,
+    id: memberId || `presence-${Date.now()}`,
     name: memberName || 'Bads',
     tag: memberTag,
     fullTag: `${memberName || 'Bads'}#${memberTag}`,
@@ -197,7 +226,29 @@ function syncPresenceRoster(account) {
     updatedAt: Date.now()
   });
 
-  saveStoredPresenceMembers(next);
+  saveStoredPresenceMembers(dedupePresenceEntries(next));
+  publishPresenceStatus();
+}
+
+function publishPresenceStatus() {
+  if (!authenticatedAccount) return Promise.resolve();
+  const status = userProfile.presenceStatus || 'online';
+  const details = { online: 'Disponível', idle: 'Ausente', dnd: 'Ocupado', invisible: 'Invisível' };
+  return fetch('/api/presence', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      status,
+      detail: details[status] || 'Disponível',
+      game: detectedGame?.name || ''
+    })
+  }).then(async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível atualizar seu status.');
+  }).catch((error) => {
+    console.warn('Não foi possível atualizar a presença no servidor:', error);
+  });
 }
 
 function clearCurrentSession() {
@@ -294,26 +345,45 @@ function applySessionToProfile(account) {
 
 async function finalizeAuthSession(account) {
   if (!account || !account.id || !account.email) throw new Error('Sessão inválida.');
+  if (messageCacheAccountId !== account.id) {
+    channelMessagesCache.clear();
+    directMessagesCache.clear();
+    messageCacheAccountId = account.id;
+  }
   authenticatedAccount = account;
 
   syncPresenceRoster(account);
   applySessionToProfile(account);
+  await publishPresenceStatus();
   hideAuthOverlay();
   renderGuilds();
   renderServerMembers();
   renderVoiceParticipants();
   applyUserProfile();
-  loadFriendsFromServer();
+  await loadFriendsFromServer();
+  startFriendRequestPolling();
   if (await syncLocalServersWithBackend(account.homeServerId || '', true)) {
     await loadServerInvites();
     restoreServerView(activeServerId);
     await loadCustomSoundboard();
+    await acceptPendingServerInvite();
   }
 }
 
 function logoutAccount() {
   fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
   authenticatedAccount = null;
+  messageCacheAccountId = '';
+  channelMessagesCache.clear();
+  directMessagesCache.clear();
+  clearInterval(friendsPollingTimer);
+  friendsPollingTimer = null;
+  clearInterval(presenceHeartbeatTimer);
+  presenceHeartbeatTimer = null;
+  incomingFriendRequestIds = null;
+  clearInterval(channelMessagesPollingTimer);
+  channelMessagesPollingTimer = null;
+  channelMessagesLoadGeneration += 1;
   clearCurrentSession();
   const authOverlay = document.getElementById('authOverlay');
   if (authOverlay) authOverlay.style.display = 'flex';
@@ -331,6 +401,9 @@ async function ensureAuthState() {
     return true;
   } catch (error) {
     authenticatedAccount = null;
+    clearInterval(friendsPollingTimer);
+    friendsPollingTimer = null;
+    incomingFriendRequestIds = null;
     clearCurrentSession();
     showAuthOverlay();
     openAuthView('viewAuthLogin');
@@ -343,6 +416,11 @@ let livekitAudioTrack = null;
 let livekitScreenTrack = null;
 let livekitScreenAudioTrack = null;
 let livekitConnectionInFlight = false;
+const remoteAudioElements = new Set();
+const remoteScreenTracks = new Map();
+const remoteCameraTracks = new Map();
+const remoteScreenAudioElements = new Set();
+let watchingLiveParticipantId = '';
 
 function getStoredLiveKitUrl() {
   try {
@@ -358,13 +436,20 @@ function setStoredLiveKitUrl(url) {
   } catch (e) {}
 }
 
-function getLiveKitRoomName(channelName) {
+function getLiveKitRoomName(channelName, serverId = activeServerId) {
+  const safeServerId = String(serverId || 'default')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'default';
   const safe = String(channelName || 'geral')
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'geral';
-  return `badiscord-${safe}`;
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64) || 'geral';
+  return `badiscord-${safeServerId}-${safe}`;
 }
 
 async function fetchLiveKitConfig() {
@@ -398,6 +483,15 @@ async function requestLiveKitToken(roomName, participantName) {
   return payload.token;
 }
 
+function clearRemoteAudioElements(participantIdentity = '') {
+  remoteAudioElements.forEach((element) => {
+    if (participantIdentity && element.dataset.participantIdentity !== participantIdentity) return;
+    element.remove();
+    remoteAudioElements.delete(element);
+    remoteScreenAudioElements.delete(element);
+  });
+}
+
 async function connectToLiveKitRoom(channelName) {
   if (!hasAuthenticatedSession()) {
     throw new Error('Faça login para entrar em um canal de voz.');
@@ -424,14 +518,82 @@ async function connectToLiveKitRoom(channelName) {
 
       livekitRoom.on(window.LivekitClient.RoomEvent.ConnectionStateChanged, (state) => {
         console.log('LiveKit connection state:', state);
+        if (state === 'disconnected') clearRemoteAudioElements();
+        refreshVoiceParticipantViews();
       });
 
       livekitRoom.on(window.LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
         console.log('Participante conectado:', participant.identity);
+        refreshVoiceParticipantViews();
       });
 
       livekitRoom.on(window.LivekitClient.RoomEvent.ParticipantDisconnected, (participant) => {
         console.log('Participante desconectado:', participant.identity);
+        clearRemoteAudioElements(participant.identity);
+        remoteScreenTracks.delete(participant.identity);
+        remoteCameraTracks.delete(participant.identity);
+        if (watchingLiveParticipantId === participant.identity) stopWatchingLive();
+        refreshVoiceParticipantViews();
+      });
+
+      livekitRoom.on(window.LivekitClient.RoomEvent.TrackPublished, refreshVoiceParticipantViews);
+      livekitRoom.on(window.LivekitClient.RoomEvent.TrackUnpublished, (publication, participant) => {
+        if (publication.source === window.LivekitClient.Track.Source.ScreenShare) {
+          remoteScreenTracks.delete(participant.identity);
+          if (watchingLiveParticipantId === participant.identity) stopWatchingLive();
+        } else if (publication.source === window.LivekitClient.Track.Source.Camera) {
+          remoteCameraTracks.delete(participant.identity);
+        }
+        refreshVoiceParticipantViews();
+      });
+
+      livekitRoom.on(window.LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+        if (track.kind === 'audio') {
+          const audioElement = track.attach();
+          audioElement.autoplay = true;
+          audioElement.dataset.participantIdentity = participant.identity;
+          if (publication.source === window.LivekitClient.Track.Source.ScreenShareAudio) {
+            audioElement.volume = streamPlayerVolume / 100;
+            audioElement.muted = isStreamAudioMuted;
+            remoteScreenAudioElements.add(audioElement);
+          }
+          document.body.appendChild(audioElement);
+          remoteAudioElements.add(audioElement);
+        } else if (publication.source === window.LivekitClient.Track.Source.ScreenShare) {
+          remoteScreenTracks.set(participant.identity, {
+            track,
+            participant,
+            publication
+          });
+          refreshVoiceParticipantViews();
+        } else if (publication.source === window.LivekitClient.Track.Source.Camera) {
+          remoteCameraTracks.set(participant.identity, track);
+          refreshVoiceParticipantViews();
+        }
+      });
+
+      livekitRoom.on(window.LivekitClient.RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+        track.detach().forEach((audioElement) => {
+          remoteAudioElements.delete(audioElement);
+          remoteScreenAudioElements.delete(audioElement);
+          audioElement.remove();
+        });
+        if (publication.source === window.LivekitClient.Track.Source.ScreenShare) {
+          remoteScreenTracks.delete(participant.identity);
+          if (watchingLiveParticipantId === participant.identity) stopWatchingLive();
+        } else if (publication.source === window.LivekitClient.Track.Source.Camera) {
+          remoteCameraTracks.delete(participant.identity);
+        }
+        refreshVoiceParticipantViews();
+      });
+
+      [
+        window.LivekitClient.RoomEvent.TrackMuted,
+        window.LivekitClient.RoomEvent.TrackUnmuted,
+        window.LivekitClient.RoomEvent.ParticipantNameChanged,
+        window.LivekitClient.RoomEvent.ActiveSpeakersChanged
+      ].filter(Boolean).forEach((eventName) => {
+        livekitRoom.on(eventName, refreshVoiceParticipantViews);
       });
     }
 
@@ -473,9 +635,7 @@ async function publishMicToLiveKit() {
       source: window.LivekitClient.Track.Source.Microphone
     });
 
-    if (typeof livekitAudioTrack.mute === 'function') {
-      livekitAudioTrack.mute = () => {};
-    }
+    if (isMuted) await livekitAudioTrack.mute();
 
     return livekitAudioTrack;
   } catch (err) {
@@ -503,6 +663,10 @@ async function disconnectLiveKitRoom() {
   if (livekitRoom && livekitRoom.state === 'connected') {
     await livekitRoom.disconnect();
   }
+  remoteScreenTracks.clear();
+  stopWatchingLive();
+  remoteScreenAudioElements.clear();
+  clearRemoteAudioElements();
 }
 
 const DEFAULT_SERVERS = [];
@@ -772,6 +936,10 @@ const chatMessagesScroll = document.getElementById('chatMessagesScroll');
 const messagesList = document.getElementById('messagesList');
 const chatInputForm = document.getElementById('chatInputForm');
 const chatInputText = document.getElementById('chatInputText');
+const chatAttachButton = document.querySelector('.chat-attach-btn');
+const chatAttachMenu = document.getElementById('chatAttachMenu');
+const chatImageInput = document.getElementById('chatImageInput');
+const chatFileInput = document.getElementById('chatFileInput');
 const btnChatEmoji = document.getElementById('btnChatEmoji');
 const btnJumpToVoice = document.getElementById('btnJumpToVoice');
 const voiceConnectedStrip = document.getElementById('voiceConnectedStrip');
@@ -1070,7 +1238,7 @@ function getServerOnlineProfiles() {
   if (!hasAuthenticatedSession()) return [];
 
   const localMember = {
-    id: 'self',
+    id: authenticatedAccount?.id || 'self',
     name: userProfile.displayName || 'Bads',
     tag: userProfile.tag || '0001',
     fullTag: `${userProfile.displayName || 'Bads'}#${userProfile.tag || '0001'}`,
@@ -1114,18 +1282,170 @@ function getServerOnlineProfiles() {
     isOwner: false
   }));
 
-  const seen = new Set([localMember.name.toLowerCase()]);
-  const combined = [localMember, ...rosterMembers, ...onlineFriends.filter((member) => {
-    const lower = member.name.toLowerCase();
-    if (seen.has(lower)) return false;
-    seen.add(lower);
-    return true;
-  })];
+  const combined = dedupePresenceEntries([
+    localMember,
+    ...rosterMembers,
+    ...onlineFriends
+  ]);
 
   return combined.filter((member) => {
     const status = (member.status || 'online');
     return status !== 'offline';
   });
+}
+
+function getVoiceChannelParticipants() {
+  if (!hasAuthenticatedSession() || !currentChannel) return [];
+
+  const roomName = getLiveKitRoomName(currentChannel);
+  const isCurrentVoiceRoom = Boolean(
+    livekitRoom &&
+    livekitRoom.state === 'connected' &&
+    livekitRoom.name === roomName
+  );
+  const localMember = {
+    id: 'self',
+    name: userProfile.displayName || 'Bads',
+    tag: userProfile.tag || '0001',
+    fullTag: `${userProfile.displayName || 'Bads'}#${userProfile.tag || '0001'}`,
+    initial: (userProfile.displayName || 'B')[0].toUpperCase(),
+    color: userProfile.bannerColor || '#5865F2',
+    avatarUrl: userProfile.avatarUrl || '',
+    game: detectedGame?.name || '',
+    detail: userProfile.aboutMe || 'Disponível',
+    status: 'online',
+    isOwner: true,
+    isSpeaking: isLocalSpeaking,
+    isStreaming: isLocalStreamer,
+    viewerCount: isLocalStreamer && isCurrentVoiceRoom ? livekitRoom.remoteParticipants.size : 0
+  };
+
+  if (!isCurrentVoiceRoom) {
+    return [localMember];
+  }
+
+  const profilesById = new Map();
+  getStoredPresenceMembers().forEach((member) => {
+    const id = member?.id ? String(member.id) : '';
+    if (id) profilesById.set(id, member);
+  });
+  (Array.isArray(friendsList) ? friendsList : []).forEach((friend) => {
+    const id = friend?.id ? String(friend.id) : '';
+    if (id && !profilesById.has(id)) profilesById.set(id, friend);
+  });
+
+  const participants = [livekitRoom.localParticipant, ...livekitRoom.remoteParticipants.values()];
+  return participants.filter(Boolean).map((participant) => {
+    if (participant === livekitRoom.localParticipant) return localMember;
+
+    const profile = profilesById.get(participant.identity) || {};
+    const name = participant.name || profile.name || participant.identity || 'Usuário';
+    const isStreaming = Array.from(participant.videoTrackPublications.values()).some((publication) => (
+      publication.source === window.LivekitClient.Track.Source.ScreenShare
+    )) || remoteScreenTracks.has(participant.identity);
+    return {
+      id: participant.identity,
+      name,
+      tag: profile.tag || '0001',
+      fullTag: profile.fullTag || `${name}#${profile.tag || '0001'}`,
+      initial: profile.initial || name[0].toUpperCase(),
+      color: profile.color || '#5865F2',
+      avatarUrl: profile.avatarUrl || '',
+      game: profile.game || '',
+      detail: profile.detail || 'Disponível',
+      status: 'online',
+      isOwner: false,
+      isSpeaking: Boolean(participant.isSpeaking),
+      isMuted: participant.isMicrophoneEnabled === false,
+      isStreaming,
+      viewerCount: isStreaming ? livekitRoom.remoteParticipants.size : 0
+    };
+  });
+}
+
+function renderLiveIndicator(member) {
+  if (!member.isStreaming) return null;
+  const indicator = document.createElement('span');
+  indicator.className = 'live-indicator';
+  indicator.title = `${member.viewerCount || 0} assistindo`;
+  const badge = document.createElement('span');
+  badge.className = 'live-indicator-badge';
+  badge.textContent = `● AO VIVO ${member.viewerCount || 0}`;
+  indicator.appendChild(badge);
+  if (member.id !== 'self') {
+    const watchButton = document.createElement('button');
+    watchButton.type = 'button';
+    watchButton.className = 'live-watch-button';
+    watchButton.textContent = 'Assistir';
+    watchButton.setAttribute('aria-label', `Assistir à transmissão de ${member.name}`);
+    watchButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      watchLiveStream(member.id);
+    });
+    indicator.appendChild(watchButton);
+  }
+  return indicator;
+}
+
+function watchLiveStream(participantId) {
+  if (!currentChannel || !livekitRoom || livekitRoom.state !== 'connected') {
+    showToast('Entre no canal de voz para assistir a esta transmissão.', '⚠️');
+    return;
+  }
+  const stream = remoteScreenTracks.get(participantId);
+  if (!stream || !remoteVideoPlayer || !streamViewerWrapper) {
+    showToast('A transmissão está conectando. Tente novamente em instantes.', '⏳');
+    return;
+  }
+  try {
+    stream.track.attach(remoteVideoPlayer);
+    remoteVideoPlayer.muted = true;
+    remoteVideoPlayer.defaultMuted = true;
+    streamViewerWrapper.style.display = 'flex';
+    const streamerName = document.getElementById('streamerName');
+    if (streamerName) streamerName.textContent = `🎮 Ao Vivo: ${stream.participant.name || 'Transmissão'}`;
+    const loopbackBadge = document.getElementById('streamLoopbackBadge');
+    if (loopbackBadge) loopbackBadge.style.display = 'none';
+    const viewerCount = document.getElementById('liveViewerCount');
+    if (viewerCount) viewerCount.textContent = `👁 ${livekitRoom.remoteParticipants.size}`;
+    if (btnStopStreamDirect) btnStopStreamDirect.style.display = 'none';
+    if (btnToggleLoopbackAudio) btnToggleLoopbackAudio.style.display = 'none';
+    if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'none';
+    if (participantsGrid) participantsGrid.style.display = 'none';
+    watchingLiveParticipantId = participantId;
+    switchView('voice');
+    remoteVideoPlayer.play().catch((error) => {
+      console.warn('Não foi possível iniciar a reprodução da transmissão:', error);
+      showToast('Clique na transmissão novamente para liberar a reprodução.', '⚠️');
+    });
+  } catch (error) {
+    console.warn('Não foi possível abrir a transmissão:', error);
+    showToast('Não foi possível abrir esta transmissão.', '⚠️');
+  }
+}
+
+function stopWatchingLive() {
+  if (watchingLiveParticipantId) {
+    const stream = remoteScreenTracks.get(watchingLiveParticipantId);
+    if (stream) stream.track.detach(remoteVideoPlayer);
+  }
+  watchingLiveParticipantId = '';
+  if (remoteVideoPlayer && !isLocalStreamer) remoteVideoPlayer.srcObject = null;
+  if (streamViewerWrapper && !isLocalStreamer) streamViewerWrapper.style.display = 'none';
+  const viewerCount = document.getElementById('liveViewerCount');
+  if (viewerCount && !isLocalStreamer) viewerCount.textContent = '👁 0';
+  if (btnStopStreamDirect) btnStopStreamDirect.style.display = '';
+  if (participantsGrid && currentChannel && !isLocalStreamer) participantsGrid.style.display = 'grid';
+}
+
+function refreshVoiceParticipantViews() {
+  if (livekitRoom?.state === 'connected' && (isLocalStreamer || watchingLiveParticipantId)) {
+    const viewerCount = document.getElementById('liveViewerCount');
+    if (viewerCount) viewerCount.textContent = `👁 ${livekitRoom.remoteParticipants.size}`;
+  }
+  if (!currentChannel) return;
+  updateSidebarChannelUsers(currentChannel);
+  renderVoiceParticipants();
 }
 
 function updateSidebarChannelUsers(channelName) {
@@ -1138,7 +1458,7 @@ function updateSidebarChannelUsers(channelName) {
   const targetList = document.getElementById(`users-${channelName}`);
   if (!targetList) return;
 
-  const onlineMembers = getServerOnlineProfiles();
+  const onlineMembers = getVoiceChannelParticipants();
   onlineMembers.forEach((member) => {
     const userItem = document.createElement('div');
     userItem.className = 'channel-user-item';
@@ -1161,10 +1481,14 @@ function updateSidebarChannelUsers(channelName) {
     const micIcon = document.createElement('span');
     micIcon.className = 'channel-user-mic';
     micIcon.id = member.id === 'self' ? 'sidebarUserMic' : '';
-    micIcon.textContent = member.id === 'self' ? (isDeafened ? '🔇 🚫🎧' : (isMuted ? '🔇' : '🎤')) : (member.game ? '🎮' : '🔊');
+    micIcon.textContent = member.id === 'self'
+      ? (isDeafened ? '🔇 🚫🎧' : (isMuted ? '🔇' : '🎤'))
+      : (member.isMuted ? '🔇' : (member.game ? '🎮' : '🔊'));
 
     userItem.appendChild(avatar);
     userItem.appendChild(name);
+    const liveIndicator = renderLiveIndicator(member);
+    if (liveIndicator) userItem.appendChild(liveIndicator);
     userItem.appendChild(micIcon);
     targetList.appendChild(userItem);
   });
@@ -1173,9 +1497,11 @@ function updateSidebarChannelUsers(channelName) {
 // Renderizar participantes na tela principal da sala de voz (Estilo Discord 1:1)
 function renderVoiceParticipants() {
   if (!participantsGrid) return;
+  remoteCameraTracks.forEach((track) => track.detach());
+  if (localCamTrack) localCamTrack.detach();
   participantsGrid.innerHTML = '';
 
-  const onlineMembers = getServerOnlineProfiles();
+  const onlineMembers = getVoiceChannelParticipants();
 
   onlineMembers.forEach((member) => {
     const card = document.createElement('div');
@@ -1183,6 +1509,24 @@ function renderVoiceParticipants() {
     if (member.id === 'self') {
       card.id = 'localParticipantCard';
       if (isLocalSpeaking) card.classList.add('speaking');
+    }
+    if (member.id !== 'self' && member.isSpeaking) card.classList.add('speaking');
+
+    const cameraTrack = member.id === 'self'
+      ? (isCamActive ? localCamTrack : null)
+      : remoteCameraTracks.get(member.id);
+    if (cameraTrack) {
+      card.classList.add('has-camera');
+      const cameraVideo = document.createElement('video');
+      cameraVideo.className = 'participant-camera-video';
+      cameraVideo.autoplay = true;
+      cameraVideo.playsInline = true;
+      cameraVideo.muted = member.id === 'self';
+      cameraTrack.attach(cameraVideo);
+      cameraVideo.play().catch((error) => {
+        console.warn('Não foi possível reproduzir a câmera:', error);
+      });
+      card.appendChild(cameraVideo);
     }
 
     const avatar = document.createElement('div');
@@ -1200,6 +1544,8 @@ function renderVoiceParticipants() {
     const nameSpan = document.createElement('span');
     nameSpan.textContent = member.name;
     tag.appendChild(nameSpan);
+    const liveIndicator = renderLiveIndicator(member);
+    if (liveIndicator) tag.appendChild(liveIndicator);
 
     if (member.game) {
       const gamePill = document.createElement('span');
@@ -1211,7 +1557,9 @@ function renderVoiceParticipants() {
     const micIcon = document.createElement('div');
     micIcon.className = 'participant-mic-icon';
     micIcon.id = member.id === 'self' ? 'participantMicIcon' : '';
-    micIcon.textContent = member.id === 'self' ? (isMuted ? '🔇' : (isDeafened ? '🚫🎧' : '🎤')) : (member.game ? '🎮' : '🔊');
+    micIcon.textContent = member.id === 'self'
+      ? (isMuted ? '🔇' : (isDeafened ? '🚫🎧' : '🎤'))
+      : (member.isMuted ? '🔇' : (member.game ? '🎮' : '🔊'));
 
     card.appendChild(avatar);
     card.appendChild(tag);
@@ -1368,8 +1716,8 @@ async function joinVoiceChannel(channelName) {
   updateSidebarChannelUsers(channelName);
 
   emptyState.style.display = 'none';
-  participantsGrid.style.display = 'flex';
-  voiceFloatingBar.style.display = 'flex';
+  participantsGrid.style.display = 'grid';
+  voiceFloatingBar.style.removeProperty('display');
   connectionBadge.style.display = 'flex';
 
   if (voiceConnectionPanel) {
@@ -1382,49 +1730,21 @@ async function joinVoiceChannel(channelName) {
   startPingMonitor();
   renderVoiceParticipants();
 
-  let liveKitConnected = false;
-
   try {
     const room = await connectToLiveKitRoom(channelName);
-    if (room && room.state === 'connected') {
-      liveKitConnected = true;
-      await publishMicToLiveKit();
-      showToast(`Conectado ao canal ${channelName} via LiveKit.`, '🎧');
-    }
-  } catch (err) {
-    console.warn('Falha ao conectar ao LiveKit:', err);
-  }
-
-  try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      throw new Error('Microfone indisponível neste ambiente.');
-    }
-
-    const audioStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: 48000
-      }
-    });
-
-    localAudioTrack = audioStream.getAudioTracks()[0];
-    localAudioTrack.enabled = !isMuted;
-    await setupAudioLevelMeter(audioStream);
-    showToast(liveKitConnected ? `Você entrou em ${channelName} e o microfone está ativo.` : `Você entrou em ${channelName}.`, '🎤');
+    if (!room || room.state !== 'connected') throw new Error('Não foi possível conectar ao canal de voz.');
+    const microphoneTrack = await publishMicToLiveKit();
+    if (!microphoneTrack?.mediaStreamTrack) throw new Error('Não foi possível ativar o microfone.');
+    localAudioTrack = microphoneTrack.mediaStreamTrack;
+    await setupAudioLevelMeter(new MediaStream([localAudioTrack]));
+    refreshVoiceParticipantViews();
+    showToast(`Conectado a ${channelName}; microfone ${isMuted ? 'mutado' : 'ativo'}.`, '🎧');
   } catch (err) {
     console.warn('Microfone não acessível ou sem permissão:', err);
     isMuted = true;
-    if (btnToggleMic) btnToggleMic.classList.add('muted');
-
-    const reason = (err && err.name === 'NotAllowedError') || (err && err.message && /permission|denied|blocked/i.test(err.message))
-      ? 'Microfone bloqueado pelo sistema. O canal foi aberto, mas o áudio está desligado.'
-      : (err && err.message && /device|audio|media/i.test(err.message))
-        ? 'Nenhum microfone detectado. O canal foi aberto com áudio desligado.'
-        : 'O canal foi aberto, mas o microfone não está disponível no momento.';
-
-    showToast(reason, '⚠️');
+    updateControlsUI();
+    await disconnectVoice(false);
+    showToast(err.message || 'Não foi possível conectar ao canal de voz.', '⚠️');
   }
 }
 
@@ -1432,6 +1752,10 @@ async function joinVoiceChannel(channelName) {
 // CHAT DE TEXTO & CONVERSAS DIRETAS (DMs)
 // ==========================================
 let currentDmFriend = null;
+let channelMessagesPollingTimer = null;
+let channelMessagesLoadGeneration = 0;
+let channelMessagesSince = '';
+let directMessagesSince = '';
 
 function openTextChannel(channelName) {
   currentDmFriend = null;
@@ -1456,6 +1780,9 @@ function openTextChannel(channelName) {
 }
 
 function openDirectMessage(friend) {
+  clearInterval(channelMessagesPollingTimer);
+  channelMessagesPollingTimer = null;
+  channelMessagesLoadGeneration += 1;
   currentDmFriend = friend;
   switchView('chat');
 
@@ -1478,11 +1805,16 @@ function openDirectMessage(friend) {
 }
 
 function getChatStorageKey(srvId, chanName) {
-  return `badiscord_messages_${srvId}_${chanName}`;
+  return `badiscord_messages_${authenticatedAccount?.id || 'guest'}_${srvId}_${chanName}`;
+}
+
+function getDirectMessagesStorageKey(friendId) {
+  return `badiscord_dm_messages_${authenticatedAccount?.id || 'guest'}_${friendId}`;
 }
 
 function getStoredMessages(srvId, chanName) {
   const key = getChatStorageKey(srvId, chanName);
+  if (channelMessagesCache.has(key)) return channelMessagesCache.get(key);
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
@@ -1492,6 +1824,7 @@ function getStoredMessages(srvId, chanName) {
       if (clean.length !== parsed.length) {
         localStorage.setItem(key, JSON.stringify(clean));
       }
+      channelMessagesCache.set(key, clean);
       return clean;
     }
   } catch (e) {}
@@ -1500,36 +1833,386 @@ function getStoredMessages(srvId, chanName) {
 }
 
 function getStoredDMMessages(friendId, friend) {
-  const key = `badiscord_dm_messages_${friendId}`;
+  const key = getDirectMessagesStorageKey(friendId);
+  if (directMessagesCache.has(key)) return directMessagesCache.get(key);
   try {
     const raw = localStorage.getItem(key);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        directMessagesCache.set(key, parsed);
+        return parsed;
+      }
+    }
   } catch (e) {}
   return [];
 }
 
+function renderChannelMessages(messages, shouldScroll = true) {
+  if (!messagesList) return;
+  const wasAtBottom = !chatMessagesScroll ||
+    chatMessagesScroll.scrollHeight - chatMessagesScroll.scrollTop - chatMessagesScroll.clientHeight < 100;
+  messagesList.innerHTML = '';
+  messages.forEach((msg) => messagesList.appendChild(createMessageElement(msg)));
+  if (shouldScroll && wasAtBottom) scrollChatToBottom();
+}
+
+function channelMessagesUrl(srvId, chanName) {
+  return `/api/servers/${encodeURIComponent(srvId)}/channels/${encodeURIComponent(chanName)}/messages`;
+}
+
+async function requestChannelMessages(srvId, chanName, options = {}) {
+  const response = await fetch(options.url || channelMessagesUrl(srvId, chanName), {
+    method: options.method || 'GET',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    ...(options.body ? { body: JSON.stringify(options.body) } : {})
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Não foi possível sincronizar as mensagens do canal.');
+  return payload;
+}
+
+function cacheChannelMessages(srvId, chanName, messages) {
+  const key = getChatStorageKey(srvId, chanName);
+  channelMessagesCache.set(key, messages);
+  try {
+    localStorage.setItem(key, JSON.stringify(messages));
+  } catch (error) {
+    console.error('Não foi possível atualizar o cache local das mensagens:', error);
+  }
+}
+
+async function syncChannelMessages(srvId, chanName, generation, showError = false) {
+  if (!authenticatedAccount) return;
+  try {
+    const since = channelMessagesSince;
+    const url = `${channelMessagesUrl(srvId, chanName)}${since ? `?since=${encodeURIComponent(since)}` : ''}`;
+    const payload = await requestChannelMessages(srvId, chanName, { url });
+    if (generation !== channelMessagesLoadGeneration ||
+      currentDmFriend || activeServerId !== srvId || currentTextChannel !== chanName) return;
+    const changedMessages = Array.isArray(payload.messages) ? payload.messages : [];
+    if (!payload.full && changedMessages.length === 0) return;
+    const cachedMessages = getStoredMessages(srvId, chanName);
+    const messages = payload.full
+      ? changedMessages
+      : changedMessages.reduce((current, changed) => {
+        const index = current.findIndex((message) => message.id === changed.id);
+        if (index === -1) current.push(changed);
+        else current[index] = changed;
+        return current;
+      }, cachedMessages).slice(-200);
+    const latestUpdatedAt = messages.reduce((latest, message) => (
+      Date.parse(message.updatedAt || '') > Date.parse(latest || '')
+        ? message.updatedAt
+        : latest
+    ), '');
+    if (latestUpdatedAt) channelMessagesSince = latestUpdatedAt;
+    if (JSON.stringify(cachedMessages) === JSON.stringify(messages)) return;
+    cacheChannelMessages(srvId, chanName, messages);
+    renderChannelMessages(messages);
+  } catch (error) {
+    console.error('Falha ao sincronizar mensagens do canal:', error);
+    if (showError) showToast(error.message || 'Não foi possível carregar as mensagens deste canal.', '⚠️');
+  }
+}
+
+function directMessagesUrl(friendId) {
+  return `/api/dms/${encodeURIComponent(friendId)}/messages`;
+}
+
+function cacheDirectMessages(friendId, messages) {
+  const key = getDirectMessagesStorageKey(friendId);
+  directMessagesCache.set(key, messages);
+  try {
+    localStorage.setItem(key, JSON.stringify(messages));
+  } catch (error) {
+    console.error('Não foi possível atualizar o cache local das mensagens diretas:', error);
+  }
+}
+
+async function syncDirectMessages(friendId, generation, showError = false) {
+  if (!authenticatedAccount) return;
+  try {
+    const since = directMessagesSince;
+    const url = `${directMessagesUrl(friendId)}${since ? `?since=${encodeURIComponent(since)}` : ''}`;
+    const payload = await requestChannelMessages('', '', { url });
+    if (generation !== channelMessagesLoadGeneration || currentDmFriend?.id !== friendId) return;
+    const changedMessages = Array.isArray(payload.messages) ? payload.messages : [];
+    if (!payload.full && changedMessages.length === 0) return;
+    const cachedMessages = getStoredDMMessages(friendId, currentDmFriend);
+    const messages = payload.full
+      ? changedMessages
+      : changedMessages.reduce((current, changed) => {
+        const index = current.findIndex((message) => message.id === changed.id);
+        if (index === -1) current.push(changed);
+        else current[index] = changed;
+        return current;
+      }, cachedMessages).slice(-200);
+    const latestUpdatedAt = messages.reduce((latest, message) => (
+      Date.parse(message.updatedAt || '') > Date.parse(latest || '')
+        ? message.updatedAt
+        : latest
+    ), '');
+    if (latestUpdatedAt) directMessagesSince = latestUpdatedAt;
+    if (JSON.stringify(cachedMessages) === JSON.stringify(messages)) return;
+    cacheDirectMessages(friendId, messages);
+    renderChannelMessages(messages);
+  } catch (error) {
+    console.error('Falha ao sincronizar mensagens diretas:', error);
+    if (showError) showToast(error.message || 'Não foi possível carregar esta conversa.', '⚠️');
+  }
+}
+
 function loadAndRenderMessages(srvId, chanName) {
   if (!messagesList) return;
-  messagesList.innerHTML = '';
-
-  const msgs = getStoredMessages(srvId, chanName);
-  msgs.forEach(msg => {
-    messagesList.appendChild(createMessageElement(msg));
-  });
-
+  clearInterval(channelMessagesPollingTimer);
+  const generation = ++channelMessagesLoadGeneration;
+  channelMessagesSince = '';
+  renderChannelMessages(getStoredMessages(srvId, chanName), false);
   scrollChatToBottom();
+  syncChannelMessages(srvId, chanName, generation, true);
+  channelMessagesPollingTimer = setInterval(() => {
+    syncChannelMessages(srvId, chanName, generation);
+  }, 4000);
 }
 
 function loadAndRenderDMMessages(friend) {
   if (!messagesList) return;
-  messagesList.innerHTML = '';
-
+  clearInterval(channelMessagesPollingTimer);
+  const generation = ++channelMessagesLoadGeneration;
+  directMessagesSince = '';
   const msgs = getStoredDMMessages(friend.id, friend);
-  msgs.forEach(msg => {
-    messagesList.appendChild(createMessageElement(msg));
-  });
-
+  renderChannelMessages(msgs, false);
   scrollChatToBottom();
+  syncDirectMessages(friend.id, generation, true);
+  channelMessagesPollingTimer = setInterval(() => {
+    syncDirectMessages(friend.id, generation);
+  }, 4000);
+}
+
+function getActiveChatMessages() {
+  if (currentDmFriend) return getStoredDMMessages(currentDmFriend.id, currentDmFriend);
+  if (!activeServerId || !currentTextChannel) return [];
+  return getStoredMessages(activeServerId, currentTextChannel);
+}
+
+function saveDirectMessages(messages) {
+  try {
+    if (!currentDmFriend) return false;
+    const key = `badiscord_dm_messages_${currentDmFriend.id}`;
+    localStorage.setItem(key, JSON.stringify(messages));
+    return true;
+  } catch (error) {
+    console.error('Não foi possível salvar a mensagem no armazenamento local:', error);
+    showToast('Não foi possível salvar. O armazenamento do app pode estar cheio.', '⚠️');
+    return false;
+  }
+}
+
+function createChatMessage(content = {}) {
+  return {
+    id: `message-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    author: userProfile.displayName || 'Bads',
+    avatar: userProfile.avatarUrl || '',
+    role: 'MEMBRO',
+    time: `Hoje às ${formatTimeNow()}`,
+    ...content
+  };
+}
+
+async function saveActiveChatMessage(message) {
+  if (currentDmFriend) {
+    const friendId = currentDmFriend.id;
+    try {
+      const payload = await requestChannelMessages('', '', {
+        method: 'POST',
+        url: directMessagesUrl(friendId),
+        body: { message }
+      });
+      const savedMessage = payload.message;
+      const messages = getStoredDMMessages(friendId, currentDmFriend);
+      if (!messages.some((item) => item.id === savedMessage.id)) messages.push(savedMessage);
+      cacheDirectMessages(friendId, messages);
+      if (currentDmFriend?.id === friendId && messagesList) renderChannelMessages(messages);
+      return savedMessage;
+    } catch (error) {
+      console.error('Falha ao enviar mensagem direta:', error);
+      showToast(error.message || 'Não foi possível enviar a mensagem direta.', '⚠️');
+      return null;
+    }
+  }
+  if (!activeServerId || !currentTextChannel) {
+    showToast('Selecione um canal de texto antes de enviar.', '⚠️');
+    return null;
+  }
+  const serverId = activeServerId;
+  const channelName = currentTextChannel;
+  try {
+    const payload = await requestChannelMessages(serverId, channelName, {
+      method: 'POST',
+      body: { message },
+      url: channelMessagesUrl(serverId, channelName)
+    });
+    const savedMessage = payload.message;
+    const currentMessages = getStoredMessages(serverId, channelName);
+    if (!currentMessages.some((item) => item.id === savedMessage.id)) currentMessages.push(savedMessage);
+    cacheChannelMessages(serverId, channelName, currentMessages);
+    if (!currentDmFriend && activeServerId === serverId && currentTextChannel === channelName && messagesList) {
+      renderChannelMessages(currentMessages);
+    }
+    return savedMessage;
+  } catch (error) {
+    console.error('Falha ao enviar mensagem para o canal:', error);
+    showToast(error.message || 'Não foi possível enviar a mensagem para o canal.', '⚠️');
+    return null;
+  }
+}
+
+async function updateActiveChatMessage(messageId, action, value) {
+  if (currentDmFriend) {
+    const friendId = currentDmFriend.id;
+    const generation = channelMessagesLoadGeneration;
+    try {
+      const url = `${directMessagesUrl(friendId)}/${encodeURIComponent(messageId)}/${action}`;
+      await requestChannelMessages('', '', {
+        method: 'POST',
+        url,
+        body: action === 'votes' ? { optionIndex: value } : { text: value }
+      });
+      await syncDirectMessages(friendId, generation, true);
+      return true;
+    } catch (error) {
+      console.error('Falha ao atualizar a mensagem direta:', error);
+      showToast(error.message || 'Não foi possível atualizar esta mensagem.', '⚠️');
+      return false;
+    }
+  }
+  if (!activeServerId || !currentTextChannel) return false;
+  const serverId = activeServerId;
+  const channelName = currentTextChannel;
+  const generation = channelMessagesLoadGeneration;
+  try {
+    const url = `${channelMessagesUrl(serverId, channelName)}/${encodeURIComponent(messageId)}/${action}`;
+    await requestChannelMessages(serverId, channelName, {
+      method: 'POST',
+      url,
+      body: action === 'votes' ? { optionIndex: value } : { text: value }
+    });
+    await syncChannelMessages(serverId, channelName, generation, true);
+    return true;
+  } catch (error) {
+    console.error('Falha ao atualizar a mensagem do canal:', error);
+    showToast(error.message || 'Não foi possível atualizar esta mensagem.', '⚠️');
+    return false;
+  }
+}
+
+function renderMessageAttachments(attachments = []) {
+  const list = document.createElement('div');
+  list.className = 'chat-attachment-list';
+  attachments.forEach((attachment) => {
+    if (!attachment || typeof attachment.data !== 'string') return;
+    if (attachment.type?.startsWith('image/')) {
+      const image = document.createElement('img');
+      image.className = 'chat-attachment-image';
+      image.src = attachment.data;
+      image.alt = attachment.name || 'Imagem enviada';
+      image.loading = 'lazy';
+      list.appendChild(image);
+      return;
+    }
+    const link = document.createElement('a');
+    link.className = 'chat-attachment-file';
+    link.href = attachment.data;
+    link.download = attachment.name || 'arquivo';
+    link.textContent = `📎 ${attachment.name || 'Baixar arquivo'}`;
+    list.appendChild(link);
+  });
+  return list;
+}
+
+function renderPollCard(message) {
+  const poll = message.poll;
+  const card = document.createElement('div');
+  card.className = 'chat-poll-card';
+  const question = document.createElement('strong');
+  question.className = 'chat-poll-question';
+  question.textContent = `📊 ${poll.question}`;
+  card.appendChild(question);
+
+  const options = document.createElement('div');
+  options.className = 'chat-poll-options';
+  const votes = poll.votes && typeof poll.votes === 'object' ? poll.votes : {};
+  const voterId = authenticatedAccount?.id || 'local-user';
+  const selectedOption = votes[voterId];
+  poll.options.forEach((option, index) => {
+    const optionButton = document.createElement('button');
+    optionButton.type = 'button';
+    optionButton.className = `chat-poll-option ${selectedOption === index ? 'selected' : ''}`;
+    const label = document.createElement('span');
+    label.textContent = option;
+    const count = Object.values(votes).filter((vote) => vote === index).length;
+    const countLabel = document.createElement('span');
+    countLabel.className = 'chat-poll-count';
+    countLabel.textContent = `${count} voto${count === 1 ? '' : 's'}`;
+    optionButton.append(label, countLabel);
+    optionButton.addEventListener('click', async () => {
+      await updateActiveChatMessage(message.id, 'votes', index);
+    });
+    options.appendChild(optionButton);
+  });
+  card.appendChild(options);
+  return card;
+}
+
+function renderTopicCard(message) {
+  const topic = message.topic;
+  const card = document.createElement('div');
+  card.className = 'chat-topic-card';
+  const title = document.createElement('strong');
+  title.className = 'chat-topic-title';
+  title.textContent = `🧵 ${topic.title}`;
+  card.appendChild(title);
+
+  if (topic.description) {
+    const description = document.createElement('p');
+    description.className = 'chat-topic-description';
+    description.textContent = topic.description;
+    card.appendChild(description);
+  }
+
+  const replies = document.createElement('div');
+  replies.className = 'chat-thread-replies';
+  (Array.isArray(topic.replies) ? topic.replies : []).forEach((reply) => {
+    const item = document.createElement('div');
+    item.className = 'chat-thread-reply';
+    item.textContent = `${reply.author}: ${reply.text}`;
+    replies.appendChild(item);
+  });
+  card.appendChild(replies);
+
+  const replyForm = document.createElement('form');
+  replyForm.className = 'chat-thread-form';
+  const replyInput = document.createElement('input');
+  replyInput.type = 'text';
+  replyInput.maxLength = 500;
+  replyInput.placeholder = 'Responder no tópico...';
+  const replyButton = document.createElement('button');
+  replyButton.type = 'submit';
+  replyButton.textContent = 'Responder';
+  replyForm.append(replyInput, replyButton);
+  replyForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const text = replyInput.value.trim();
+    if (!text) return;
+    if (await updateActiveChatMessage(message.id, 'replies', text)) {
+      replyInput.value = '';
+      playPopSound();
+    }
+  });
+  card.appendChild(replyForm);
+  return card;
 }
 
 function createMessageElement(msg) {
@@ -1540,7 +2223,11 @@ function createMessageElement(msg) {
   avatar.className = 'message-avatar';
   avatar.style.cursor = 'pointer';
   if (msg.avatar) {
-    avatar.innerHTML = `<img src="${msg.avatar}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+    const image = document.createElement('img');
+    image.src = msg.avatar;
+    image.alt = '';
+    image.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover;';
+    avatar.appendChild(image);
   } else {
     avatar.textContent = (msg.author || 'U')[0].toUpperCase();
   }
@@ -1597,10 +2284,15 @@ function createMessageElement(msg) {
 
   const text = document.createElement('div');
   text.className = 'message-text';
-  text.textContent = msg.text;
+  text.textContent = msg.text || '';
 
   content.appendChild(header);
-  content.appendChild(text);
+  if (msg.text) content.appendChild(text);
+  if (Array.isArray(msg.attachments) && msg.attachments.length) {
+    content.appendChild(renderMessageAttachments(msg.attachments));
+  }
+  if (msg.poll) content.appendChild(renderPollCard(msg));
+  if (msg.topic) content.appendChild(renderTopicCard(msg));
 
   // Botão de Fixar Mensagem
   const btnPin = document.createElement('button');
@@ -1755,42 +2447,150 @@ function scrollChatToBottom() {
 }
 
 if (chatInputForm && chatInputText) {
-  chatInputForm.addEventListener('submit', (e) => {
+  chatInputForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = chatInputText.value.trim();
     if (!text) return;
 
-    const newMsg = {
-      id: Date.now(),
-      author: userProfile.displayName || 'Bads',
-      avatar: userProfile.avatarUrl || '',
-      role: 'MEMBRO',
-      time: `Hoje às ${formatTimeNow()}`,
-      text: text
-    };
-
-    if (currentDmFriend) {
-      const dmKey = `badiscord_dm_messages_${currentDmFriend.id}`;
-      const msgs = getStoredDMMessages(currentDmFriend.id, currentDmFriend);
-      msgs.push(newMsg);
-      try {
-        localStorage.setItem(dmKey, JSON.stringify(msgs));
-      } catch (err) {}
-    } else {
-      const msgs = getStoredMessages(activeServerId, currentTextChannel);
-      msgs.push(newMsg);
-      try {
-        localStorage.setItem(getChatStorageKey(activeServerId, currentTextChannel), JSON.stringify(msgs));
-      } catch (err) {}
-    }
-
-    if (messagesList) {
-      messagesList.appendChild(createMessageElement(newMsg));
+    const newMsg = createChatMessage({ text });
+    const wasDm = Boolean(currentDmFriend);
+    const savedMessage = await saveActiveChatMessage(newMsg);
+    if (!savedMessage) return;
+    if (wasDm && messagesList) {
+      messagesList.appendChild(createMessageElement(savedMessage));
       scrollChatToBottom();
     }
-
     chatInputText.value = '';
     playPopSound();
+  });
+}
+
+function sendChatFile(file) {
+  if (!file) return;
+  if (file.size > 1024 * 1024) {
+    showToast('O arquivo deve ter no máximo 1 MB para ser salvo no chat.', '⚠️');
+    return;
+  }
+  const reader = new FileReader();
+  reader.addEventListener('load', async () => {
+    if (typeof reader.result !== 'string') {
+      showToast('Não foi possível ler este arquivo.', '⚠️');
+      return;
+    }
+    const attachment = {
+      name: file.name,
+      type: file.type || 'application/octet-stream',
+      size: file.size,
+      data: reader.result
+    };
+    const text = chatInputText?.value.trim() || '';
+    const message = createChatMessage({ text, attachments: [attachment] });
+    const wasDm = Boolean(currentDmFriend);
+    const savedMessage = await saveActiveChatMessage(message);
+    if (!savedMessage) return;
+    if (wasDm && messagesList) messagesList.appendChild(createMessageElement(savedMessage));
+    if (chatInputText) chatInputText.value = '';
+    scrollChatToBottom();
+    playPopSound();
+  });
+  reader.addEventListener('error', () => {
+    showToast('Não foi possível ler este arquivo.', '⚠️');
+  });
+  reader.readAsDataURL(file);
+}
+
+async function createChatPoll() {
+  const question = window.prompt('Qual é a pergunta da enquete?');
+  if (question === null) return;
+  const normalizedQuestion = question.trim().slice(0, 200);
+  if (!normalizedQuestion) {
+    showToast('Digite uma pergunta para a enquete.', '⚠️');
+    return;
+  }
+  const optionsInput = window.prompt('Digite de 2 a 6 opções separadas por vírgula:');
+  if (optionsInput === null) return;
+  const options = [...new Set(optionsInput.split(',').map((option) => option.trim()).filter(Boolean))].slice(0, 6);
+  if (options.length < 2) {
+    showToast('A enquete precisa ter pelo menos duas opções diferentes.', '⚠️');
+    return;
+  }
+
+  const message = createChatMessage({
+    text: '',
+    poll: { question: normalizedQuestion, options, votes: {} }
+  });
+  const wasDm = Boolean(currentDmFriend);
+  const savedMessage = await saveActiveChatMessage(message);
+  if (!savedMessage) return;
+  if (wasDm && messagesList) messagesList.appendChild(createMessageElement(savedMessage));
+  scrollChatToBottom();
+  playPopSound();
+}
+
+async function createChatTopic() {
+  const title = window.prompt('Qual será o título do tópico?');
+  if (title === null) return;
+  const normalizedTitle = title.trim().slice(0, 120);
+  if (!normalizedTitle) {
+    showToast('Digite um título para o tópico.', '⚠️');
+    return;
+  }
+  const description = window.prompt('Adicione uma descrição (opcional):') || '';
+  const message = createChatMessage({
+    text: '',
+    topic: { title: normalizedTitle, description: description.trim().slice(0, 1000), replies: [] }
+  });
+  const wasDm = Boolean(currentDmFriend);
+  const savedMessage = await saveActiveChatMessage(message);
+  if (!savedMessage) return;
+  if (wasDm && messagesList) messagesList.appendChild(createMessageElement(savedMessage));
+  scrollChatToBottom();
+  playPopSound();
+}
+
+if (chatAttachButton && chatAttachMenu) {
+  chatAttachButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+    chatAttachMenu.style.display = chatAttachMenu.style.display === 'none' ? 'flex' : 'none';
+  });
+  chatAttachMenu.addEventListener('click', (event) => event.stopPropagation());
+  document.addEventListener('click', () => {
+    chatAttachMenu.style.display = 'none';
+  });
+  chatAttachMenu.querySelectorAll('[data-chat-action]').forEach((button) => {
+    button.addEventListener('click', () => {
+      chatAttachMenu.style.display = 'none';
+      switch (button.dataset.chatAction) {
+        case 'image':
+          chatImageInput?.click();
+          break;
+        case 'file':
+          chatFileInput?.click();
+          break;
+        case 'poll':
+          createChatPoll();
+          break;
+        case 'topic':
+          createChatTopic();
+          break;
+        default:
+          console.warn('Ação de anexo de chat desconhecida:', button.dataset.chatAction);
+      }
+    });
+  });
+}
+
+if (chatImageInput) {
+  chatImageInput.addEventListener('change', () => {
+    Array.from(chatImageInput.files || []).forEach(sendChatFile);
+    chatImageInput.value = '';
+  });
+}
+
+if (chatFileInput) {
+  chatFileInput.addEventListener('change', () => {
+    Array.from(chatFileInput.files || []).forEach(sendChatFile);
+    chatFileInput.value = '';
   });
 }
 
@@ -1966,13 +2766,9 @@ if (menuItemBoost) {
 }
 
 if (menuItemInvite) {
-  menuItemInvite.addEventListener('click', async () => {
+  menuItemInvite.addEventListener('click', () => {
     closeServerDropdown();
-    const inviteLink = `https://badiscord.gg/${activeServerId}`;
-    try {
-      await navigator.clipboard.writeText(inviteLink);
-    } catch (err) {}
-    showToast('📋 Link de convite copiado para a área de transferência!', '📋');
+    openInviteModal();
   });
 }
 
@@ -2057,26 +2853,56 @@ if (voiceSwitchModal) {
 }
 
 async function toggleCamera() {
+  if (!currentChannel || !livekitRoom || livekitRoom.state !== 'connected') {
+    showToast('Entre em um canal de voz antes de ativar a câmera.', '⚠️');
+    return;
+  }
   if (isCamActive) {
     if (localCamTrack) {
-      try { localCamTrack.stop(); } catch (e) {}
+      try {
+        const cameraSource = window.LivekitClient?.Track?.Source?.Camera;
+        const publication = cameraSource
+          ? livekitRoom.localParticipant.getTrackPublication(cameraSource)
+          : null;
+        if (publication?.track) await livekitRoom.localParticipant.unpublishTrack(publication.track);
+        localCamTrack.stop();
+        localCamTrack.detach();
+      } catch (error) {
+        console.error('Não foi possível encerrar a câmera:', error);
+        showToast('Não foi possível desligar a câmera.', '⚠️');
+        return;
+      }
       localCamTrack = null;
     }
     isCamActive = false;
     showToast('📹 Câmera desativada', '📹');
   } else {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      localCamTrack = stream.getVideoTracks()[0];
+      if (!window.LivekitClient?.createLocalVideoTrack) {
+        throw new Error('A câmera não está disponível neste navegador.');
+      }
+      localCamTrack = await window.LivekitClient.createLocalVideoTrack({
+        facingMode: 'user',
+        resolution: { width: 640, height: 360, frameRate: 24 }
+      });
+      await livekitRoom.localParticipant.publishTrack(localCamTrack, {
+        source: window.LivekitClient.Track.Source.Camera
+      });
       isCamActive = true;
       showToast('📹 Câmera ativada!', '📹');
-    } catch (err) {
-      showToast('Nenhuma webcam detectada no sistema', '⚠️');
+    } catch (error) {
+      if (localCamTrack) {
+        localCamTrack.stop();
+        localCamTrack = null;
+      }
+      console.error('Não foi possível publicar a câmera:', error);
+      showToast(error.message || 'Não foi possível acessar a câmera.', '⚠️');
     }
   }
 
   if (dockBtnCam) dockBtnCam.classList.toggle('active', isCamActive);
   if (btnShareCam) btnShareCam.classList.toggle('active', isCamActive);
+  refreshVoiceParticipantViews();
 }
 
 if (dockBtnCam) dockBtnCam.addEventListener('click', toggleCamera);
@@ -2189,6 +3015,15 @@ if (btnGameQuickStream) {
       return;
     }
 
+    if (!window.electronAPI) {
+      if (!navigator.mediaDevices?.getDisplayMedia) {
+        showToast('Este navegador não permite compartilhar a tela. Você ainda pode assistir às lives.', '⚠️');
+        return;
+      }
+      await startStreamWithSourceId('__browser_display__', 'Compartilhamento de tela');
+      return;
+    }
+
     // Se houver um jogo detectado aberto agora, inicia a live direta daquele jogo!
     if (detectedGame && detectedGame.id) {
       showToast(`Iniciando transmissão de ${detectedGame.name}...`, '🎮');
@@ -2217,30 +3052,112 @@ const FRIEND_COLORS = ['#5865F2','#57F287','#1DB954','#FEE75C','#EB459E','#ED424
 
 let friendsList = [];
 let friendRequests = [];
+let friendsPollingTimer = null;
+let presenceHeartbeatTimer = null;
+let incomingFriendRequestIds = null;
+let friendsLoadInProgress = false;
+const desktopNotifsToggle = document.getElementById('desktopNotifsToggle');
 
-async function loadFriendsFromServer() {
-  if (!hasAuthenticatedSession()) return;
+if (desktopNotifsToggle) {
+  desktopNotifsToggle.checked = localStorage.getItem('badiscord_desktop_friend_notifications') === 'true';
+  desktopNotifsToggle.addEventListener('change', async () => {
+    if (desktopNotifsToggle.checked) {
+      if (!('Notification' in window)) {
+        desktopNotifsToggle.checked = false;
+        showToast('Notificações do sistema não estão disponíveis neste dispositivo.', '⚠️');
+        return;
+      }
+      try {
+        const permission = Notification.permission === 'default'
+          ? await Notification.requestPermission()
+          : Notification.permission;
+        if (permission !== 'granted') {
+          desktopNotifsToggle.checked = false;
+          localStorage.setItem('badiscord_desktop_friend_notifications', 'false');
+          showToast('Permita as notificações nas configurações do navegador ou sistema.', '⚠️');
+          return;
+        }
+      } catch (error) {
+        desktopNotifsToggle.checked = false;
+        localStorage.setItem('badiscord_desktop_friend_notifications', 'false');
+        console.error('Não foi possível habilitar notificações do sistema:', error);
+        showToast('Não foi possível habilitar as notificações do sistema.', '⚠️');
+        return;
+      }
+    }
+    localStorage.setItem('badiscord_desktop_friend_notifications', String(desktopNotifsToggle.checked));
+  });
+}
+
+function decorateFriend(user) {
+  return {
+    ...user,
+    initial: (user.name || 'U')[0].toUpperCase(),
+    color: FRIEND_COLORS[Math.abs(String(user.id || '').length) % FRIEND_COLORS.length]
+  };
+}
+
+function notifyFriendRequest(request) {
+  const displayName = request.fullTag || `${request.name}#${request.tag}`;
+  showToast(`Nova solicitação de amizade de ${displayName}!`, '📩');
+
+  if (!desktopNotifsToggle?.checked || !('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const notification = new Notification('Nova solicitação de amizade', {
+      body: `${displayName} quer adicionar você.`,
+      tag: `friend-request-${request.requestId}`
+    });
+    notification.addEventListener('click', () => {
+      window.focus();
+      openHomeFriendsView();
+      switchFriendsTab('pending');
+      notification.close();
+    });
+  } catch (error) {
+    console.warn('Não foi possível exibir a notificação do sistema:', error);
+  }
+}
+
+async function loadFriendsFromServer({ notifyNew = false } = {}) {
+  if (!hasAuthenticatedSession() || friendsLoadInProgress) return;
+  friendsLoadInProgress = true;
   try {
     const response = await fetch('/api/friends', { credentials: 'include', headers: { Accept: 'application/json' } });
-    if (!response.ok) return;
-    const payload = await response.json();
-    friendsList = Array.isArray(payload.friends) ? payload.friends : [];
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível carregar seus amigos.');
+    friendsList = (Array.isArray(payload.friends) ? payload.friends : []).map(decorateFriend);
     friendRequests = (Array.isArray(payload.requests) ? payload.requests : []).map((request) => ({
-      ...request,
-      type: 'incoming',
-      initial: (request.name || 'U')[0].toUpperCase(),
-      color: FRIEND_COLORS[Math.abs(String(request.id || '').length) % FRIEND_COLORS.length],
-      date: 'Agora'
+      ...decorateFriend(request),
+      type: request.type === 'outgoing' ? 'outgoing' : 'incoming',
+      date: request.createdAt || ''
     }));
-    renderFriendsList();
-    renderPendingRequests();
+    const currentIncomingIds = new Set(friendRequests
+      .filter((request) => request.type === 'incoming')
+      .map((request) => request.requestId));
+    if (notifyNew && incomingFriendRequestIds) {
+      friendRequests
+        .filter((request) => request.type === 'incoming' && !incomingFriendRequestIds.has(request.requestId))
+        .forEach(notifyFriendRequest);
+    }
+    incomingFriendRequestIds = currentIncomingIds;
+    if (currentFriendsTab === 'pending') renderPendingRequests();
+    else if (currentFriendsTab !== 'add') renderFriendsList(inputFriendsSearch?.value.trim() || '');
     renderDMList();
     renderActiveNowCards();
     updateDMBadge();
     updateRequestsBadge();
   } catch (error) {
     console.warn('Não foi possível carregar amigos:', error);
+  } finally {
+    friendsLoadInProgress = false;
   }
+}
+
+function startFriendRequestPolling() {
+  clearInterval(friendsPollingTimer);
+  clearInterval(presenceHeartbeatTimer);
+  friendsPollingTimer = setInterval(() => loadFriendsFromServer({ notifyNew: true }), 12000);
+  presenceHeartbeatTimer = setInterval(publishPresenceStatus, 20000);
 }
 
 // Analisa entrada do usuário com ou sem tag (ex: bads#0000 ou bads)
@@ -2249,23 +3166,11 @@ function parseFriendInput(raw) {
   const str = raw.trim();
   if (!str) return null;
 
-  let name = '';
-  let tag = '';
-
-  if (str.includes('#')) {
-    const parts = str.split('#');
-    name = parts[0].trim();
-    tag = parts[1].trim();
-    if (!name) name = 'Amigo';
-    if (!tag) tag = String(Math.floor(1000 + Math.random() * 9000));
-  } else {
-    name = str;
-    tag = '';
-  }
-
-  // Remove caracteres extras da tag
-  tag = tag.replace(/[^a-zA-Z0-9]/g, '');
-  if (!tag) tag = '0001';
+  const parts = str.split('#');
+  if (parts.length > 2) return null;
+  const name = parts[0].trim();
+  const tag = parts.length === 2 ? parts[1].trim() : '';
+  if (!name || (parts.length === 2 && !/^[a-zA-Z0-9]{4}$/.test(tag))) return null;
 
   return {
     name,
@@ -2276,7 +3181,10 @@ function parseFriendInput(raw) {
 
 async function sendFriendRequest(rawInput) {
   const parsed = parseFriendInput(rawInput);
-  if (!parsed) return null;
+  if (!parsed) {
+    showToast('Informe o nome de usuário ou o nome com uma tag válida de quatro caracteres.', '⚠️');
+    return null;
+  }
   try {
     const response = await fetch('/api/friends/requests', {
       method: 'POST',
@@ -2286,7 +3194,8 @@ async function sendFriendRequest(rawInput) {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || 'Não foi possível enviar o pedido.');
-    showToast(`Pedido enviado para ${parsed.fullTag}!`, '✅');
+    await loadFriendsFromServer();
+    showToast(`Pedido enviado para ${payload.user?.fullTag || parsed.fullTag}!`, '✅');
     return payload.user;
   } catch (error) {
     showToast(error.message || 'Não foi possível enviar o pedido.', '⚠️');
@@ -2297,56 +3206,38 @@ async function sendFriendRequest(rawInput) {
 async function acceptFriendRequest(reqId) {
   const response = await fetch(`/api/friends/requests/${encodeURIComponent(reqId)}/accept`, { method: 'POST', credentials: 'include' });
   if (!response.ok) {
-    showToast('Não foi possível aceitar a solicitação.', '⚠️');
-    return;
+    const payload = await response.json().catch(() => ({}));
+    showToast(payload.error || 'Não foi possível aceitar a solicitação.', '⚠️');
+    return false;
   }
   await loadFriendsFromServer();
   showToast('Solicitação aceita! 🎉', '✅');
+  return true;
 }
 
 async function rejectFriendRequest(reqId) {
-  await fetch(`/api/friends/requests/${encodeURIComponent(reqId)}`, { method: 'DELETE', credentials: 'include' });
+  const response = await fetch(`/api/friends/requests/${encodeURIComponent(reqId)}`, { method: 'DELETE', credentials: 'include' });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    showToast(payload.error || 'Não foi possível recusar ou cancelar o pedido.', '⚠️');
+    return false;
+  }
   await loadFriendsFromServer();
   showToast('Solicitação recusada/cancelada.', 'ℹ️');
-}
-
-function simulateIncomingRequest() {
-  const sampleNames = ['Lucas', 'GamerPro', 'Noxus', 'Viper', 'Astra', 'Cipher', 'Shadow'];
-  const name = sampleNames[Math.floor(Math.random() * sampleNames.length)];
-  const tag = String(Math.floor(1000 + Math.random() * 9000));
-  const fullTag = `${name}#${tag}`;
-
-  if (friendsList.find(f => f.fullTag === fullTag) || friendRequests.find(r => r.fullTag === fullTag)) {
-    return;
-  }
-
-  const req = {
-    id: 'req-' + Date.now(),
-    name: name,
-    tag: tag,
-    fullTag: fullTag,
-    type: 'incoming', // recebido de outra pessoa
-    initial: name[0].toUpperCase(),
-    color: FRIEND_COLORS[Math.floor(Math.random() * FRIEND_COLORS.length)],
-    date: 'Agora mesmo'
-  };
-
-  friendRequests.push(req);
-  loadFriendsFromServer();
-  updateRequestsBadge();
-  if (currentFriendsTab === 'pending') {
-    renderPendingRequests();
-  }
-  showToast(`Nova solicitação de amizade de ${fullTag}!`, '📩');
+  return true;
 }
 
 function removeFriend(friendId) {
   const friend = friendsList.find(f => f.id === friendId);
   fetch(`/api/friends/${encodeURIComponent(friendId)}`, { method: 'DELETE', credentials: 'include' })
-    .then(() => loadFriendsFromServer())
+    .then(async (response) => {
+      if (!response.ok) throw new Error('Não foi possível remover este amigo.');
+      await loadFriendsFromServer();
+    })
     .then(() => {
       if (friend) showToast(`${friend.fullTag || friend.name} foi removido.`, '🗑️');
-    });
+    })
+    .catch((error) => showToast(error.message || 'Não foi possível remover este amigo.', '⚠️'));
 }
 
 // Gera lista de DMs a partir dos amigos
@@ -2377,7 +3268,7 @@ function updateDMBadge() {
 }
 
 function updateRequestsBadge() {
-  const count = friendRequests.length;
+  const count = friendRequests.filter((request) => request.type === 'incoming').length;
   const requestsBadge = document.getElementById('requestsBadgeCount');
   const pendingTabBadge = document.getElementById('pendingTabBadge');
 
@@ -2494,7 +3385,11 @@ function renderFriendsList(filter = '') {
 
     const name = document.createElement('div');
     name.className = 'friend-card-name';
-    name.innerHTML = `${friend.name} <span class="friend-card-tag">#${friend.tag}</span>`;
+    name.append(document.createTextNode(friend.name));
+    const tag = document.createElement('span');
+    tag.className = 'friend-card-tag';
+    tag.textContent = `#${friend.tag}`;
+    name.appendChild(tag);
 
     const status = document.createElement('div');
     status.className = 'friend-card-status';
@@ -2549,10 +3444,10 @@ function renderPendingRequests() {
   friendsCardsList.innerHTML = '';
 
   if (friendsCountLabel) {
-    friendsCountLabel.textContent = `SOLICITAÇÕES PENDENTES — ${friendRequests.length}`;
+    const incomingCount = friendRequests.filter((request) => request.type === 'incoming').length;
+    friendsCountLabel.textContent = `SOLICITAÇÕES PENDENTES — ${friendRequests.length} (${incomingCount} recebida${incomingCount === 1 ? '' : 's'})`;
   }
 
-  // Header com botão para simular solicitação recebida
   const topActions = document.createElement('div');
   topActions.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding:0 4px;';
   topActions.innerHTML = '<span style="font-size:12px; color:#949ba4;">Gerencie quem pode conversar e jogar com você.</span>';
@@ -2571,7 +3466,19 @@ function renderPendingRequests() {
     return;
   }
 
-  friendRequests.forEach(req => {
+  let lastRequestType = '';
+  const orderedRequests = [
+    ...friendRequests.filter((request) => request.type === 'incoming'),
+    ...friendRequests.filter((request) => request.type === 'outgoing')
+  ];
+  orderedRequests.forEach(req => {
+    if (req.type !== lastRequestType) {
+      lastRequestType = req.type;
+      const section = document.createElement('div');
+      section.className = 'pending-requests-section-title';
+      section.textContent = req.type === 'incoming' ? 'Recebidos' : 'Enviados';
+      friendsCardsList.appendChild(section);
+    }
     const item = document.createElement('div');
     item.className = 'pending-req-item';
 
@@ -2588,7 +3495,11 @@ function renderPendingRequests() {
 
     const name = document.createElement('div');
     name.className = 'pending-req-name';
-    name.innerHTML = `${req.name} <span class="friend-card-tag">#${req.tag}</span>`;
+    name.append(document.createTextNode(req.name));
+    const tag = document.createElement('span');
+    tag.className = 'friend-card-tag';
+    tag.textContent = `#${req.tag}`;
+    name.appendChild(tag);
 
     const typeDesc = document.createElement('div');
     typeDesc.className = 'pending-req-type';
@@ -2609,13 +3520,13 @@ function renderPendingRequests() {
       btnAccept.className = 'btn-accept-req';
       btnAccept.title = 'Aceitar Pedido de Amizade';
       btnAccept.textContent = '✔';
-      btnAccept.addEventListener('click', () => acceptFriendRequest(req.id));
+      btnAccept.addEventListener('click', () => acceptFriendRequest(req.requestId));
 
       const btnReject = document.createElement('button');
       btnReject.className = 'btn-reject-req';
       btnReject.title = 'Recusar Pedido';
       btnReject.textContent = '✖';
-      btnReject.addEventListener('click', () => rejectFriendRequest(req.id));
+      btnReject.addEventListener('click', () => rejectFriendRequest(req.requestId));
 
       actions.appendChild(btnAccept);
       actions.appendChild(btnReject);
@@ -2624,7 +3535,7 @@ function renderPendingRequests() {
       btnCancel.className = 'btn-cancel-req';
       btnCancel.title = 'Cancelar Pedido';
       btnCancel.textContent = '✖';
-      btnCancel.addEventListener('click', () => rejectFriendRequest(req.id));
+      btnCancel.addEventListener('click', () => rejectFriendRequest(req.requestId));
 
       actions.appendChild(btnCancel);
     }
@@ -2840,7 +3751,7 @@ if (formAddFriend) {
     const friend = await sendFriendRequest(rawVal);
     if (friend) {
       input.value = '';
-      switchFriendsTab('all');
+      switchFriendsTab('pending');
     }
   });
 }
@@ -3504,11 +4415,27 @@ function renderInviteFriends(query = '') {
 function openInviteModal() {
   if (!inviteToServerModal) return;
   const srv = servers.find(s => s.id === activeServerId) || servers[0];
+  if (!srv) {
+    showToast('Selecione um servidor para criar um convite.', '⚠️');
+    return;
+  }
   inviteServerContext = srv;
   if (inviteServerName) inviteServerName.textContent = srv.name;
-  if (inputInviteLink) {
-    inputInviteLink.value = `https://badiscord.gg/${srv.id}-${encodeURIComponent(srv.name.toLowerCase().replace(/\s+/g, '-'))}`;
-  }
+  if (inputInviteLink) inputInviteLink.value = 'Gerando link de convite...';
+  fetch('/api/server-invite-links', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ serverId: srv.id })
+  }).then(async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível criar o link de convite.');
+    if (inviteServerContext?.id === srv.id && inputInviteLink) inputInviteLink.value = payload.inviteUrl;
+  }).catch((error) => {
+    if (inviteServerContext?.id === srv.id && inputInviteLink) inputInviteLink.value = '';
+    showToast(error.message || 'Não foi possível criar o link de convite.', '⚠️');
+    console.warn('Não foi possível criar link de convite:', error);
+  });
   if (inputInviteFriendSearch) inputInviteFriendSearch.value = '';
   renderInviteFriends();
   inviteToServerModal.style.display = 'flex';
@@ -3518,10 +4445,18 @@ if (btnCloseInviteModal) btnCloseInviteModal.addEventListener('click', () => {
   if (inviteToServerModal) inviteToServerModal.style.display = 'none';
 });
 if (btnCopyInviteLink) {
-  btnCopyInviteLink.addEventListener('click', () => {
-    if (inputInviteLink) {
-      navigator.clipboard.writeText(inputInviteLink.value);
+  btnCopyInviteLink.addEventListener('click', async () => {
+    const inviteLink = inputInviteLink?.value || '';
+    if (!inviteLink || inviteLink === 'Gerando link de convite...') {
+      showToast('Aguarde a criação do link de convite.', '⚠️');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(inviteLink);
       showToast('Link de convite copiado para a área de transferência!', '📋');
+    } catch (error) {
+      console.warn('Não foi possível copiar o link de convite:', error);
+      showToast('Não foi possível copiar o link. Selecione e copie o texto manualmente.', '⚠️');
     }
   });
 }
@@ -3898,6 +4833,13 @@ function setMuteState(muted, playSound = true) {
   if (localAudioTrack) {
     localAudioTrack.enabled = !isMuted;
   }
+  if (livekitAudioTrack && livekitRoom?.state === 'connected') {
+    const muteOperation = isMuted ? livekitAudioTrack.mute() : livekitAudioTrack.unmute();
+    muteOperation.catch((error) => {
+      console.error('Não foi possível atualizar o microfone no LiveKit:', error);
+      showToast('Não foi possível alterar o estado do microfone.', '⚠️');
+    });
+  }
   if (playSound) {
     playMuteSound(isMuted);
   }
@@ -3906,6 +4848,14 @@ function setMuteState(muted, playSound = true) {
 
 function setDeafenState(deafened) {
   isDeafened = deafened;
+  remoteAudioElements.forEach((element) => {
+    element.muted = isDeafened;
+    if (!isDeafened) {
+      element.play().catch((error) => {
+        console.warn('Reprodução de áudio remoto bloqueada pelo navegador:', error);
+      });
+    }
+  });
   playDeafenSound(isDeafened);
 
   if (isDeafened) {
@@ -4021,7 +4971,7 @@ async function disconnectVoice(playSound = true) {
     if (btnShareCam) btnShareCam.classList.remove('active');
   }
   if (localScreenTrack) {
-    stopCurrentStream();
+    await stopCurrentStream();
   }
 
   currentChannel = null;
@@ -4370,6 +5320,10 @@ function updateStreamVolume(val, showHud = false) {
       streamGainNode.gain.value = val / 100;
     }
   }
+  remoteScreenAudioElements.forEach((element) => {
+    element.volume = val / 100;
+    element.muted = isStreamAudioMuted || val === 0;
+  });
 
   // Ícone dinâmico do som
   let icon = '🔊';
@@ -4393,7 +5347,25 @@ function updateStreamVolume(val, showHud = false) {
 }
 
 // Parar Transmissão Atual com Limpeza Completa
-function stopCurrentStream() {
+async function stopCurrentStream() {
+  if (localScreenTrack) localScreenTrack.onended = null;
+  const screenShareSource = window.LivekitClient?.Track?.Source?.ScreenShare;
+  const screenShareAudioSource = window.LivekitClient?.Track?.Source?.ScreenShareAudio;
+  if (livekitRoom?.state === 'connected' && livekitRoom.localParticipant) {
+    const videoPublication = screenShareSource
+      ? livekitRoom.localParticipant.getTrackPublication(screenShareSource)
+      : null;
+    const audioPublication = screenShareAudioSource
+      ? livekitRoom.localParticipant.getTrackPublication(screenShareAudioSource)
+      : null;
+    try {
+      if (videoPublication?.track) await livekitRoom.localParticipant.unpublishTrack(videoPublication.track);
+      if (audioPublication?.track) await livekitRoom.localParticipant.unpublishTrack(audioPublication.track);
+    } catch (error) {
+      console.warn('Não foi possível encerrar a transmissão no LiveKit:', error);
+    }
+  }
+
   if (streamGainNode) {
     try { streamGainNode.gain.value = 0; } catch (e) {}
   }
@@ -4413,7 +5385,9 @@ function stopCurrentStream() {
   }
   if (remoteVideoPlayer) {
     remoteVideoPlayer.srcObject = null;
+    remoteVideoPlayer.muted = true;
   }
+  watchingLiveParticipantId = '';
   if (streamViewerWrapper) {
     streamViewerWrapper.style.display = 'none';
   }
@@ -4422,6 +5396,13 @@ function stopCurrentStream() {
   }
   isLocalStreamer = false;
   isLoopbackEnabled = false;
+  const liveViewerCount = document.getElementById('liveViewerCount');
+  if (liveViewerCount) liveViewerCount.textContent = '👁 0';
+  if (btnStopStreamDirect) btnStopStreamDirect.style.display = '';
+  if (btnToggleLoopbackAudio) btnToggleLoopbackAudio.style.display = 'none';
+  const localIdentity = livekitRoom?.localParticipant?.identity;
+  if (localIdentity) remoteScreenTracks.delete(localIdentity);
+  refreshVoiceParticipantViews();
 
   if (btnShareScreen) {
     btnShareScreen.classList.remove('live-active');
@@ -4547,14 +5528,18 @@ if (btnStopStreamDirect) {
 }
 
 btnShareScreen.addEventListener('click', async () => {
-  if (!window.electronAPI) {
-    alert('API do Electron necessária para capturar janelas do sistema.');
-    return;
-  }
-
   // Se já estiver transmitindo, clicar no botão encerra a transmissão
   if (localScreenTrack) {
     stopCurrentStream();
+    return;
+  }
+
+  if (!window.electronAPI) {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      showToast('Este navegador não oferece compartilhamento de tela. Use outro navegador ou o app para desktop.', '⚠️');
+      return;
+    }
+    await startStreamWithSourceId('__browser_display__', 'Compartilhamento de tela');
     return;
   }
 
@@ -4581,6 +5566,14 @@ btnCancelShare.addEventListener('click', () => screenShareModal.style.display = 
 // Iniciar Live do Jogo (1080p 60FPS) - Função Modular Unificada
 async function startStreamWithSourceId(sourceId, sourceTitle) {
   if (!sourceId) return;
+  if (!hasAuthenticatedSession()) {
+    showToast('Faça login antes de iniciar uma transmissão.', '⚠️');
+    return;
+  }
+  if (!currentChannel) {
+    showToast('Entre em um canal de voz antes de iniciar uma transmissão.', '⚠️');
+    return;
+  }
 
   const targetRes = parseInt((selectResolution && selectResolution.value) || localStorage.getItem('badiscord_stream_res') || '1080', 10);
   const targetFps = parseInt((selectFps && selectFps.value) || localStorage.getItem('badiscord_stream_fps') || '60', 10);
@@ -4593,7 +5586,23 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
 
   try {
     let stream;
-    const videoConstraints = {
+    if (sourceId === '__browser_display__') {
+      const width = targetRes === 1440 ? 2560 : (targetRes === 1080 ? 1920 : 1280);
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: { ideal: width }, height: { ideal: targetRes }, frameRate: { ideal: targetFps, max: targetFps } },
+          audio: includeAudio
+        });
+      } catch (captureError) {
+        if (!includeAudio) throw captureError;
+        console.warn('Áudio do compartilhamento não está disponível neste navegador:', captureError);
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: { ideal: width }, height: { ideal: targetRes }, frameRate: { ideal: targetFps, max: targetFps } },
+          audio: false
+        });
+      }
+    } else {
+      const videoConstraints = {
       mandatory: {
         chromeMediaSource: 'desktop',
         chromeMediaSourceId: sourceId,
@@ -4603,35 +5612,51 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
       }
     };
 
-    if (includeAudio) {
-      try {
-        // Tenta capturar vídeo + áudio da aplicação no Windows
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            mandatory: {
-              chromeMediaSource: 'desktop'
-            }
-          },
-          video: videoConstraints
-        });
-      } catch (audioErr) {
-        console.warn('Captura com áudio não disponível nesta fonte, prosseguindo com vídeo puro:', audioErr);
+      if (includeAudio) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { mandatory: { chromeMediaSource: 'desktop' } },
+            video: videoConstraints
+          });
+        } catch (audioErr) {
+          console.warn('Captura com áudio não disponível nesta fonte, prosseguindo com vídeo puro:', audioErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: videoConstraints
+          });
+        }
+      } else {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: videoConstraints
         });
       }
-    } else {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: videoConstraints
-      });
     }
 
     localScreenTrack = stream.getVideoTracks()[0];
+    if (!localScreenTrack) throw new Error('O navegador não retornou uma faixa de vídeo para compartilhar.');
     localScreenAudioTrack = stream.getAudioTracks()[0] || null;
+    const room = await connectToLiveKitRoom(currentChannel);
+    if (!room || room.state !== 'connected') throw new Error('Não foi possível conectar ao canal de voz para transmitir.');
+    const screenShareSource = window.LivekitClient.Track.Source.ScreenShare;
+    const screenShareAudioSource = window.LivekitClient.Track.Source.ScreenShareAudio;
+    await room.localParticipant.publishTrack(localScreenTrack, {
+      source: screenShareSource,
+      name: sourceTitle || 'BADISCORD Live',
+      stream: `screen-share-${authenticatedAccount.id}`
+    });
+    if (localScreenAudioTrack) {
+      await room.localParticipant.publishTrack(localScreenAudioTrack, {
+        source: screenShareAudioSource,
+        name: sourceTitle ? `${sourceTitle} Audio` : 'BADISCORD Live Audio',
+        stream: `screen-share-${authenticatedAccount.id}`
+      });
+    }
     isLocalStreamer = true;
     isLoopbackEnabled = false;
+    refreshVoiceParticipantViews();
+    const liveViewerCount = document.getElementById('liveViewerCount');
+    if (liveViewerCount) liveViewerCount.textContent = `👁 ${room.remoteParticipants.size}`;
 
     // PREVENÇÃO DE ECO / LOOPBACK:
     // O elemento de vídeo local recebe APENAS a faixa de vídeo.
@@ -4699,9 +5724,11 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
       stopCurrentStream();
     };
 
-    showToast(`Transmissão iniciada em 1080p 60FPS!`, '📡');
+    showToast('Transmissão iniciada!', '📡');
   } catch (err) {
-    alert(`Erro ao iniciar captura: ${err.message}\n\nDica: Se o jogo estiver em tela cheia exclusiva ou protegido por anti-cheat, experimente colocar o jogo em modo "Janela Sem Bordas" (Borderless Windowed) ou selecione a aba "Telas Inteiras".`);
+    await stopCurrentStream();
+    console.error('Falha ao iniciar captura da tela:', err);
+    showToast(err.message || 'Não foi possível iniciar o compartilhamento de tela.', '⚠️');
   }
 }
 
@@ -5581,6 +6608,53 @@ async function loadServerInvites() {
   }
 }
 
+async function acceptPendingServerInvite() {
+  const token = new URLSearchParams(window.location.search).get('invite');
+  if (!token || !authenticatedAccount) return;
+
+  try {
+    const response = await fetch(`/api/server-invite-links/${encodeURIComponent(token)}/accept`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { Accept: 'application/json' }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 404) {
+        const inviteUrl = new URL(window.location.href);
+        inviteUrl.searchParams.delete('invite');
+        window.history.replaceState({}, '', `${inviteUrl.pathname}${inviteUrl.search}${inviteUrl.hash}`);
+      }
+      showToast(payload.error || 'Não foi possível aceitar este convite.', '⚠️');
+      return;
+    }
+
+    const server = payload.server;
+    if (!server?.id) throw new Error('O convite foi aceito, mas o servidor não foi retornado.');
+    const normalizedServer = {
+      ...server,
+      icon: server.icon || '🎮',
+      textChannels: server.textChannels?.length ? server.textChannels : ['geral', 'clipes-e-jogos'],
+      voiceChannels: server.voiceChannels?.length ? server.voiceChannels : ['Geral 🔊']
+    };
+    const existingIndex = servers.findIndex((item) => item.id === normalizedServer.id);
+    if (existingIndex >= 0) servers[existingIndex] = { ...servers[existingIndex], ...normalizedServer };
+    else servers.push(normalizedServer);
+    saveServers();
+    renderGuilds();
+
+    const inviteUrl = new URL(window.location.href);
+    inviteUrl.searchParams.delete('invite');
+    window.history.replaceState({}, '', `${inviteUrl.pathname}${inviteUrl.search}${inviteUrl.hash}`);
+    activeServerId = normalizedServer.id;
+    restoreServerView(activeServerId);
+    showToast(`Você entrou em ${normalizedServer.name}.`, '✅');
+  } catch (error) {
+    console.warn('Não foi possível aceitar o link de convite:', error);
+    showToast(error.message || 'Não foi possível aceitar este convite.', '⚠️');
+  }
+}
+
 async function loadCustomSoundboard() {
   if (!authenticatedAccount) return;
   const serverId = activeServerId;
@@ -6129,7 +7203,7 @@ initializeFreeProfileCustomization();
 
       case 'invite-server':
         voiceUserContextMenu.style.display = 'none';
-        showToast('Convite enviado para ' + userName + '!', '✉️');
+        openInviteModal();
         break;
 
       case 'unfriend':
