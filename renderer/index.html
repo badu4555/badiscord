@@ -1298,11 +1298,12 @@
         <div class="settings-nav-item" data-tab="privacy">Dados e privacidade</div>
         <div class="settings-nav-item" data-tab="permissions">Permissões de mensagens</div>
         <div class="settings-nav-item" data-tab="notifications">Notificações</div>
+        <div class="settings-nav-item" data-tab="decorations">Decorações de perfil</div>
 
         <div class="settings-nav-header">COBRANÇA</div>
         <div class="settings-nav-item" data-tab="nitro">Nitro</div>
         <div class="settings-nav-item" data-tab="boost">Impulso de servidor</div>
-        <div class="settings-nav-item" data-tab="subscriptions">Assinaturas</div>
+        <div class="settings-nav-item" data-tab="subscriptions">Loja</div>
         <div class="settings-nav-item" data-tab="gift-inventory">Inventário de presentes</div>
         <div class="settings-nav-item" data-tab="billing">Cobrança</div>
 
@@ -1684,9 +1685,40 @@
         <div class="settings-tab-pane" id="pane-nitro" style="display: none;">
           <div class="nitro-banner-card">
             <div class="nitro-badge-pill">BADISCORD NITRO</div>
-            <h2>Transmita em 1080p 60FPS sem limites</h2>
-            <p>Todos os recursos de voz em alta fidelidade e lives em 1080p já estão liberados para você no BADISCORD!</p>
+            <h2>Personalize seu perfil gratuitamente</h2>
+            <p>Decorações, widgets animados, temas e faixas de perfil gratuitos para todos.</p>
+            <button type="button" class="discord-btn-primary" id="btnOpenFreeDecorations">Abrir decorações gratuitas</button>
           </div>
+        </div>
+
+        <div class="settings-tab-pane" id="pane-decorations" style="display: none;">
+          <h2 class="settings-section-title">Decorações de perfil</h2>
+          <p class="section-desc">Escolha uma decoração e um widget. Tudo nesta aba é gratuito.</p>
+          <h3 class="profile-section-title">Decoração do avatar</h3>
+          <div class="free-customization-grid" id="profileDecorationOptions">
+            <button type="button" class="free-customization-card" data-decoration="none"><span class="customization-preview decoration-none">○</span><strong>Nenhuma</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-decoration="neon"><span class="customization-preview decoration-neon">✦</span><strong>Neon BAD</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-decoration="galaxy"><span class="customization-preview decoration-galaxy">✺</span><strong>Galáxia</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-decoration="fire"><span class="customization-preview decoration-fire">♨</span><strong>Fogo</strong><small>Grátis</small></button>
+          </div>
+          <h3 class="profile-section-title">Widget animado do perfil</h3>
+          <div class="free-customization-grid" id="profileWidgetOptions">
+            <button type="button" class="free-customization-card" data-widget="none"><span class="customization-preview widget-none">◇</span><strong>Nenhum</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-widget="pulse"><span class="customization-preview widget-pulse">◉</span><strong>Pulso</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-widget="orbit"><span class="customization-preview widget-orbit">◎</span><strong>Órbita</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-widget="spark"><span class="customization-preview widget-spark">✦</span><strong>Faísca</strong><small>Grátis</small></button>
+          </div>
+          <div class="profile-form-actions">
+            <button type="button" class="discord-btn-primary" id="btnSaveDecorations">Salvar personalização</button>
+            <span class="save-status-msg" id="decorationsSaveStatus"></span>
+          </div>
+        </div>
+
+        <div class="settings-tab-pane" id="pane-subscriptions" style="display: none;">
+          <h2 class="settings-section-title">Loja gratuita</h2>
+          <p class="section-desc">Todas as opções abaixo são gratuitas e podem ser aplicadas ao seu perfil.</p>
+          <div class="free-shop-banner">✨ Personalizações gratuitas para toda a comunidade</div>
+          <button type="button" class="discord-btn-primary" id="btnOpenShopDecorations">Ver decorações e widgets</button>
         </div>
 
         <!-- ABA: NOTIFICAÇÕES -->

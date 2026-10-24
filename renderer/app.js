@@ -925,6 +925,7 @@ function renderChannels(server) {
   if (currentChannel) {
     updateSidebarChannelUsers(currentChannel);
   }
+  applyProfileCustomization();
 }
 
 function closeVoiceChannelSettingsMenu() {
@@ -5032,6 +5033,7 @@ function switchSettingsTab(tabName) {
 
   const categoryTitles = {
     account: 'Perfil do Usuário',
+    decorations: 'Decorações de perfil',
     voice: 'Voz e vídeo',
     stream: 'Transmissão e Lives',
     sounds: 'Sons do Sistema',
@@ -5039,6 +5041,7 @@ function switchSettingsTab(tabName) {
     appearance: 'Aparência',
     notifications: 'Notificações',
     nitro: 'BADISCORD Nitro',
+    subscriptions: 'Loja gratuita',
     advanced: 'Avançado'
   };
 
@@ -5046,6 +5049,56 @@ function switchSettingsTab(tabName) {
   if (settingsHeaderCategory) {
     settingsHeaderCategory.textContent = categoryTitles[tabName] || 'Configurações';
   }
+}
+
+function applyProfileCustomization() {
+  const decoration = userProfile.profileDecoration || 'none';
+  const widget = userProfile.profileWidget || 'none';
+  const targets = [
+    document.getElementById('myAvatar'),
+    document.getElementById('presenceAvatarImg'),
+    document.getElementById('profileAvatarPreview')
+  ].filter(Boolean);
+  targets.forEach((target) => {
+    target.classList.remove('profile-decoration-none', 'profile-decoration-neon', 'profile-decoration-galaxy', 'profile-decoration-fire');
+    target.classList.remove('profile-widget-none', 'profile-widget-pulse', 'profile-widget-orbit', 'profile-widget-spark');
+    target.classList.add(`profile-decoration-${decoration}`, `profile-widget-${widget}`);
+  });
+}
+
+function initializeFreeProfileCustomization() {
+  let selectedDecoration = userProfile.profileDecoration || 'none';
+  let selectedWidget = userProfile.profileWidget || 'none';
+  const decorationOptions = document.querySelectorAll('#profileDecorationOptions [data-decoration]');
+  const widgetOptions = document.querySelectorAll('#profileWidgetOptions [data-widget]');
+
+  const markSelected = () => {
+    decorationOptions.forEach((option) => option.classList.toggle('active', option.dataset.decoration === selectedDecoration));
+    widgetOptions.forEach((option) => option.classList.toggle('active', option.dataset.widget === selectedWidget));
+  };
+
+  decorationOptions.forEach((option) => option.addEventListener('click', () => {
+    selectedDecoration = option.dataset.decoration;
+    markSelected();
+  }));
+  widgetOptions.forEach((option) => option.addEventListener('click', () => {
+    selectedWidget = option.dataset.widget;
+    markSelected();
+  }));
+
+  document.getElementById('btnSaveDecorations')?.addEventListener('click', () => {
+    userProfile.profileDecoration = selectedDecoration;
+    userProfile.profileWidget = selectedWidget;
+    saveUserProfile();
+    applyProfileCustomization();
+    const status = document.getElementById('decorationsSaveStatus');
+    if (status) {
+      status.textContent = '✓ Personalização salva';
+      setTimeout(() => { status.textContent = ''; }, 2500);
+    }
+    showToast('Decoração e widget aplicados gratuitamente!', '✨');
+  });
+  markSelected();
 }
 
 document.querySelectorAll('.settings-nav-item, .settings-subnav-item').forEach(el => {
@@ -5056,6 +5109,16 @@ document.querySelectorAll('.settings-nav-item, .settings-subnav-item').forEach(e
     }
   });
 });
+
+function openSettingsTab(tabName) {
+  if (typeof openSettings === 'function') openSettings();
+  switchSettingsTab(tabName);
+}
+
+document.getElementById('dmMenuNitro')?.addEventListener('click', () => openSettingsTab('nitro'));
+document.getElementById('dmMenuShop')?.addEventListener('click', () => openSettingsTab('subscriptions'));
+document.getElementById('btnOpenFreeDecorations')?.addEventListener('click', () => openSettingsTab('decorations'));
+document.getElementById('btnOpenShopDecorations')?.addEventListener('click', () => openSettingsTab('decorations'));
 
 const btnEditProfileLink = document.getElementById('btnEditProfileLink');
 const btnSidebarProfileHeader = document.getElementById('btnSidebarProfileHeader');
@@ -5222,6 +5285,7 @@ document.querySelectorAll('.theme-card').forEach(card => {
 
 // Aplicar perfil na inicialização
 applyUserProfile();
+initializeFreeProfileCustomization();
 
 
 // ==========================================
