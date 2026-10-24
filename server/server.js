@@ -112,6 +112,16 @@ db.exec(`
     created_at TEXT NOT NULL,
     PRIMARY KEY (user_a, user_b)
   );
+  CREATE TABLE IF NOT EXISTS server_invites (
+    id TEXT PRIMARY KEY,
+    sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    receiver_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    server_id TEXT NOT NULL,
+    server_name TEXT NOT NULL,
+    invite_url TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL
+  );
   CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS friend_requests_receiver_idx ON friend_requests(receiver_id, status);
 `);
@@ -422,6 +432,26 @@ app.delete('/api/friends/:id', requireAuth, (req, res) => {
   const result = db.prepare('DELETE FROM friendships WHERE (user_a = ? AND user_b = ?) OR (user_a = ? AND user_b = ?)')
     .run(req.user.id, req.params.id, req.params.id, req.user.id);
   return result.changes ? res.json({ ok: true }) : res.status(404).json({ error: 'Amizade não encontrada.' });
+});
+
+app.post('/api/server-invites', requireAuth, (req, res) => {
+  const receiverId = normalize(req.body?.receiverId);
+  const serverId = normalize(req.body?.serverId);
+  const serverName = normalize(req.body?.serverName);
+  const inviteUrl = normalize(req.body?.inviteUrl);
+  const receiver = db.prepare('SELECT id FROM users WHERE id = ?').get(receiverId);
+  if (!receiver || !serverId || !serverName || !inviteUrl) return res.status(400).json({ error: 'Dados do convite inválidos.' });
+  const id = crypto.randomUUID();
+  db.prepare(`INSERT INTO server_invites (id, sender_id, receiver_id, server_id, server_name, invite_url, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(id, req.user.id, receiverId, serverId, serverName, inviteUrl, new Date().toISOString());
+  return res.status(201).json({ id, ok: true });
+});
+
+app.get('/api/server-invites', requireAuth, (req, res) => {
+  const invites = db.prepare(`SELECT server_invites.*, users.display_name AS sender_name, users.username AS sender_username
+    FROM server_invites JOIN users ON users.id = server_invites.sender_id
+    WHERE receiver_id = ? AND status = 'pending' ORDER BY created_at DESC`).all(req.user.id);
+  return res.json({ invites });
 });
 
 app.get('/api/token', (req, res) => {

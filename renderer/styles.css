@@ -5254,6 +5254,116 @@ body {
   border-radius: 6px;
 }
 
+.invite-modal-subtitle {
+  color: #949ba4;
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+.invite-search-box {
+  align-items: center;
+  background: #111214;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: #949ba4;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 9px 11px;
+}
+
+.invite-search-box input {
+  background: transparent;
+  border: 0;
+  color: #dbdee1;
+  flex: 1;
+  min-width: 0;
+  outline: 0;
+}
+
+.invite-divider {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 16px 0;
+}
+
+.invite-link-title {
+  color: #f2f3f5;
+  display: block;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.invite-friend-person {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  min-width: 0;
+}
+
+.invite-friend-avatar {
+  align-items: center;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  flex: 0 0 30px;
+  font-size: 13px;
+  font-weight: 700;
+  height: 30px;
+  justify-content: center;
+}
+
+.invite-friend-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.invite-friend-meta strong,
+.invite-friend-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invite-friend-meta strong {
+  color: #f2f3f5;
+  font-size: 13px;
+}
+
+.invite-friend-meta span {
+  color: #949ba4;
+  font-size: 11px;
+}
+
+.invite-online-dot {
+  background: #23a55a;
+  border: 2px solid #1e1f22;
+  border-radius: 50%;
+  height: 9px;
+  margin-left: auto;
+  width: 9px;
+}
+
+.invite-online-dot.offline {
+  background: #80848e;
+}
+
+.invite-action-button {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+}
+
+.invite-action-button.invite-sent {
+  background: #248046;
+}
+
+.invite-empty-state {
+  color: #949ba4;
+  font-size: 12px;
+  padding: 18px 4px;
+  text-align: center;
+}
+
 /* Atividade no topo da barra de membros (Foto 1) */
 .members-activity-header {
   padding: 12px 14px 4px 14px;
@@ -7055,6 +7165,15 @@ body {
     bottom: 8px;
     left: calc(100% - 8px);
     max-width: calc(100vw - 18px);
+  }
+
+  .modal-small {
+    max-height: calc(100dvh - 24px);
+    width: calc(100vw - 24px);
+  }
+
+  .invite-friends-list {
+    max-height: 34dvh;
   }
 }
 

@@ -1018,19 +1018,26 @@
   <div class="modal-overlay" id="inviteToServerModal" style="display: none;">
     <div class="modal-card modal-small">
       <header class="modal-header">
-        <h3>Convidar Amigos</h3>
+        <div>
+          <h3>Convidar amigos para <span id="inviteServerName">o servidor</span></h3>
+          <p class="invite-modal-subtitle">Os destinatários receberão um convite para entrar no servidor</p>
+        </div>
         <button class="close-modal" id="btnCloseInviteModal">✕</button>
       </header>
       <div class="modal-body-pad">
-        <p class="modal-desc">Compartilhe o link do servidor ou convide diretamente da sua lista de amigos:</p>
-        <label class="modal-field-label">LINK DE CONVITE</label>
+        <div class="invite-search-box">
+          <span>⌕</span>
+          <input type="search" id="inputInviteFriendSearch" placeholder="Buscar amigos" autocomplete="off">
+        </div>
+        <label class="modal-field-label">MEMBROS DO SERVIDOR</label>
+        <div class="invite-friends-list" id="inviteFriendsList"></div>
+
+        <div class="invite-divider"></div>
+        <strong class="invite-link-title">Ou, envie um convite do servidor a um amigo</strong>
         <div class="invite-link-box">
           <input type="text" id="inputInviteLink" readonly value="https://badiscord.gg/live-1080p">
           <button id="btnCopyInviteLink" class="btn-send-friend-req">Copiar</button>
         </div>
-
-        <label class="modal-field-label" style="margin-top:14px;">SEUS AMIGOS</label>
-        <div class="invite-friends-list" id="inviteFriendsList"></div>
       </div>
     </div>
   </div>

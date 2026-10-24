@@ -3343,41 +3343,79 @@ const btnCloseInviteModal = document.getElementById('btnCloseInviteModal');
 const btnCopyInviteLink = document.getElementById('btnCopyInviteLink');
 const inputInviteLink = document.getElementById('inputInviteLink');
 const inviteFriendsList = document.getElementById('inviteFriendsList');
+const inputInviteFriendSearch = document.getElementById('inputInviteFriendSearch');
+const inviteServerName = document.getElementById('inviteServerName');
+let inviteServerContext = null;
+
+function renderInviteFriends(query = '') {
+  if (!inviteFriendsList) return;
+  inviteFriendsList.innerHTML = '';
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleFriends = friendsList.filter((friend) => {
+    const label = `${friend.name} ${friend.username || ''} ${friend.fullTag || ''}`.toLowerCase();
+    return !normalizedQuery || label.includes(normalizedQuery);
+  });
+
+  if (visibleFriends.length === 0) {
+    inviteFriendsList.innerHTML = '<span class="invite-empty-state">Nenhum amigo encontrado para convidar.</span>';
+    return;
+  }
+
+  visibleFriends.forEach((friend) => {
+    const row = document.createElement('div');
+    row.className = 'invite-friend-row';
+    row.innerHTML = `
+      <div class="invite-friend-person">
+        <div class="invite-friend-avatar" style="background:${friend.color || '#5865F2'}">${friend.initial || friend.name[0].toUpperCase()}</div>
+        <div class="invite-friend-meta">
+          <strong>${friend.name}</strong>
+          <span>${friend.username || friend.fullTag || ''}</span>
+        </div>
+        <span class="invite-online-dot ${friend.status === 'offline' ? 'offline' : ''}"></span>
+      </div>
+      <button class="btn-send-friend-req invite-action-button">Convidar</button>
+    `;
+    const button = row.querySelector('button');
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      button.textContent = 'Enviando...';
+      try {
+        const response = await fetch('/api/server-invites', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            receiverId: friend.id,
+            serverId: inviteServerContext.id,
+            serverName: inviteServerContext.name,
+            inviteUrl: inputInviteLink.value
+          })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Não foi possível enviar o convite.');
+        button.textContent = 'Enviado ✓';
+        button.classList.add('invite-sent');
+        showToast(`Convite enviado para ${friend.fullTag || friend.name}!`, '📩');
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = 'Convidar';
+        showToast(error.message || 'Não foi possível enviar o convite.', '⚠️');
+      }
+    });
+    inviteFriendsList.appendChild(row);
+  });
+}
 
 function openInviteModal() {
   if (!inviteToServerModal) return;
   const srv = servers.find(s => s.id === activeServerId) || servers[0];
+  inviteServerContext = srv;
+  if (inviteServerName) inviteServerName.textContent = srv.name;
   if (inputInviteLink) {
     inputInviteLink.value = `https://badiscord.gg/${srv.id}-${encodeURIComponent(srv.name.toLowerCase().replace(/\s+/g, '-'))}`;
   }
-
-  if (inviteFriendsList) {
-    inviteFriendsList.innerHTML = '';
-    if (friendsList.length === 0) {
-      inviteFriendsList.innerHTML = '<span style="color:#949ba4; font-size:12px;">Nenhum amigo para convidar ainda.</span>';
-    } else {
-      friendsList.forEach(f => {
-        const row = document.createElement('div');
-        row.className = 'invite-friend-row';
-        row.innerHTML = `
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div style="width:24px; height:24px; border-radius:50%; background:${f.color}; display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px; font-weight:bold;">${f.initial}</div>
-            <span style="font-size:13px; color:#fff; font-weight:600;">${f.name} <span class="friend-card-tag">#${f.tag}</span></span>
-          </div>
-          <button class="btn-send-friend-req" style="padding:4px 10px; font-size:11px;">Convidar</button>
-        `;
-        const btn = row.querySelector('button');
-        btn.addEventListener('click', () => {
-          btn.disabled = true;
-          btn.textContent = 'Enviado ✔';
-          btn.style.background = '#248046';
-          showToast(`Convite enviado para ${f.fullTag}!`, '📩');
-        });
-        inviteFriendsList.appendChild(row);
-      });
-    }
-  }
-
+  if (inputInviteFriendSearch) inputInviteFriendSearch.value = '';
+  renderInviteFriends();
   inviteToServerModal.style.display = 'flex';
 }
 
@@ -3391,6 +3429,9 @@ if (btnCopyInviteLink) {
       showToast('Link de convite copiado para a área de transferência!', '📋');
     }
   });
+}
+if (inputInviteFriendSearch) {
+  inputInviteFriendSearch.addEventListener('input', () => renderInviteFriends(inputInviteFriendSearch.value));
 }
 
 // ==========================================
