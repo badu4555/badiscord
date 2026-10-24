@@ -3833,6 +3833,7 @@ body {
   border-radius: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.04);
   cursor: pointer;
+  cursor: pointer;
   transition: background-color 0.15s ease;
   margin-bottom: 2px;
 }
@@ -3962,6 +3963,7 @@ body {
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 12px;
+  cursor: pointer;
   display: flex;
   gap: 12px;
 }

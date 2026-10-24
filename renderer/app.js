@@ -2444,7 +2444,7 @@ function renderFriendsList(filter = '') {
     card.appendChild(actions);
 
     card.addEventListener('click', () => {
-      openDirectMessage(friend);
+      openMemberProfilePopover({ ...friend, isOwner: false });
     });
 
     friendsCardsList.appendChild(card);
@@ -2593,6 +2593,8 @@ function renderActiveNowCards() {
 
     card.appendChild(header);
     card.appendChild(desc);
+
+    card.addEventListener('click', () => openMemberProfilePopover({ ...member, isOwner: false }));
 
     activeNowList.appendChild(card);
   });
