@@ -16,6 +16,7 @@ let isLocalStreamer = false;
 let isLoopbackEnabled = false;
 let isMuted = false;
 let isDeafened = false;
+let isLocalSpeaking = false;
 let wasMutedBeforeDeafen = false;
 let selectedSourceId = null;
 
@@ -661,6 +662,13 @@ const stageContent = document.getElementById('stageContent');
 const streamViewerWrapper = document.getElementById('streamViewerWrapper');
 const remoteVideoPlayer = document.getElementById('remoteVideoPlayer');
 const participantsGrid = document.getElementById('participantsGrid');
+const voiceSelfCard = document.getElementById('voiceSelfCard');
+const voiceSelfAvatar = document.getElementById('voiceSelfAvatar');
+const voiceSelfAvatarImg = document.getElementById('voiceSelfAvatarImg');
+const voiceSelfInitial = document.getElementById('voiceSelfInitial');
+const voiceSelfName = document.getElementById('voiceSelfName');
+const voiceSelfChannel = document.getElementById('voiceSelfChannel');
+const voiceSelfSpeaking = document.getElementById('voiceSelfSpeaking');
 const voiceFloatingBar = document.getElementById('voiceFloatingBar');
 const btnToggleMic = document.getElementById('btnToggleMic');
 const btnToggleDeaf = document.getElementById('btnToggleDeaf');
@@ -796,6 +804,7 @@ function switchView(viewName) {
   if (voiceStageView) voiceStageView.style.display = viewName === 'voice' ? 'flex' : 'none';
   if (textChatView) textChatView.style.display = viewName === 'chat' ? 'flex' : 'none';
   if (friendsView) friendsView.style.display = viewName === 'friends' ? 'flex' : 'none';
+  updateVoiceSelfCard();
 
   if (membersSidebar) {
     membersSidebar.style.display = (viewName === 'chat') ? 'block' : 'none';
@@ -1028,7 +1037,7 @@ function getServerOnlineProfiles() {
     avatarUrl: userProfile.avatarUrl || '',
     game: detectedGame && detectedGame.name ? detectedGame.name : '',
     detail: userProfile.aboutMe || 'Disponível',
-    status: userProfile.presenceStatus === 'invisible' ? 'offline' : (userProfile.presenceStatus || 'online'),
+    status: currentChannel ? 'online' : (userProfile.presenceStatus === 'invisible' ? 'offline' : (userProfile.presenceStatus || 'online')),
     isOwner: true
   };
 
@@ -1091,6 +1100,8 @@ function updateSidebarChannelUsers(channelName) {
   onlineMembers.forEach((member) => {
     const userItem = document.createElement('div');
     userItem.className = 'channel-user-item';
+    userItem.id = member.id === 'self' ? 'sidebarLocalUser' : '';
+    if (member.id === 'self' && isLocalSpeaking) userItem.classList.add('speaking');
 
     const avatar = document.createElement('div');
     avatar.className = 'channel-user-avatar';
@@ -1127,7 +1138,10 @@ function renderVoiceParticipants() {
   onlineMembers.forEach((member) => {
     const card = document.createElement('div');
     card.className = 'participant-card';
-    if (member.id === 'self') card.id = 'localParticipantCard';
+    if (member.id === 'self') {
+      card.id = 'localParticipantCard';
+      if (isLocalSpeaking) card.classList.add('speaking');
+    }
 
     const avatar = document.createElement('div');
     avatar.className = 'participant-avatar-lg';
@@ -1162,6 +1176,42 @@ function renderVoiceParticipants() {
     card.appendChild(micIcon);
     participantsGrid.appendChild(card);
   });
+}
+
+function updateVoiceSelfCard() {
+  if (!voiceSelfCard) return;
+  const isVisible = Boolean(currentChannel && currentView === 'voice' && hasAuthenticatedSession());
+  voiceSelfCard.style.display = isVisible ? 'flex' : 'none';
+  if (!isVisible) {
+    updateLocalSpeakingState(false);
+    return;
+  }
+
+  if (voiceSelfName) voiceSelfName.textContent = userProfile.displayName || userProfile.username || 'Bads';
+  if (voiceSelfChannel) voiceSelfChannel.textContent = `No canal: ${currentChannel}`;
+  if (voiceSelfAvatarImg && voiceSelfInitial) {
+    if (userProfile.avatarUrl) {
+      voiceSelfAvatarImg.src = userProfile.avatarUrl;
+      voiceSelfAvatarImg.style.display = 'block';
+      voiceSelfInitial.style.display = 'none';
+    } else {
+      voiceSelfAvatarImg.removeAttribute('src');
+      voiceSelfAvatarImg.style.display = 'none';
+      voiceSelfInitial.style.display = 'block';
+      voiceSelfInitial.textContent = (userProfile.displayName || userProfile.username || 'B')[0].toUpperCase();
+    }
+  }
+  if (voiceSelfAvatar) voiceSelfAvatar.style.backgroundColor = userProfile.bannerColor || '#5865F2';
+}
+
+function updateLocalSpeakingState(isSpeaking) {
+  isLocalSpeaking = isSpeaking;
+  const participantCard = document.getElementById('localParticipantCard');
+  const sidebarUser = document.getElementById('sidebarLocalUser');
+  [participantCard, sidebarUser, voiceSelfCard].forEach((element) => {
+    if (element) element.classList.toggle('speaking', isSpeaking);
+  });
+  if (voiceSelfSpeaking) voiceSelfSpeaking.hidden = !isSpeaking;
 }
 
 function openVoiceSwitchConfirmation(targetChannel) {
@@ -1319,7 +1369,7 @@ async function joinVoiceChannel(channelName) {
 
     localAudioTrack = audioStream.getAudioTracks()[0];
     localAudioTrack.enabled = !isMuted;
-    setupAudioLevelMeter(audioStream);
+    await setupAudioLevelMeter(audioStream);
     showToast(liveKitConnected ? `Você entrou em ${channelName} e o microfone está ativo.` : `Você entrou em ${channelName}.`, '🎤');
   } catch (err) {
     console.warn('Microfone não acessível ou sem permissão:', err);
@@ -3738,44 +3788,39 @@ if (btnToggleMembers) {
 
 
 // Detecção de voz (ilumina borda verde)
-function setupAudioLevelMeter(stream) {
+async function setupAudioLevelMeter(stream) {
   const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioContext.state === 'suspended') {
+    await audioContext.resume().catch(() => {});
+  }
   const mediaStreamSource = audioContext.createMediaStreamSource(stream);
   const analyser = audioContext.createAnalyser();
-  analyser.fftSize = 256;
+  analyser.fftSize = 512;
   mediaStreamSource.connect(analyser);
 
-  const bufferLength = analyser.frequencyBinCount;
+  const bufferLength = analyser.fftSize;
   const dataArray = new Uint8Array(bufferLength);
+  let isSpeaking = false;
 
   function checkSpeaking() {
-    if (!currentChannel) return;
-    analyser.getByteFrequencyData(dataArray);
-    let sum = 0;
+    if (!currentChannel) {
+      updateLocalSpeakingState(false);
+      return;
+    }
+    analyser.getByteTimeDomainData(dataArray);
+    let sumSquares = 0;
     for (let i = 0; i < bufferLength; i++) {
-      sum += dataArray[i];
+      const sample = (dataArray[i] - 128) / 128;
+      sumSquares += sample * sample;
     }
-    const average = sum / bufferLength;
+    const rms = Math.sqrt(sumSquares / bufferLength);
 
-    const card = document.getElementById('localParticipantCard');
-    const sidebarUser = document.getElementById('sidebarLocalUser');
-    const isSpeaking = average > 15 && !isMuted && !isDeafened;
-
-    if (card) {
-      if (isSpeaking) {
-        card.classList.add('speaking');
-      } else {
-        card.classList.remove('speaking');
-      }
+    if (isMuted || isDeafened) {
+      isSpeaking = false;
+    } else if (isSpeaking ? rms < 0.018 : rms > 0.035) {
+      isSpeaking = !isSpeaking;
     }
-
-    if (sidebarUser) {
-      if (isSpeaking) {
-        sidebarUser.classList.add('speaking');
-      } else {
-        sidebarUser.classList.remove('speaking');
-      }
-    }
+    updateLocalSpeakingState(isSpeaking);
 
     requestAnimationFrame(checkSpeaking);
   }
@@ -3915,6 +3960,7 @@ async function disconnectVoice(playSound = true) {
   }
 
   currentChannel = null;
+  updateVoiceSelfCard();
   currentChannelTitle.textContent = 'Nenhum canal conectado';
   connectionBadge.style.display = 'none';
   emptyState.style.display = 'flex';
@@ -4960,6 +5006,7 @@ function applyUserProfile() {
   if (currentChannel) {
     updateSidebarChannelUsers(currentChannel);
   }
+  updateVoiceSelfCard();
 }
 
 // Upload de Foto de Perfil (Escolher imagem do PC)
@@ -5393,15 +5440,38 @@ initializeFreeProfileCustomization();
 
   // Status submenu trigger
   const menuItemStatusTrigger = document.getElementById('menuItemStatusTrigger');
+  function positionPresenceSubmenu() {
+    if (!menuItemStatusTrigger || !presenceStatusSubmenu) return;
+
+    const triggerRect = menuItemStatusTrigger.getBoundingClientRect();
+    const submenuRect = presenceStatusSubmenu.getBoundingClientRect();
+    const edge = 8;
+    const gap = 8;
+    const left = triggerRect.right + submenuRect.width + gap <= window.innerWidth - edge
+      ? triggerRect.right + gap
+      : Math.max(edge, triggerRect.left);
+    const top = Math.max(edge, Math.min(triggerRect.top, window.innerHeight - submenuRect.height - edge));
+
+    presenceStatusSubmenu.style.left = `${left}px`;
+    presenceStatusSubmenu.style.top = `${top}px`;
+  }
+
   if (menuItemStatusTrigger) {
     menuItemStatusTrigger.addEventListener('click', (e) => {
       e.stopPropagation();
       if (presenceStatusSubmenu) {
         const isOpen = presenceStatusSubmenu.style.display !== 'none';
         presenceStatusSubmenu.style.display = isOpen ? 'none' : 'block';
+        if (!isOpen) positionPresenceSubmenu();
       }
     });
   }
+
+  window.addEventListener('resize', () => {
+    if (presenceStatusSubmenu && presenceStatusSubmenu.style.display !== 'none') {
+      positionPresenceSubmenu();
+    }
+  });
 
   // Status option selection
   document.querySelectorAll('.submenu-status-item').forEach(item => {
