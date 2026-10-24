@@ -204,12 +204,12 @@ function openAuthView(viewId) {
   });
 }
 
-async function registerAccount({ email, username, displayName, password, recaptchaToken = '' }) {
+async function registerAccount({ email, username, password, recaptchaToken = '' }) {
   const response = await fetch('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ email, username, displayName, password, recaptchaToken })
+    body: JSON.stringify({ email, username, password, recaptchaToken })
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || 'Não foi possível criar a conta.');
@@ -6081,7 +6081,6 @@ initializeFreeProfileCustomization();
   const btnLoginSubmit = document.getElementById('btnLoginSubmit');
 
   const regEmail = document.getElementById('regEmail');
-  const regDisplayName = document.getElementById('regDisplayName');
   const regUsername = document.getElementById('regUsername');
   const regPassword = document.getElementById('regPassword');
   const regPasswordConfirm = document.getElementById('regPasswordConfirm');
@@ -6140,7 +6139,6 @@ initializeFreeProfileCustomization();
   if (btnRegisterSubmit) {
     btnRegisterSubmit.addEventListener('click', async () => {
       const email = regEmail ? regEmail.value.trim() : '';
-      const displayName = regDisplayName ? regDisplayName.value.trim() : '';
       const username = regUsername ? regUsername.value.trim() : '';
       const password = regPassword ? regPassword.value : '';
 
@@ -6160,7 +6158,7 @@ initializeFreeProfileCustomization();
       }
 
       try {
-        const account = await registerAccount({ email, username, displayName, password, recaptchaToken });
+        const account = await registerAccount({ email, username, password, recaptchaToken });
         await finalizeAuthSession(account);
         showToast(`Conta criada com sucesso! Olá, ${account.displayName}#${account.tag}!`, '🎉');
       } catch (error) {
