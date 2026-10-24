@@ -36,6 +36,8 @@ Baixe o instalador `.exe` ou a versão portátil `.zip` na [página de releases 
 
 O aplicativo desktop precisa de conexão com a internet para abrir o BADISCORD e entrar na conta. Ele usa o domínio oficial HTTPS para que o login, os cookies de sessão e o reCAPTCHA funcionem corretamente.
 
+A versão instalada pelo `.exe` procura atualizações automaticamente ao abrir e periodicamente enquanto estiver em execução. Quando uma nova versão estiver disponível, uma janela mostrará a versão e permitirá baixar e instalar agora ou adiar; depois do download, é possível reiniciar para concluir. A primeira versão com atualização automática precisa ser instalada manualmente; as seguintes poderão ser atualizadas pelo próprio aplicativo. A versão portátil `.zip` continua sendo atualizada por download manual.
+
 Os pacotes ainda não são assinados digitalmente; o Windows pode exibir um aviso do SmartScreen na primeira execução.
 
 ## Gerar os pacotes para Windows
@@ -45,7 +47,7 @@ Em Windows com Visual Studio Build Tools (C++ x64 e Windows SDK) e Python 3 inst
 npm ci
 npm run build:release
 ```
-O instalador e o ZIP portátil serão gerados na pasta `dist/`. As versões publicadas são compiladas automaticamente pelo GitHub Actions ao enviar uma tag `vX.Y.Z` que corresponda à versão no `package.json`; os dois pacotes são anexados a uma GitHub Release.
+O instalador, o ZIP portátil e os metadados de atualização serão gerados na pasta `dist/`. As versões publicadas são compiladas automaticamente pelo GitHub Actions ao enviar uma tag `vX.Y.Z` que corresponda à versão no `package.json`; os pacotes e metadados são anexados a uma GitHub Release para permitir as atualizações automáticas.
 
 ## Publicar o backend no Render
 

@@ -2,6 +2,7 @@ if (!process.versions.electron) {
   require('./server/server');
 } else {
 const { app, BrowserWindow, ipcMain, desktopCapturer, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -52,7 +53,151 @@ process.on('uncaughtException', (err) => {
 });
 
 let mainWindow;
+let updateWindow;
 let processAudioCapture = null;
+let updateState = { status: 'available', version: '' };
+
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.allowPrerelease = false;
+
+function sendUpdateState() {
+  if (updateWindow && !updateWindow.isDestroyed()) {
+    updateWindow.webContents.send('desktop-update:state', {
+      ...updateState,
+      currentVersion: app.getVersion()
+    });
+  }
+}
+
+function showUpdateWindow() {
+  if (updateWindow && !updateWindow.isDestroyed()) {
+    updateWindow.show();
+    updateWindow.focus();
+    return;
+  }
+
+  updateWindow = new BrowserWindow({
+    width: 460,
+    height: 340,
+    minWidth: 460,
+    maxWidth: 460,
+    minHeight: 340,
+    maxHeight: 340,
+    parent: mainWindow || undefined,
+    modal: Boolean(mainWindow),
+    resizable: false,
+    show: false,
+    title: 'Atualização do BADISCORD',
+    backgroundColor: '#1e1f22',
+    webPreferences: {
+      preload: path.join(__dirname, 'update-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  updateWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  updateWindow.once('ready-to-show', () => {
+    updateWindow.show();
+    sendUpdateState();
+  });
+  updateWindow.on('closed', () => {
+    updateWindow = null;
+  });
+  updateWindow.loadFile(path.join(__dirname, 'renderer', 'update.html')).catch((error) => {
+    console.error('Não foi possível abrir a tela de atualização:', error);
+  });
+}
+
+async function checkForDesktopUpdates() {
+  if (!app.isPackaged) return;
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    console.warn('Não foi possível verificar atualizações do BADISCORD:', error);
+  }
+}
+
+autoUpdater.on('checking-for-update', () => {
+  updateState = { status: 'checking', version: '' };
+  sendUpdateState();
+});
+
+autoUpdater.on('update-available', (info) => {
+  updateState = { status: 'available', version: info.version };
+  showUpdateWindow();
+  sendUpdateState();
+});
+
+autoUpdater.on('update-not-available', () => {
+  updateState = { status: 'not-available', version: app.getVersion() };
+  sendUpdateState();
+});
+
+autoUpdater.on('download-progress', (progress) => {
+  updateState = { status: 'downloading', version: updateState.version, percent: progress.percent };
+  sendUpdateState();
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  updateState = { status: 'downloaded', version: info.version };
+  showUpdateWindow();
+  sendUpdateState();
+});
+
+autoUpdater.on('error', (error) => {
+  console.error('Erro no atualizador do BADISCORD:', error);
+  if (updateWindow && !updateWindow.isDestroyed()) {
+    updateState = { status: 'error', version: updateState.version };
+    sendUpdateState();
+  }
+});
+
+function isUpdateWindow(event) {
+  return Boolean(updateWindow)
+    && !updateWindow.isDestroyed()
+    && event.sender === updateWindow.webContents
+    && event.senderFrame === event.sender.mainFrame;
+}
+
+ipcMain.handle('desktop-update:get-state', (event) => {
+  if (!isUpdateWindow(event)) throw new Error('Origem da tela de atualização inválida.');
+  return { ...updateState, currentVersion: app.getVersion() };
+});
+
+ipcMain.handle('desktop-update:download', async (event) => {
+  if (!isUpdateWindow(event)) throw new Error('Origem da tela de atualização inválida.');
+  try {
+    await autoUpdater.downloadUpdate();
+  } catch (error) {
+    updateState = { status: 'error', version: updateState.version };
+    sendUpdateState();
+    throw error;
+  }
+});
+
+ipcMain.handle('desktop-update:retry', async (event) => {
+  if (!isUpdateWindow(event)) throw new Error('Origem da tela de atualização inválida.');
+  if (updateState.version) {
+    await autoUpdater.downloadUpdate();
+    return;
+  }
+  await checkForDesktopUpdates();
+});
+
+ipcMain.handle('desktop-update:install', (event) => {
+  if (!isUpdateWindow(event) || updateState.status !== 'downloaded') {
+    throw new Error('A atualização ainda não terminou de baixar.');
+  }
+  autoUpdater.quitAndInstall();
+});
+
+ipcMain.handle('desktop-update:close', (event) => {
+  if (!isUpdateWindow(event)) throw new Error('Origem da tela de atualização inválida.');
+  updateWindow.close();
+});
 
 function relayProcessAudioPcm(capture, data) {
   const combined = capture.unalignedPcm.length
@@ -438,6 +583,10 @@ app.whenReady().then(() => {
 
   app.on('before-quit', stopProcessAudioCapture);
   createWindow();
+  if (app.isPackaged) {
+    setTimeout(checkForDesktopUpdates, 5000);
+    setInterval(checkForDesktopUpdates, 4 * 60 * 60 * 1000);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

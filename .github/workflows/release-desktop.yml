@@ -37,20 +37,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build installer and portable package
-        run: npm run build:release
-
-      - name: Publish GitHub Release
-        shell: pwsh
+      - name: Build and publish installer, portable package, and update metadata
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $assets = @(Get-ChildItem -Path dist -File | Where-Object { $_.Extension -in @(".exe", ".zip") } | ForEach-Object { $_.FullName })
-          if ($assets.Count -lt 2) {
-            throw "Expected a Windows installer and portable ZIP in dist/."
+          npm run build:native-audio
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
           }
-          $version = node -p "require('./package.json').version"
-          & gh release create $env:GITHUB_REF_NAME @assets --title "BADISCORD $version" --generate-notes --verify-tag
+          npx electron-builder --win --publish always
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }

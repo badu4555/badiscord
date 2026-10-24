@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Atualização do BADISCORD</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #1e1f22;
+      color: #f2f3f5;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+    }
+
+    main { width: 100%; text-align: center; }
+
+    .mark {
+      width: 58px;
+      height: 58px;
+      margin: 0 auto 18px;
+      display: grid;
+      place-items: center;
+      border-radius: 18px;
+      background: #5865f2;
+      color: white;
+      font-size: 34px;
+      font-weight: 800;
+    }
+
+    h1 { margin: 0 0 10px; font-size: 21px; }
+    p { min-height: 42px; margin: 0; color: #b5bac1; line-height: 1.5; }
+    .version { margin-top: 10px; color: #8e9297; font-size: 12px; }
+
+    .progress-track {
+      height: 8px;
+      margin: 20px 0 8px;
+      overflow: hidden;
+      border-radius: 8px;
+      background: #35373c;
+    }
+
+    .progress-value {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: #5865f2;
+      transition: width 180ms ease;
+    }
+
+    .progress-label { color: #b5bac1; font-size: 12px; }
+
+    .actions {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    button {
+      min-width: 132px;
+      padding: 11px 16px;
+      border: 0;
+      border-radius: 6px;
+      background: #5865f2;
+      color: white;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:hover { background: #4752c4; }
+    button:disabled { cursor: wait; opacity: .55; }
+    button.secondary { background: #35373c; }
+    button.secondary:hover { background: #4e5058; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">B</div>
+    <h1 id="title">Atualização disponível</h1>
+    <p id="message">Uma nova versão do BADISCORD está pronta para baixar.</p>
+    <div class="version" id="version"></div>
+    <div id="progress" hidden>
+      <div class="progress-track"><div class="progress-value" id="progressValue"></div></div>
+      <div class="progress-label" id="progressLabel">0%</div>
+    </div>
+    <div class="actions">
+      <button id="primaryAction" type="button">Atualizar agora</button>
+      <button class="secondary" id="laterAction" type="button">Depois</button>
+    </div>
+  </main>
+  <script src="update.js"></script>
+</body>
+</html>

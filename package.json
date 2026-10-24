@@ -1,7 +1,7 @@
 {
   "name": "badiscord",
   "productName": "BADISCORD",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Aplicativo Desktop de Voz e Streaming até 2K",
   "main": "main.js",
   "scripts": {
@@ -18,6 +18,7 @@
     "better-sqlite3": "^13.0.3",
     "cors": "^2.8.5",
     "dotenv": "^18.0.9",
+    "electron-updater": "^6.8.11",
     "express": "^4.21.0",
     "livekit-client": "^2.6.0",
     "livekit-server-sdk": "^2.9.0"
@@ -50,6 +51,14 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "badu4555",
+        "repo": "badiscord",
+        "releaseType": "release"
+      }
+    ]
   }
 }
