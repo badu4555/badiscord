@@ -5936,7 +5936,9 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
       const width = targetRes === 1440 ? 2560 : (targetRes === 1080 ? 1920 : 1280);
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: { width: { ideal: width }, height: { ideal: targetRes }, frameRate: { ideal: targetFps, max: targetFps } },
-        audio: includeAudio
+        audio: includeAudio,
+        systemAudio: includeAudio ? 'include' : 'exclude',
+        windowAudio: includeAudio ? 'system' : 'exclude'
       });
     } else {
       const isWindowSource = sourceId.startsWith('window:');
@@ -5965,7 +5967,7 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     if (sourceId === '__browser_display__') {
       localScreenAudioTrack = includeAudio ? (stream.getAudioTracks()[0] || null) : null;
       if (includeAudio && !localScreenAudioTrack) {
-        showToast('O navegador ou a fonte selecionada não forneceu áudio. Tente compartilhar uma aba ou habilitar o áudio do sistema na janela de compartilhamento.', '⚠️');
+        showToast('O navegador ou a fonte selecionada não forneceu áudio. Se disponível, habilite "Compartilhar áudio do sistema" no seletor. O áudio pode incluir outros sons do computador.', '⚠️');
       }
     } else if (!window.electronAPI) {
       localScreenAudioTrack = null;

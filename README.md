@@ -24,7 +24,7 @@ Para compilar a captura de áudio isolada, instale o Visual Studio Build Tools c
 ```powershell
 npm run desktop
 ```
-O comando compila o helper nativo de áudio antes de abrir o aplicativo. A captura exclusiva do áudio de um aplicativo/janela está disponível no aplicativo desktop Windows. No navegador, o compartilhamento solicita áudio quando suportado; o navegador e a fonte escolhida determinam se uma faixa de áudio será fornecida, e pode ser necessário habilitar o áudio da aba ou do sistema no seletor. Não há garantia de captura exclusiva do áudio de um jogo pelo navegador.
+O comando compila o helper nativo de áudio antes de abrir o aplicativo. A captura exclusiva do áudio de um aplicativo/janela está disponível no aplicativo desktop Windows. No navegador, o compartilhamento solicita o áudio do sistema quando suportado; é necessário habilitá-lo no seletor se o navegador pedir. O som pode incluir outros aplicativos, e o navegador ou a fonte escolhida podem não fornecer áudio.
 
 No desktop, o botão de transmitir abre a lista de janelas; selecionar uma janela não inicia nem abre o jogo, e a captura começa somente após confirmar a transmissão. O indicador de latência usa o RTT ICE da conexão com o servidor LiveKit. Participantes conectados compartilham essa medição para que ela apareça ao lado de cada pessoa; ela representa a rota até o servidor de voz (não uma conexão direta entre participantes). Se não houver estatísticas disponíveis, o app mostra `--` em vez de inventar um valor.
 
