@@ -7761,7 +7761,97 @@ body {
     width: min(440px, 100%);
     max-width: 440px;
     margin: auto 0;
-    padding: 24px 20px max(20px, env(safe-area-inset-bottom));
+    padding: 20px 16px max(20px, env(safe-area-inset-bottom));
+    border-radius: 18px;
+  }
+
+  .auth-brand {
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .auth-brand-mark {
+    flex: 0 0 46px;
+    width: 46px;
+    height: 46px;
+    border-radius: 15px;
+    font-size: 23px;
+  }
+
+  .auth-brand-name {
+    font-size: clamp(20px, 6vw, 24px);
+  }
+
+  .auth-brand-sub {
+    font-size: 9px;
+    letter-spacing: 0.1em;
+  }
+
+  .auth-header-wrap {
+    margin-bottom: 18px;
+  }
+
+  .auth-title {
+    font-size: 26px;
+  }
+
+  .auth-subtitle {
+    max-width: 34ch;
+    margin-inline: auto;
+  }
+
+  .auth-form {
+    gap: 14px;
+  }
+
+  .auth-field-group {
+    gap: 7px;
+  }
+
+  .auth-field-label {
+    line-height: 1.4;
+  }
+
+  .auth-input {
+    min-height: 48px;
+    padding: 12px;
+    font-size: 16px;
+  }
+
+  .password-toggle {
+    min-width: 44px;
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .auth-link-forgot,
+  .auth-link-primary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .auth-submit-btn {
+    min-height: 48px;
+    touch-action: manipulation;
+  }
+
+  .auth-footer-prompt {
+    flex-wrap: wrap;
+    margin-top: 14px;
+    gap: 4px 8px;
+    text-align: center;
+  }
+
+  .auth-captcha {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .auth-overlay :is(input, button, select, textarea) {
+    scroll-margin-block: 16px;
   }
 
   .modal-overlay {
