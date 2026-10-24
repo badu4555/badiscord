@@ -505,27 +505,11 @@ async function disconnectLiveKitRoom() {
   }
 }
 
-// Servidores Padrão (com Canais de Texto e Canais de Voz)
-const DEFAULT_SERVERS = [
-  {
-    id: 'srv-1',
-    name: 'Comunidade Principal',
-    icon: '🎮',
-    textChannels: ['geral', 'regras-da-casa', 'clipes-e-jogos', 'comandos-bot'],
-    voiceChannels: ['Geral 🔊', 'Duo / Trio', 'CS2 Competitivo', 'Live 1080p 60FPS']
-  },
-  {
-    id: 'srv-2',
-    name: 'Comunidade DEV',
-    icon: '💻',
-    textChannels: ['geral', 'duvidas-e-bugs', 'setup-e-hardware'],
-    voiceChannels: ['Bate-Papo Dev', 'Pair Programming']
-  }
-];
+const DEFAULT_SERVERS = [];
 
 function normalizeServers(list) {
-  if (!Array.isArray(list) || list.length === 0) return DEFAULT_SERVERS;
-  return list.map((srv, idx) => {
+  if (!Array.isArray(list)) return DEFAULT_SERVERS;
+  return list.filter((srv) => srv.id !== 'srv-1' && srv.id !== 'srv-2').map((srv, idx) => {
     const textChans = Array.isArray(srv.textChannels) && srv.textChannels.length > 0
       ? srv.textChannels
       : ['geral', 'regras-da-casa', 'clipes-e-jogos'];
@@ -549,7 +533,7 @@ try {
 } catch (e) {
   servers = DEFAULT_SERVERS;
 }
-let activeServerId = servers[0]?.id || 'srv-1';
+let activeServerId = servers[0]?.id || '';
 let serverSyncTimeout = null;
 
 function saveServers() {

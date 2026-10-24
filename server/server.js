@@ -151,7 +151,7 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS custom_sounds (
     id TEXT PRIMARY KEY,
-    server_id TEXT NOT NULL DEFAULT 'srv-1',
+    server_id TEXT NOT NULL DEFAULT 'legacy',
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     mime_type TEXT NOT NULL,
@@ -179,8 +179,6 @@ if (!customSoundColumns.some((column) => column.name === 'server_id')) {
 db.exec('CREATE INDEX IF NOT EXISTS custom_sounds_server_id_idx ON custom_sounds(server_id, created_at)');
 
 const sharedServerSeeds = [
-  ['srv-1', 'Comunidade Principal', '🎮'],
-  ['srv-2', 'Comunidade DEV', '💻'],
   ['pub-1', 'Comunidade BADISCORD 🎮', '🎮'],
   ['pub-2', 'Espaço dos Devs 💻', '💻'],
   ['pub-3', 'Lounge de Músicas & Clipes 🎵', '🎧'],
@@ -189,6 +187,15 @@ const sharedServerSeeds = [
 const seedSharedServer = db.prepare(`INSERT OR IGNORE INTO servers (id, name, icon, is_public, created_at)
   VALUES (?, ?, ?, 1, ?)`);
 sharedServerSeeds.forEach(([id, name, icon]) => seedSharedServer.run(id, name, icon, new Date().toISOString()));
+
+db.transaction(() => {
+  for (const serverId of ['srv-1', 'srv-2']) {
+    db.prepare('DELETE FROM custom_sounds WHERE server_id = ?').run(serverId);
+    db.prepare('DELETE FROM server_invites WHERE server_id = ?').run(serverId);
+    db.prepare('DELETE FROM server_members WHERE server_id = ?').run(serverId);
+    db.prepare('DELETE FROM servers WHERE id = ?').run(serverId);
+  }
+})();
 
 const normalizeEmail = (value) => normalize(value).toLowerCase();
 const normalizeUsername = (value) => normalize(value).toLowerCase();
@@ -605,7 +612,7 @@ app.post('/api/servers/sync', requireAuth, (req, res) => {
     const id = normalize(server?.id);
     const name = normalize(server?.name).slice(0, 32);
     const icon = normalize(server?.icon).slice(0, 16) || '🎮';
-    if (!SERVER_ID_POLICY.test(id) || !name) return;
+    if (!SERVER_ID_POLICY.test(id) || !name || id === 'srv-1' || id === 'srv-2') return;
 
     const existing = db.prepare('SELECT id, owner_id, is_public FROM servers WHERE id = ?').get(id);
     if (!existing) {
