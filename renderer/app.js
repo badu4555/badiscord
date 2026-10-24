@@ -27,7 +27,8 @@ const DEFAULT_PROFILE = {
   tag: '0001',
   avatarUrl: '',
   bannerColor: '#5865F2',
-  aboutMe: 'Usando o BADISCORD!'
+  aboutMe: 'Usando o BADISCORD!',
+  presenceStatus: 'online'
 };
 
 let userProfile = DEFAULT_PROFILE;
@@ -227,7 +228,7 @@ function syncPresenceRoster(account) {
   });
 
   saveStoredPresenceMembers(dedupePresenceEntries(next));
-  publishPresenceStatus();
+  return publishPresenceStatus();
 }
 
 function publishPresenceStatus() {
@@ -337,7 +338,7 @@ function applySessionToProfile(account) {
     bannerColor: account.bannerColor || '#5865F2',
     aboutMe: account.aboutMe || 'Usando o BADISCORD!',
     email: account.email,
-    presenceStatus: userProfile.presenceStatus || 'online'
+    presenceStatus: 'online'
   };
   saveUserProfile();
   return userProfile;
@@ -352,9 +353,8 @@ async function finalizeAuthSession(account) {
   }
   authenticatedAccount = account;
 
-  syncPresenceRoster(account);
   applySessionToProfile(account);
-  await publishPresenceStatus();
+  await syncPresenceRoster(account);
   hideAuthOverlay();
   renderGuilds();
   renderServerMembers();
@@ -7039,7 +7039,7 @@ initializeFreeProfileCustomization();
 
   // Initialize status on load
   if (!userProfile.presenceStatus) {
-    userProfile.presenceStatus = 'invisible';
+    userProfile.presenceStatus = 'online';
   }
   const myStatusText = document.getElementById('myStatusText');
   const myStatusIndicator = document.getElementById('myStatusIndicator');
