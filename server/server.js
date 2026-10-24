@@ -244,7 +244,8 @@ app.get('/api/config', async (req, res) => {
       apiBaseUrl: baseUrl,
       demoMode: !isLiveKitConfigured,
       recaptchaEnabled: Boolean(RECAPTCHA_SITE_KEY && RECAPTCHA_SECRET_KEY),
-      recaptchaSiteKey: RECAPTCHA_SITE_KEY || null
+      recaptchaSiteKey: RECAPTCHA_SITE_KEY || null,
+      recaptchaRequired: process.env.NODE_ENV === 'production'
     });
   }
 
@@ -257,7 +258,8 @@ app.get('/api/config', async (req, res) => {
       apiBaseUrl: baseUrl,
       demoMode: !isLiveKitConfigured,
       recaptchaEnabled: Boolean(RECAPTCHA_SITE_KEY && RECAPTCHA_SECRET_KEY),
-      recaptchaSiteKey: RECAPTCHA_SITE_KEY || null
+      recaptchaSiteKey: RECAPTCHA_SITE_KEY || null,
+      recaptchaRequired: process.env.NODE_ENV === 'production'
     });
   }
 
@@ -268,11 +270,13 @@ app.get('/api/config', async (req, res) => {
     apiBaseUrl: baseUrl,
     demoMode: !isLiveKitConfigured,
     recaptchaEnabled: Boolean(RECAPTCHA_SITE_KEY && RECAPTCHA_SECRET_KEY),
-    recaptchaSiteKey: RECAPTCHA_SITE_KEY || null
+    recaptchaSiteKey: RECAPTCHA_SITE_KEY || null,
+    recaptchaRequired: process.env.NODE_ENV === 'production'
   });
 });
 
 app.post('/api/auth/register', async (req, res) => {
+  if (!RECAPTCHA_SECRET_KEY && process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'O reCAPTCHA ainda não foi configurado no servidor.' });
   if (!(await verifyRecaptcha(req.body?.recaptchaToken, req))) return res.status(400).json({ error: 'Confirme que você não é um robô.' });
   const email = normalizeEmail(req.body?.email);
   const username = normalizeUsername(req.body?.username);
@@ -304,6 +308,7 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 app.post('/api/auth/login', async (req, res) => {
+  if (!RECAPTCHA_SECRET_KEY && process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'O reCAPTCHA ainda não foi configurado no servidor.' });
   if (!(await verifyRecaptcha(req.body?.recaptchaToken, req))) return res.status(400).json({ error: 'Confirme que você não é um robô.' });
   const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || '');

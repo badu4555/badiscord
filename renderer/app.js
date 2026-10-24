@@ -47,7 +47,15 @@ async function initializeRecaptcha() {
     const response = await fetch('/api/config', { headers: { Accept: 'application/json' } });
     const config = await response.json();
     recaptchaSiteKey = config.recaptchaSiteKey || '';
-    if (!recaptchaSiteKey) return;
+    if (!recaptchaSiteKey) {
+      if (config.recaptchaRequired) {
+        document.querySelectorAll('.auth-captcha').forEach((element) => {
+          element.textContent = '⚠️ reCAPTCHA ainda não configurado no servidor.';
+          element.classList.add('auth-captcha-error');
+        });
+      }
+      return;
+    }
 
     const renderWidgets = () => {
       if (!window.grecaptcha || typeof window.grecaptcha.render !== 'function') {
