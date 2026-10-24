@@ -3,7 +3,8 @@
 const API_URL = (typeof window !== 'undefined' && window.location && window.location.origin)
   ? `${window.location.origin}/api/token`
   : 'https://badiscord.onrender.com/api/token';
-const LIVEKIT_URL = 'wss://your-project.livekit.cloud';
+const LIVEKIT_FALLBACK_URL = 'wss://badiscord-hifeof9x.livekit.cloud';
+const LIVEKIT_URL = LIVEKIT_FALLBACK_URL;
 
 // Estado da Aplicação
 let currentRoom = null;
@@ -37,13 +38,245 @@ if (!userProfile.tag) {
   userProfile.tag = '0001';
 }
 
+let authenticatedAccount = null;
+let recaptchaSiteKey = '';
+const recaptchaWidgets = {};
+
+async function initializeRecaptcha() {
+  try {
+    const response = await fetch('/api/config', { headers: { Accept: 'application/json' } });
+    const config = await response.json();
+    recaptchaSiteKey = config.recaptchaSiteKey || '';
+    if (!recaptchaSiteKey) return;
+
+    const renderWidgets = () => {
+      if (!window.grecaptcha || typeof window.grecaptcha.render !== 'function') {
+        window.setTimeout(renderWidgets, 250);
+        return;
+      }
+      ['login', 'register'].forEach((name) => {
+        const element = document.getElementById(`${name}Recaptcha`);
+        if (element && recaptchaWidgets[name] === undefined) {
+          recaptchaWidgets[name] = window.grecaptcha.render(element, {
+            sitekey: recaptchaSiteKey,
+            theme: 'dark'
+          });
+        }
+      });
+    };
+    renderWidgets();
+  } catch (error) {
+    console.warn('Não foi possível carregar o reCAPTCHA:', error);
+  }
+}
+
+function getRecaptchaToken(name) {
+  if (!recaptchaSiteKey) return '';
+  const widgetId = recaptchaWidgets[name];
+  return widgetId === undefined || !window.grecaptcha ? '' : window.grecaptcha.getResponse(widgetId);
+}
+
+function resetRecaptcha(name) {
+  const widgetId = recaptchaWidgets[name];
+  if (widgetId !== undefined && window.grecaptcha) window.grecaptcha.reset(widgetId);
+}
+
+function initializePasswordToggles() {
+  document.querySelectorAll('[data-password-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const input = document.getElementById(button.dataset.passwordToggle);
+      if (!input) return;
+      const isVisible = input.type === 'text';
+      input.type = isVisible ? 'password' : 'text';
+      button.classList.toggle('is-visible', !isVisible);
+      button.textContent = isVisible ? '👁' : '🙈';
+      button.setAttribute('aria-label', isVisible ? 'Mostrar senha' : 'Ocultar senha');
+    });
+  });
+}
+
+function hasAuthenticatedSession() {
+  return Boolean(authenticatedAccount);
+}
+
+function getStoredPresenceMembers() {
+  try {
+    const raw = localStorage.getItem('badiscord_online_members');
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveStoredPresenceMembers(members) {
+  try {
+    localStorage.setItem('badiscord_online_members', JSON.stringify(members));
+  } catch (e) {}
+}
+
+function syncPresenceRoster(account) {
+  const activeMembers = getStoredPresenceMembers();
+  const sessionAccount = account || authenticatedAccount;
+  const memberName = (sessionAccount?.displayName || sessionAccount?.username || userProfile.displayName || 'Bads').trim();
+  const memberTag = String(sessionAccount?.tag || userProfile.tag || '0001');
+  const memberKey = `${(memberName || 'Bads').toLowerCase()}#${memberTag}`;
+
+  const next = activeMembers.filter((entry) => {
+    const key = `${(entry.name || 'Bads').toLowerCase()}#${String(entry.tag || '0001')}`;
+    return key !== memberKey;
+  });
+
+  next.push({
+    id: sessionAccount?.id || `presence-${Date.now()}`,
+    name: memberName || 'Bads',
+    tag: memberTag,
+    fullTag: `${memberName || 'Bads'}#${memberTag}`,
+    status: userProfile.presenceStatus === 'invisible' ? 'offline' : (userProfile.presenceStatus || 'online'),
+    detail: userProfile.presenceStatus === 'idle' ? 'Ausente' : (userProfile.presenceStatus === 'dnd' ? 'Ocupado' : 'Disponível'),
+    color: userProfile.bannerColor || '#5865F2',
+    avatarUrl: userProfile.avatarUrl || '',
+    game: detectedGame && detectedGame.name ? detectedGame.name : '',
+    initial: (memberName || 'B')[0].toUpperCase(),
+    updatedAt: Date.now()
+  });
+
+  saveStoredPresenceMembers(next);
+}
+
+function clearCurrentSession() {
+  const session = authenticatedAccount;
+  const storedMembers = getStoredPresenceMembers();
+  if (session) {
+    const memberName = (session.displayName || session.username || 'Bads').trim();
+    const memberKey = `${memberName.toLowerCase()}#${String(session.tag || '0001')}`;
+    const next = storedMembers.filter((entry) => {
+      const key = `${(entry.name || 'Bads').toLowerCase()}#${String(entry.tag || '0001')}`;
+      return key !== memberKey;
+    });
+    saveStoredPresenceMembers(next);
+  }
+  saveStoredPresenceMembers([]);
+  authenticatedAccount = null;
+}
+
 function saveUserProfile() {
   try {
     localStorage.setItem('badiscord_user_profile', JSON.stringify(userProfile));
   } catch (e) {}
 }
 
-const LIVEKIT_FALLBACK_URL = 'wss://your-project.livekit.cloud';
+function showAuthOverlay() {
+  const authOverlay = document.getElementById('authOverlay');
+  const appLayout = document.querySelector('.app-layout');
+  if (authOverlay) authOverlay.style.display = 'flex';
+  if (appLayout) {
+    appLayout.style.filter = 'blur(4px)';
+    appLayout.style.pointerEvents = 'none';
+    appLayout.style.opacity = '0.18';
+  }
+}
+
+function hideAuthOverlay() {
+  const authOverlay = document.getElementById('authOverlay');
+  const appLayout = document.querySelector('.app-layout');
+  if (authOverlay) authOverlay.style.display = 'none';
+  if (appLayout) {
+    appLayout.style.filter = 'none';
+    appLayout.style.pointerEvents = 'auto';
+    appLayout.style.opacity = '1';
+  }
+}
+
+function openAuthView(viewId) {
+  const panes = ['viewAuthLogin', 'viewAuthRegister', 'viewAuthForgot', 'viewAuth2FA'];
+  panes.forEach((id) => {
+    const pane = document.getElementById(id);
+    if (pane) pane.style.display = id === viewId ? 'block' : 'none';
+  });
+}
+
+async function registerAccount({ email, username, displayName, password, recaptchaToken = '' }) {
+  const response = await fetch('/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, username, displayName, password, recaptchaToken })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Não foi possível criar a conta.');
+  return payload.user;
+}
+
+async function loginAccount(email, password, recaptchaToken = '') {
+  const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, password, recaptchaToken })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'E-mail ou senha inválidos.');
+  return payload.user;
+}
+
+function applySessionToProfile(account) {
+  userProfile = {
+    ...DEFAULT_PROFILE,
+    displayName: account.displayName || account.username,
+    username: account.username,
+    tag: account.tag || generateAccountTag(),
+    avatarUrl: account.avatarUrl || '',
+    bannerColor: account.bannerColor || '#5865F2',
+    aboutMe: account.aboutMe || 'Usando o BADISCORD!',
+    email: account.email,
+    presenceStatus: userProfile.presenceStatus || 'online'
+  };
+  saveUserProfile();
+  return userProfile;
+}
+
+async function finalizeAuthSession(account) {
+  if (!account || !account.id || !account.email) throw new Error('Sessão inválida.');
+  authenticatedAccount = account;
+
+  syncPresenceRoster(account);
+  applySessionToProfile(account);
+  hideAuthOverlay();
+  renderGuilds();
+  renderServerMembers();
+  renderVoiceParticipants();
+  applyUserProfile();
+  loadFriendsFromServer();
+}
+
+function logoutAccount() {
+  fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+  authenticatedAccount = null;
+  clearCurrentSession();
+  const authOverlay = document.getElementById('authOverlay');
+  if (authOverlay) authOverlay.style.display = 'flex';
+  openAuthView('viewAuthLogin');
+  const formLogin = document.getElementById('loginEmail');
+  if (formLogin) formLogin.focus();
+}
+
+async function ensureAuthState() {
+  try {
+    const response = await fetch('/api/auth/me', { credentials: 'include', headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error('Sessão ausente');
+    const payload = await response.json();
+    await finalizeAuthSession(payload.user);
+    return true;
+  } catch (error) {
+    authenticatedAccount = null;
+    clearCurrentSession();
+    showAuthOverlay();
+    openAuthView('viewAuthLogin');
+    return false;
+  }
+}
+
 let livekitRoom = null;
 let livekitAudioTrack = null;
 let livekitScreenTrack = null;
@@ -105,6 +338,10 @@ async function requestLiveKitToken(roomName, participantName) {
 }
 
 async function connectToLiveKitRoom(channelName) {
+  if (!hasAuthenticatedSession()) {
+    throw new Error('Faça login para entrar em um canal de voz.');
+  }
+
   if (!window.LivekitClient || !window.LivekitClient.Room) {
     throw new Error('SDK do LiveKit não foi carregado.');
   }
@@ -382,6 +619,10 @@ function playDeafenSound(deafened) {
 // ELEMENTOS DA INTERFACE
 // ==========================================
 const guildList = document.getElementById('guildList');
+const btnMobileBack = document.getElementById('btnMobileBack');
+if (btnMobileBack) {
+  btnMobileBack.addEventListener('click', () => document.body.classList.remove('mobile-stage-open'));
+}
 const btnAddGuild = document.getElementById('btnAddGuild');
 const btnHomeDM = document.getElementById('btnHomeDM');
 const serverHeaderWrapper = document.getElementById('serverHeaderWrapper');
@@ -541,6 +782,7 @@ function showToast(msg, icon = '📋') {
 // Alternar entre as 3 visões principais
 function switchView(viewName) {
   currentView = viewName;
+  document.body.classList.add('mobile-stage-open');
   const voiceStageView = document.getElementById('voiceStageView');
 
   if (voiceStageView) voiceStageView.style.display = viewName === 'voice' ? 'flex' : 'none';
@@ -654,6 +896,18 @@ function renderChannels(server) {
     item.appendChild(icon);
     item.appendChild(name);
 
+    const settingsButton = document.createElement('button');
+    settingsButton.type = 'button';
+    settingsButton.className = 'voice-channel-settings-button';
+    settingsButton.title = `Configurações de ${chan}`;
+    settingsButton.setAttribute('aria-label', `Configurações de ${chan}`);
+    settingsButton.textContent = '⚙';
+    settingsButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openVoiceChannelSettings(server, chan, settingsButton);
+    });
+    item.appendChild(settingsButton);
+
     const usersList = document.createElement('div');
     usersList.className = 'channel-users-list';
     usersList.id = `users-${chan}`;
@@ -673,7 +927,147 @@ function renderChannels(server) {
   }
 }
 
+function closeVoiceChannelSettingsMenu() {
+  document.querySelector('.voice-channel-settings-menu')?.remove();
+}
+
+function openVoiceChannelSettings(server, channelName, anchor) {
+  closeVoiceChannelSettingsMenu();
+
+  const menu = document.createElement('div');
+  menu.className = 'voice-channel-settings-menu';
+  const actions = [
+    { label: '✏️ Editar nome', action: 'edit' },
+    { label: '⚙️ Configurações de voz', action: 'settings' },
+    { label: '🗑️ Excluir canal', action: 'delete', danger: true }
+  ];
+
+  actions.forEach(({ label, action, danger }) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    if (danger) button.className = 'danger';
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      closeVoiceChannelSettingsMenu();
+
+      if (action === 'edit') {
+        const nextName = window.prompt('Novo nome do canal de voz:', channelName)?.trim();
+        if (!nextName || nextName === channelName) return;
+        if (server.voiceChannels.includes(nextName)) {
+          showToast('Já existe um canal com esse nome.', '⚠️');
+          return;
+        }
+        const index = server.voiceChannels.indexOf(channelName);
+        if (index < 0) return;
+        server.voiceChannels[index] = nextName;
+        if (currentChannel === channelName) currentChannel = nextName;
+        saveServers();
+        renderChannels(server);
+        showToast(`Canal renomeado para ${nextName}.`, '✅');
+      }
+
+      if (action === 'settings') {
+        const currentBitrate = server.voiceSettings?.[channelName]?.bitrate || 96;
+        const bitrate = window.prompt('Bitrate do canal em kbps (64, 96, 128 ou 256):', String(currentBitrate))?.trim();
+        if (!bitrate) return;
+        const allowedBitrates = [64, 96, 128, 256];
+        if (!allowedBitrates.includes(Number(bitrate))) {
+          showToast('Escolha um bitrate válido: 64, 96, 128 ou 256 kbps.', '⚠️');
+          return;
+        }
+        if (!server.voiceSettings) server.voiceSettings = {};
+        server.voiceSettings[channelName] = { bitrate: Number(bitrate) };
+        saveServers();
+        showToast(`Bitrate de ${channelName} definido em ${bitrate} kbps.`, '⚙️');
+      }
+
+      if (action === 'delete') {
+        if (server.voiceChannels.length <= 1) {
+          showToast('Mantenha pelo menos um canal de voz.', '⚠️');
+          return;
+        }
+        if (!window.confirm(`Excluir o canal de voz "${channelName}"?`)) return;
+        if (currentChannel === channelName) disconnectVoice(false);
+        server.voiceChannels = server.voiceChannels.filter((channel) => channel !== channelName);
+        saveServers();
+        renderChannels(server);
+        showToast(`Canal ${channelName} excluído.`, '🗑️');
+      }
+    });
+    menu.appendChild(button);
+  });
+
+  document.body.appendChild(menu);
+  const rect = anchor.getBoundingClientRect();
+  menu.style.left = `${Math.min(rect.right + 4, window.innerWidth - menu.offsetWidth - 8)}px`;
+  menu.style.top = `${Math.min(rect.top, window.innerHeight - menu.offsetHeight - 8)}px`;
+  window.setTimeout(() => document.addEventListener('click', closeVoiceChannelSettingsMenu, { once: true }), 0);
+}
+
 // Atualizar o nome do usuário embaixo da sala na barra lateral
+function getServerOnlineProfiles() {
+  if (!hasAuthenticatedSession()) return [];
+
+  const localMember = {
+    id: 'self',
+    name: userProfile.displayName || 'Bads',
+    tag: userProfile.tag || '0001',
+    fullTag: `${userProfile.displayName || 'Bads'}#${userProfile.tag || '0001'}`,
+    initial: (userProfile.displayName || 'B')[0].toUpperCase(),
+    color: userProfile.bannerColor || '#5865F2',
+    avatarUrl: userProfile.avatarUrl || '',
+    game: detectedGame && detectedGame.name ? detectedGame.name : '',
+    detail: userProfile.aboutMe || 'Disponível',
+    status: userProfile.presenceStatus === 'invisible' ? 'offline' : (userProfile.presenceStatus || 'online'),
+    isOwner: true
+  };
+
+  const rosterMembers = (Array.isArray(getStoredPresenceMembers()) ? getStoredPresenceMembers() : []).map((member) => ({
+    id: member.id || member.fullTag || member.name,
+    name: member.name || 'Bads',
+    tag: member.tag || '0001',
+    fullTag: member.fullTag || `${member.name || 'Bads'}#${member.tag || '0001'}`,
+    initial: member.initial || (member.name || 'B')[0].toUpperCase(),
+    color: member.color || '#5865F2',
+    avatarUrl: member.avatarUrl || '',
+    game: member.game || '',
+    detail: member.detail || 'Disponível',
+    status: member.status || 'online',
+    isOwner: false
+  })).filter((member) => (member.status || 'online') !== 'offline');
+
+  const onlineFriends = (Array.isArray(friendsList) ? friendsList : []).filter((friend) => {
+    const state = (friend.status || 'online');
+    return state !== 'offline';
+  }).map((friend) => ({
+    id: friend.id,
+    name: friend.name,
+    tag: friend.tag || '0001',
+    fullTag: friend.fullTag || `${friend.name}#${friend.tag || '0001'}`,
+    initial: friend.initial || friend.name[0].toUpperCase(),
+    color: friend.color || '#5865F2',
+    avatarUrl: friend.avatarUrl || '',
+    game: friend.game || '',
+    detail: friend.detail || 'Disponível',
+    status: friend.status || 'online',
+    isOwner: false
+  }));
+
+  const seen = new Set([localMember.name.toLowerCase()]);
+  const combined = [localMember, ...rosterMembers, ...onlineFriends.filter((member) => {
+    const lower = member.name.toLowerCase();
+    if (seen.has(lower)) return false;
+    seen.add(lower);
+    return true;
+  })];
+
+  return combined.filter((member) => {
+    const status = (member.status || 'online');
+    return status !== 'offline';
+  });
+}
+
 function updateSidebarChannelUsers(channelName) {
   document.querySelectorAll('.channel-users-list').forEach(list => {
     list.innerHTML = '';
@@ -684,68 +1078,34 @@ function updateSidebarChannelUsers(channelName) {
   const targetList = document.getElementById(`users-${channelName}`);
   if (!targetList) return;
 
-  // 1. Usuário local
-  const userItem = document.createElement('div');
-  userItem.className = 'channel-user-item';
-  userItem.id = 'sidebarLocalUser';
+  const onlineMembers = getServerOnlineProfiles();
+  onlineMembers.forEach((member) => {
+    const userItem = document.createElement('div');
+    userItem.className = 'channel-user-item';
 
-  const avatar = document.createElement('div');
-  avatar.className = 'channel-user-avatar';
-  if (userProfile.avatarUrl) {
-    avatar.innerHTML = `<img src="${userProfile.avatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
-  } else {
-    avatar.textContent = (userProfile.displayName || 'B')[0].toUpperCase();
-  }
+    const avatar = document.createElement('div');
+    avatar.className = 'channel-user-avatar';
+    if (member.avatarUrl) {
+      avatar.innerHTML = `<img src="${member.avatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+    } else {
+      avatar.style.backgroundColor = member.color || '#5865F2';
+      avatar.textContent = member.initial || member.name[0].toUpperCase();
+    }
 
-  const name = document.createElement('span');
-  name.className = 'channel-user-name';
-  name.textContent = userProfile.displayName;
+    const name = document.createElement('span');
+    name.className = 'channel-user-name';
+    name.textContent = member.name;
 
-  const micIcon = document.createElement('span');
-  micIcon.className = 'channel-user-mic';
-  micIcon.id = 'sidebarUserMic';
+    const micIcon = document.createElement('span');
+    micIcon.className = 'channel-user-mic';
+    micIcon.id = member.id === 'self' ? 'sidebarUserMic' : '';
+    micIcon.textContent = member.id === 'self' ? (isDeafened ? '🔇 🚫🎧' : (isMuted ? '🔇' : '🎤')) : (member.game ? '🎮' : '🔊');
 
-  if (isDeafened) {
-    micIcon.textContent = '🔇 🚫🎧';
-  } else if (isMuted) {
-    micIcon.textContent = '🔇';
-  } else {
-    micIcon.textContent = '🎤';
-  }
-
-  userItem.appendChild(avatar);
-  userItem.appendChild(name);
-  userItem.appendChild(micIcon);
-  targetList.appendChild(userItem);
-
-  // 2. Amigos na sala do servidor
-  if (typeof friendsList !== 'undefined' && Array.isArray(friendsList)) {
-    friendsList.forEach(f => {
-      const fItem = document.createElement('div');
-      fItem.className = 'channel-user-item';
-
-      const fAvatar = document.createElement('div');
-      fAvatar.className = 'channel-user-avatar';
-      fAvatar.style.backgroundColor = f.color || '#5865F2';
-      fAvatar.textContent = f.initial || f.name[0].toUpperCase();
-
-      const fName = document.createElement('span');
-      fName.className = 'channel-user-name';
-      fName.textContent = f.name;
-
-      fItem.appendChild(fAvatar);
-      fItem.appendChild(fName);
-
-      if (f.game) {
-        const fGame = document.createElement('span');
-        fGame.className = 'channel-user-mic';
-        fGame.textContent = '🎮';
-        fItem.appendChild(fGame);
-      }
-
-      targetList.appendChild(fItem);
-    });
-  }
+    userItem.appendChild(avatar);
+    userItem.appendChild(name);
+    userItem.appendChild(micIcon);
+    targetList.appendChild(userItem);
+  });
 }
 
 // Renderizar participantes na tela principal da sala de voz (Estilo Discord 1:1)
@@ -753,74 +1113,46 @@ function renderVoiceParticipants() {
   if (!participantsGrid) return;
   participantsGrid.innerHTML = '';
 
-  // 1. Card do próprio usuário
-  const localCard = document.createElement('div');
-  localCard.className = 'participant-card';
-  localCard.id = 'localParticipantCard';
+  const onlineMembers = getServerOnlineProfiles();
 
-  const localAvatar = document.createElement('div');
-  localAvatar.className = 'participant-avatar-lg';
-  if (userProfile.avatarUrl) {
-    localAvatar.innerHTML = `<img src="${userProfile.avatarUrl}" alt="Avatar">`;
-  } else {
-    localAvatar.style.backgroundColor = userProfile.bannerColor || '#5865F2';
-    localAvatar.textContent = (userProfile.displayName || 'B')[0].toUpperCase();
-  }
+  onlineMembers.forEach((member) => {
+    const card = document.createElement('div');
+    card.className = 'participant-card';
+    if (member.id === 'self') card.id = 'localParticipantCard';
 
-  const localTag = document.createElement('div');
-  localTag.className = 'participant-name-tag';
-  
-  const nameSpan = document.createElement('span');
-  nameSpan.textContent = userProfile.displayName || 'Bads';
-  localTag.appendChild(nameSpan);
+    const avatar = document.createElement('div');
+    avatar.className = 'participant-avatar-lg';
+    if (member.avatarUrl) {
+      avatar.innerHTML = `<img src="${member.avatarUrl}" alt="Avatar">`;
+    } else {
+      avatar.style.backgroundColor = member.color || '#5865F2';
+      avatar.textContent = (member.name || 'U')[0].toUpperCase();
+    }
 
-  if (typeof detectedGame !== 'undefined' && detectedGame && detectedGame.name) {
-    const gamePill = document.createElement('span');
-    gamePill.className = 'participant-game-pill';
-    gamePill.textContent = detectedGame.name;
-    localTag.appendChild(gamePill);
-  }
+    const tag = document.createElement('div');
+    tag.className = 'participant-name-tag';
 
-  const micIcon = document.createElement('div');
-  micIcon.className = 'participant-mic-icon';
-  micIcon.id = 'participantMicIcon';
-  micIcon.textContent = isMuted ? '🔇' : (isDeafened ? '🚫🎧' : '🎤');
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = member.name;
+    tag.appendChild(nameSpan);
 
-  localCard.appendChild(localAvatar);
-  localCard.appendChild(localTag);
-  localCard.appendChild(micIcon);
-  participantsGrid.appendChild(localCard);
+    if (member.game) {
+      const gamePill = document.createElement('span');
+      gamePill.className = 'participant-game-pill';
+      gamePill.textContent = member.game;
+      tag.appendChild(gamePill);
+    }
 
-  // 2. Renderizar amigos adicionados que também estão no servidor para preencher a sala (como na foto do usuário)
-  if (typeof friendsList !== 'undefined' && Array.isArray(friendsList)) {
-    friendsList.forEach(friend => {
-      const card = document.createElement('div');
-      card.className = 'participant-card';
+    const micIcon = document.createElement('div');
+    micIcon.className = 'participant-mic-icon';
+    micIcon.id = member.id === 'self' ? 'participantMicIcon' : '';
+    micIcon.textContent = member.id === 'self' ? (isMuted ? '🔇' : (isDeafened ? '🚫🎧' : '🎤')) : (member.game ? '🎮' : '🔊');
 
-      const avatar = document.createElement('div');
-      avatar.className = 'participant-avatar-lg';
-      avatar.style.backgroundColor = friend.color || '#5865F2';
-      avatar.textContent = friend.initial || friend.name[0].toUpperCase();
-
-      const tag = document.createElement('div');
-      tag.className = 'participant-name-tag';
-
-      const fNameSpan = document.createElement('span');
-      fNameSpan.textContent = friend.name;
-      tag.appendChild(fNameSpan);
-
-      if (friend.game) {
-        const fGamePill = document.createElement('span');
-        fGamePill.className = 'participant-game-pill';
-        fGamePill.textContent = friend.game;
-        tag.appendChild(fGamePill);
-      }
-
-      card.appendChild(avatar);
-      card.appendChild(tag);
-      participantsGrid.appendChild(card);
-    });
-  }
+    card.appendChild(avatar);
+    card.appendChild(tag);
+    card.appendChild(micIcon);
+    participantsGrid.appendChild(card);
+  });
 }
 
 function openVoiceSwitchConfirmation(targetChannel) {
@@ -901,6 +1233,13 @@ async function disconnectVoice(showToastMessage = true) {
 
 // Conectar ao Canal de Voz
 async function joinVoiceChannel(channelName) {
+  if (!hasAuthenticatedSession()) {
+    showAuthOverlay();
+    openAuthView('viewAuthLogin');
+    showToast('Crie uma conta e faça login para entrar no canal de voz.', '🔒');
+    return;
+  }
+
   if (currentChannel === channelName) {
     switchView('voice');
     return;
@@ -1784,28 +2123,31 @@ if (btnGameQuickStream) {
 const FRIEND_COLORS = ['#5865F2','#57F287','#1DB954','#FEE75C','#EB459E','#ED4245','#E67E22','#9B59B6','#E91E63','#00BCD4'];
 
 let friendsList = [];
-try { 
-  friendsList = JSON.parse(localStorage.getItem('badiscord_friends') || '[]'); 
-} catch(e) { friendsList = []; }
-
-// Normaliza amigos antigos para sempre terem tag
-friendsList = friendsList.map((f, idx) => {
-  if (!f.tag) f.tag = String(1000 + (idx * 137) % 8999);
-  if (!f.fullTag) f.fullTag = `${f.name}#${f.tag}`;
-  return f;
-});
-
 let friendRequests = [];
-try { 
-  friendRequests = JSON.parse(localStorage.getItem('badiscord_friend_requests') || '[]'); 
-} catch(e) { friendRequests = []; }
 
-function saveFriends() {
-  localStorage.setItem('badiscord_friends', JSON.stringify(friendsList));
-}
-
-function saveFriendRequests() {
-  localStorage.setItem('badiscord_friend_requests', JSON.stringify(friendRequests));
+async function loadFriendsFromServer() {
+  if (!hasAuthenticatedSession()) return;
+  try {
+    const response = await fetch('/api/friends', { credentials: 'include', headers: { Accept: 'application/json' } });
+    if (!response.ok) return;
+    const payload = await response.json();
+    friendsList = Array.isArray(payload.friends) ? payload.friends : [];
+    friendRequests = (Array.isArray(payload.requests) ? payload.requests : []).map((request) => ({
+      ...request,
+      type: 'incoming',
+      initial: (request.name || 'U')[0].toUpperCase(),
+      color: FRIEND_COLORS[Math.abs(String(request.id || '').length) % FRIEND_COLORS.length],
+      date: 'Agora'
+    }));
+    renderFriendsList();
+    renderPendingRequests();
+    renderDMList();
+    renderActiveNowCards();
+    updateDMBadge();
+    updateRequestsBadge();
+  } catch (error) {
+    console.warn('Não foi possível carregar amigos:', error);
+  }
 }
 
 // Analisa entrada do usuário com ou sem tag (ex: bads#0000 ou bads)
@@ -1825,7 +2167,7 @@ function parseFriendInput(raw) {
     if (!tag) tag = String(Math.floor(1000 + Math.random() * 9000));
   } else {
     name = str;
-    tag = String(Math.floor(1000 + Math.random() * 9000));
+    tag = '';
   }
 
   // Remove caracteres extras da tag
@@ -1835,131 +2177,44 @@ function parseFriendInput(raw) {
   return {
     name,
     tag,
-    fullTag: `${name}#${tag}`
+    fullTag: tag ? `${name}#${tag}` : name
   };
 }
 
-function addFriend(rawInput) {
+async function sendFriendRequest(rawInput) {
   const parsed = parseFriendInput(rawInput);
   if (!parsed) return null;
-
-  const { name, tag, fullTag } = parsed;
-
-  const myTag = userProfile.tag || '0001';
-  const myName = userProfile.username || userProfile.displayName || 'bads';
-  if (fullTag.toLowerCase() === `${myName}#${myTag}`.toLowerCase()) {
-    showToast('Você não pode adicionar a si mesmo!', '⚠️');
+  try {
+    const response = await fetch('/api/friends/requests', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ handle: parsed.fullTag })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível enviar o pedido.');
+    showToast(`Pedido enviado para ${parsed.fullTag}!`, '✅');
+    return payload.user;
+  } catch (error) {
+    showToast(error.message || 'Não foi possível enviar o pedido.', '⚠️');
     return null;
   }
-
-  // Verifica se já é amigo
-  const exists = friendsList.find(f => 
-    (f.fullTag && f.fullTag.toLowerCase() === fullTag.toLowerCase()) || 
-    (f.name.toLowerCase() === name.toLowerCase() && f.tag === tag)
-  );
-  if (exists) {
-    showToast(`${fullTag} já está na sua lista de amigos!`, '⚠️');
-    return null;
-  }
-
-  const friend = {
-    id: 'f-' + Date.now(),
-    name: name,
-    tag: tag,
-    fullTag: fullTag,
-    status: 'online',
-    game: '',
-    detail: 'Disponível',
-    initial: name[0].toUpperCase(),
-    color: FRIEND_COLORS[Math.floor(Math.random() * FRIEND_COLORS.length)]
-  };
-
-  friendsList.push(friend);
-  saveFriends();
-
-  // Remove de solicitações pendentes se houver
-  friendRequests = friendRequests.filter(r => r.fullTag.toLowerCase() !== fullTag.toLowerCase());
-  saveFriendRequests();
-
-  return friend;
 }
 
-function sendFriendRequest(rawInput) {
-  const parsed = parseFriendInput(rawInput);
-  if (!parsed) return null;
-
-  const { name, tag, fullTag } = parsed;
-
-  const myTag = userProfile.tag || '0001';
-  const myName = userProfile.username || userProfile.displayName || 'bads';
-  if (fullTag.toLowerCase() === `${myName}#${myTag}`.toLowerCase()) {
-    showToast('Você não pode enviar solicitação para si mesmo!', '⚠️');
-    return null;
+async function acceptFriendRequest(reqId) {
+  const response = await fetch(`/api/friends/requests/${encodeURIComponent(reqId)}/accept`, { method: 'POST', credentials: 'include' });
+  if (!response.ok) {
+    showToast('Não foi possível aceitar a solicitação.', '⚠️');
+    return;
   }
-
-  if (friendsList.find(f => f.fullTag && f.fullTag.toLowerCase() === fullTag.toLowerCase())) {
-    showToast(`${fullTag} já é seu amigo!`, '⚠️');
-    return null;
-  }
-
-  if (friendRequests.find(r => r.fullTag && r.fullTag.toLowerCase() === fullTag.toLowerCase())) {
-    showToast(`Já existe um pedido para ${fullTag}!`, '⚠️');
-    return null;
-  }
-
-  const req = {
-    id: 'req-' + Date.now(),
-    name: name,
-    tag: tag,
-    fullTag: fullTag,
-    type: 'outgoing', // enviado por você
-    initial: name[0].toUpperCase(),
-    color: FRIEND_COLORS[Math.floor(Math.random() * FRIEND_COLORS.length)],
-    date: 'Hoje'
-  };
-
-  friendRequests.push(req);
-  saveFriendRequests();
-  return req;
+  await loadFriendsFromServer();
+  showToast('Solicitação aceita! 🎉', '✅');
 }
 
-function acceptFriendRequest(reqId) {
-  const req = friendRequests.find(r => r.id === reqId);
-  if (!req) return;
-
-  const friend = {
-    id: 'f-' + Date.now(),
-    name: req.name,
-    tag: req.tag,
-    fullTag: req.fullTag,
-    status: 'online',
-    game: '',
-    detail: 'Disponível',
-    initial: req.initial,
-    color: req.color
-  };
-
-  friendsList.push(friend);
-  saveFriends();
-
-  friendRequests = friendRequests.filter(r => r.id !== reqId);
-  saveFriendRequests();
-
-  showToast(`${friend.fullTag} agora é seu amigo! 🎉`, '✅');
-  renderFriendsList();
-  renderPendingRequests();
-  renderDMList();
-  renderActiveNowCards();
-  updateDMBadge();
-  updateRequestsBadge();
-}
-
-function rejectFriendRequest(reqId) {
-  friendRequests = friendRequests.filter(r => r.id !== reqId);
-  saveFriendRequests();
+async function rejectFriendRequest(reqId) {
+  await fetch(`/api/friends/requests/${encodeURIComponent(reqId)}`, { method: 'DELETE', credentials: 'include' });
+  await loadFriendsFromServer();
   showToast('Solicitação recusada/cancelada.', 'ℹ️');
-  renderPendingRequests();
-  updateRequestsBadge();
 }
 
 function simulateIncomingRequest() {
@@ -1984,7 +2239,7 @@ function simulateIncomingRequest() {
   };
 
   friendRequests.push(req);
-  saveFriendRequests();
+  loadFriendsFromServer();
   updateRequestsBadge();
   if (currentFriendsTab === 'pending') {
     renderPendingRequests();
@@ -1994,13 +2249,11 @@ function simulateIncomingRequest() {
 
 function removeFriend(friendId) {
   const friend = friendsList.find(f => f.id === friendId);
-  friendsList = friendsList.filter(f => f.id !== friendId);
-  saveFriends();
-  if (friend) showToast(`${friend.fullTag || friend.name} foi removido.`, '🗑️');
-  renderFriendsList();
-  renderDMList();
-  renderActiveNowCards();
-  updateDMBadge();
+  fetch(`/api/friends/${encodeURIComponent(friendId)}`, { method: 'DELETE', credentials: 'include' })
+    .then(() => loadFriendsFromServer())
+    .then(() => {
+      if (friend) showToast(`${friend.fullTag || friend.name} foi removido.`, '🗑️');
+    });
 }
 
 // Gera lista de DMs a partir dos amigos
@@ -2209,18 +2462,9 @@ function renderPendingRequests() {
   // Header com botão para simular solicitação recebida
   const topActions = document.createElement('div');
   topActions.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding:0 4px;';
-  topActions.innerHTML = `
-    <span style="font-size:12px; color:#949ba4;">Gerencie quem pode conversar e jogar com você.</span>
-    <button id="btnSimulateReq" class="btn-send-friend-req" style="background:#4e5058; font-size:11px; padding:4px 10px;">
-      + Simular Pedido Recebido
-    </button>
-  `;
+  topActions.innerHTML = '<span style="font-size:12px; color:#949ba4;">Gerencie quem pode conversar e jogar com você.</span>';
   friendsCardsList.appendChild(topActions);
 
-  const btnSim = topActions.querySelector('#btnSimulateReq');
-  if (btnSim) {
-    btnSim.addEventListener('click', simulateIncomingRequest);
-  }
 
   if (friendRequests.length === 0) {
     const empty = document.createElement('div');
@@ -2302,9 +2546,9 @@ function renderActiveNowCards() {
   if (!activeNowList) return;
   activeNowList.innerHTML = '';
 
-  const activeFriends = friendsList.filter(f => f.game && f.game !== 'Ausente' && f.game !== '');
+  const activeMembers = getServerOnlineProfiles().filter((member) => member.game && member.game !== 'Ausente' && member.game !== '');
 
-  if (activeFriends.length === 0) {
+  if (activeMembers.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'active-now-empty';
     empty.innerHTML = `
@@ -2315,7 +2559,7 @@ function renderActiveNowCards() {
     return;
   }
 
-  activeFriends.forEach(af => {
+  activeMembers.forEach((member) => {
     const card = document.createElement('div');
     card.className = 'active-now-card';
 
@@ -2324,17 +2568,17 @@ function renderActiveNowCards() {
 
     const avatar = document.createElement('div');
     avatar.className = 'active-now-avatar';
-    avatar.style.backgroundColor = af.color;
-    avatar.textContent = af.initial;
+    avatar.style.backgroundColor = member.color || '#5865F2';
+    avatar.textContent = member.initial || member.name[0].toUpperCase();
 
     const userMeta = document.createElement('div');
     userMeta.className = 'active-now-usermeta';
 
     const userName = document.createElement('strong');
-    userName.textContent = af.name;
+    userName.textContent = member.name;
 
     const userGame = document.createElement('span');
-    userGame.textContent = af.game;
+    userGame.textContent = member.game;
 
     userMeta.appendChild(userName);
     userMeta.appendChild(userGame);
@@ -2344,7 +2588,7 @@ function renderActiveNowCards() {
 
     const desc = document.createElement('div');
     desc.className = 'active-now-desc';
-    desc.textContent = af.detail;
+    desc.textContent = member.detail || 'Disponível';
 
     card.appendChild(header);
     card.appendChild(desc);
@@ -2491,27 +2735,17 @@ if (dmMenuFriends) {
 // Handler do formulário de adicionar amigo (com suporte a tags bads#0000)
 const formAddFriend = document.getElementById('formAddFriend');
 if (formAddFriend) {
-  formAddFriend.addEventListener('submit', (e) => {
+  formAddFriend.addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = document.getElementById('inputAddFriendName');
     if (!input) return;
     const rawVal = input.value.trim();
     if (!rawVal) return;
 
-    // Adiciona o amigo diretamente com a tag informada ou gerada
-    const friend = addFriend(rawVal);
+    const friend = await sendFriendRequest(rawVal);
     if (friend) {
-      showToast(`Pedido de amizade enviado para ${friend.fullTag}! 🎉`, '✅');
       input.value = '';
-      renderDMList();
-      renderActiveNowCards();
-      updateDMBadge();
-      updateRequestsBadge();
-
-      // Muda para aba Todos para ver o amigo adicionado
-      setTimeout(() => {
-        switchFriendsTab('all');
-      }, 700);
+      switchFriendsTab('all');
     }
   });
 }
@@ -2690,13 +2924,13 @@ function renderServerMembers() {
   membersScroll.innerHTML = '';
 
   const activeSrv = servers.find(s => s.id === activeServerId) || servers[0];
+  const onlineMembers = getServerOnlineProfiles().filter((member) => !isMemberBanned(activeServerId, member.name));
 
-  // 1. Bloco de Atividade no topo da barra de membros (Foto 1)
   const isPlayingGame = detectedGame && detectedGame.name;
   if (isPlayingGame) {
     const actHeader = document.createElement('div');
     actHeader.className = 'members-activity-header';
-    actHeader.innerHTML = `<span>Atividade — 1</span> <span style="cursor:pointer;" title="Configurações de Atividade">⚙️</span>`;
+    actHeader.innerHTML = `<span>Atividade — ${onlineMembers.length}</span> <span style="cursor:pointer;" title="Configurações de Atividade">⚙️</span>`;
     membersScroll.appendChild(actHeader);
 
     const actCard = document.createElement('div');
@@ -2723,117 +2957,69 @@ function renderServerMembers() {
     membersScroll.appendChild(actCard);
   }
 
-  // 2. Categoria: DONO DO SERVIDOR
   const catOwner = document.createElement('div');
   catOwner.className = 'members-category';
-  catOwner.textContent = 'DONO DO SERVIDOR — 1';
+  catOwner.textContent = `ONLINE AGORA — ${onlineMembers.length}`;
   membersScroll.appendChild(catOwner);
 
-  // Usuário Atual (Você / Dono)
-  const myItem = document.createElement('div');
-  myItem.className = 'member-item';
+  onlineMembers.forEach((member) => {
+    const item = document.createElement('div');
+    item.className = 'member-item';
 
-  const myAvatar = document.createElement('div');
-  myAvatar.className = 'member-avatar';
-  if (userProfile.avatarUrl) {
-    myAvatar.innerHTML = `<img src="${userProfile.avatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
-  } else {
-    myAvatar.style.backgroundColor = userProfile.bannerColor || '#5865F2';
-    myAvatar.textContent = (userProfile.displayName || 'B')[0].toUpperCase();
-  }
+    const avatar = document.createElement('div');
+    avatar.className = 'member-avatar';
+    if (member.avatarUrl) {
+      avatar.innerHTML = `<img src="${member.avatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+    } else {
+      avatar.style.backgroundColor = member.color || '#5865F2';
+      avatar.textContent = (member.initial || member.name[0].toUpperCase());
+    }
 
-  const dot = document.createElement('span');
-  dot.className = 'member-status-dot online';
-  myAvatar.appendChild(dot);
+    const dot = document.createElement('span');
+    dot.className = 'member-status-dot online';
+    avatar.appendChild(dot);
 
-  const myInfo = document.createElement('div');
-  myInfo.className = 'member-info';
+    const info = document.createElement('div');
+    info.className = 'member-info';
 
-  const myName = document.createElement('div');
-  myName.className = 'member-name';
-  myName.textContent = userProfile.displayName || 'Bads';
+    const name = document.createElement('div');
+    name.className = 'member-name';
+    name.innerHTML = `${member.name} <span class="friend-card-tag">#${member.tag || '0001'}</span>`;
 
-  const myCrown = document.createElement('span');
-  myCrown.className = 'member-crown';
-  myCrown.textContent = ' 👑';
-  myCrown.title = 'Proprietário do Servidor';
-  myName.appendChild(myCrown);
+    const myCrown = member.isOwner ? document.createElement('span') : null;
+    if (myCrown) {
+      myCrown.className = 'member-crown';
+      myCrown.textContent = ' 👑';
+      myCrown.title = 'Proprietário do Servidor';
+      name.appendChild(myCrown);
+    }
 
-  const myStatus = document.createElement('div');
-  myStatus.className = 'member-activity';
-  if (detectedGame && detectedGame.name) {
-    myStatus.innerHTML = `<span class="member-activity-badge">🎮 ${detectedGame.name}</span>`;
-  } else {
-    myStatus.textContent = userProfile.aboutMe || 'Online';
-  }
+    const status = document.createElement('div');
+    status.className = 'member-activity';
+    if (member.game) {
+      status.innerHTML = `<span class="member-activity-badge">🎮 ${member.game}</span>`;
+    } else {
+      status.textContent = member.detail || 'Disponível';
+    }
 
-  myInfo.appendChild(myName);
-  myInfo.appendChild(myStatus);
-  myItem.appendChild(myAvatar);
-  myItem.appendChild(myInfo);
+    info.appendChild(name);
+    info.appendChild(status);
+    item.appendChild(avatar);
+    item.appendChild(info);
 
-  myItem.addEventListener('click', () => {
-    openMemberProfilePopover({
-      name: userProfile.displayName || 'Bads',
-      tag: userProfile.tag || '0001',
-      fullTag: `${userProfile.displayName || 'Bads'}#${userProfile.tag || '0001'}`,
-      avatarUrl: userProfile.avatarUrl,
-      bannerColor: userProfile.bannerColor || '#5865F2',
-      game: detectedGame ? detectedGame.name : '',
-      detail: detectedGame ? 'Transmitindo em 1080p' : (userProfile.aboutMe || 'Disponível'),
-      isOwner: true
+    item.addEventListener('click', () => {
+      openMemberProfilePopover(member);
     });
+
+    membersScroll.appendChild(item);
   });
 
-  membersScroll.appendChild(myItem);
-
-  // 3. Categoria: MEMBROS DISPONÍVEIS (Amigos adicionados no servidor que não estão banidos)
-  const activeFriends = friendsList.filter(f => !isMemberBanned(activeServerId, f.name));
-  if (activeFriends.length > 0) {
-    const catMembers = document.createElement('div');
-    catMembers.className = 'members-category';
-    catMembers.textContent = `MEMBROS — ${activeFriends.length}`;
-    membersScroll.appendChild(catMembers);
-
-    activeFriends.forEach(f => {
-      const item = document.createElement('div');
-      item.className = 'member-item';
-
-      const avatar = document.createElement('div');
-      avatar.className = 'member-avatar';
-      avatar.style.backgroundColor = f.color;
-      avatar.textContent = f.initial;
-
-      const fDot = document.createElement('span');
-      fDot.className = 'member-status-dot online';
-      avatar.appendChild(fDot);
-
-      const info = document.createElement('div');
-      info.className = 'member-info';
-
-      const name = document.createElement('div');
-      name.className = 'member-name';
-      name.innerHTML = `${f.name} <span class="friend-card-tag">#${f.tag}</span>`;
-
-      const status = document.createElement('div');
-      status.className = 'member-activity';
-      if (f.game) {
-        status.innerHTML = `<span class="member-activity-badge">🎮 ${f.game}</span>`;
-      } else {
-        status.textContent = f.detail || 'Disponível';
-      }
-
-      info.appendChild(name);
-      info.appendChild(status);
-      item.appendChild(avatar);
-      item.appendChild(info);
-
-      item.addEventListener('click', () => {
-        openMemberProfilePopover(f);
-      });
-
-      membersScroll.appendChild(item);
-    });
+  if (onlineMembers.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'member-empty-state';
+    empty.style.cssText = 'padding:12px 10px; color:#949ba4; font-size:12px;';
+    empty.textContent = 'Nenhum usuário online neste servidor agora.';
+    membersScroll.appendChild(empty);
   }
 }
 
@@ -4415,6 +4601,11 @@ if (initialServer && initialServer.textChannels && initialServer.textChannels.le
   openTextChannel(initialServer.textChannels[0]);
 }
 
+showAuthOverlay();
+openAuthView('viewAuthLogin');
+initializeRecaptcha();
+initializePasswordToggles();
+
 // ==========================================
 // CONFIGURAÇÕES DE VOZ E VÍDEO (ESTILO DISCORD)
 // ==========================================
@@ -4639,12 +4830,18 @@ function applyUserProfile() {
   const myStatusText = document.getElementById('myStatusText');
   const myAvatar = document.getElementById('myAvatar');
   const myTag = userProfile.tag || '0001';
+  const statusLabels = {
+    online: 'Disponível',
+    idle: 'Ausente',
+    dnd: 'Ocupado',
+    invisible: 'Invisível'
+  };
 
   if (myUsername) {
     myUsername.textContent = userProfile.displayName || 'Bads';
   }
   if (myStatusText) {
-    myStatusText.textContent = userProfile.presenceStatus || 'Invisível';
+    myStatusText.textContent = statusLabels[userProfile.presenceStatus] || 'Invisível';
   }
   if (myAvatar) {
     if (userProfile.avatarUrl) {
@@ -5020,7 +5217,7 @@ applyUserProfile();
   const statusLabels = {
     online: 'Disponível',
     idle: 'Ausente',
-    dnd: 'Não perturbar',
+    dnd: 'Ocupado',
     invisible: 'Invisível'
   };
 
@@ -5100,6 +5297,7 @@ applyUserProfile();
 
       userProfile.presenceStatus = status;
       saveUserProfile();
+      syncPresenceRoster(authenticatedAccount);
 
       const statusText = statusLabels[status] || 'Invisível';
 
@@ -5108,6 +5306,9 @@ applyUserProfile();
       const myStatusIndicator = document.getElementById('myStatusIndicator');
       if (myStatusText) myStatusText.textContent = statusText;
       if (myStatusIndicator) myStatusIndicator.className = 'user-status-indicator ' + status;
+      applyUserProfile();
+      renderServerMembers();
+      renderVoiceParticipants();
 
       // Mark active
       document.querySelectorAll('.submenu-status-item').forEach(i => i.classList.remove('active'));
@@ -5745,7 +5946,7 @@ applyUserProfile();
 
 
 // ==========================================
-// SISTEMA COMPLETO DE AUTENTICAÇÃO: LOGIN, REGISTRO & 2FA
+// SISTEMA DE AUTENTICAÇÃO: LOGIN, REGISTRO E CONTROLE DE ACESSO
 // ==========================================
 (function() {
   const authOverlay = document.getElementById('authOverlay');
@@ -5754,14 +5955,12 @@ applyUserProfile();
   const viewAuthForgot = document.getElementById('viewAuthForgot');
   const viewAuth2FA = document.getElementById('viewAuth2FA');
 
-  // Alternadores de tela
   const btnGoToRegister = document.getElementById('btnGoToRegister');
   const btnGoToLoginFromReg = document.getElementById('btnGoToLoginFromReg');
   const btnGoToForgot = document.getElementById('btnGoToForgot');
   const btnBackToLoginFromForgot = document.getElementById('btnBackToLoginFromForgot');
   const btnBackToLoginFrom2FA = document.getElementById('btnBackToLoginFrom2FA');
 
-  // Inputs e Botões
   const loginEmail = document.getElementById('loginEmail');
   const loginPassword = document.getElementById('loginPassword');
   const btnLoginSubmit = document.getElementById('btnLoginSubmit');
@@ -5770,6 +5969,7 @@ applyUserProfile();
   const regDisplayName = document.getElementById('regDisplayName');
   const regUsername = document.getElementById('regUsername');
   const regPassword = document.getElementById('regPassword');
+  const regPasswordConfirm = document.getElementById('regPasswordConfirm');
   const btnRegisterSubmit = document.getElementById('btnRegisterSubmit');
 
   const forgotEmail = document.getElementById('forgotEmail');
@@ -5789,128 +5989,74 @@ applyUserProfile();
     if (viewAuth2FA) viewAuth2FA.style.display = viewName === '2fa' ? 'block' : 'none';
   }
 
-  // Gerenciamento de Banco Local de Usuários
-  function getRegisteredAccounts() {
-    try {
-      const data = localStorage.getItem('badiscord_registered_users');
-      return data ? JSON.parse(data) : [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  function saveRegisteredAccounts(accounts) {
-    try {
-      localStorage.setItem('badiscord_registered_users', JSON.stringify(accounts));
-    } catch (e) {}
-  }
-
-  // Verificar se há sessão ativa
-  const activeSession = localStorage.getItem('badiscord_session_active');
-  if (!activeSession) {
-    // Abrir tela de autenticação
-    if (authOverlay) authOverlay.style.display = 'flex';
-  }
-
-  // Navegação
   if (btnGoToRegister) btnGoToRegister.addEventListener('click', () => switchAuthView('register'));
   if (btnGoToLoginFromReg) btnGoToLoginFromReg.addEventListener('click', () => switchAuthView('login'));
   if (btnGoToForgot) btnGoToForgot.addEventListener('click', () => switchAuthView('forgot'));
   if (btnBackToLoginFromForgot) btnBackToLoginFromForgot.addEventListener('click', () => switchAuthView('login'));
   if (btnBackToLoginFrom2FA) btnBackToLoginFrom2FA.addEventListener('click', () => switchAuthView('login'));
 
-  // 1. LOGIN
   if (btnLoginSubmit) {
-    btnLoginSubmit.addEventListener('click', () => {
+    btnLoginSubmit.addEventListener('click', async () => {
       const email = loginEmail ? loginEmail.value.trim() : '';
-      const pass = loginPassword ? loginPassword.value : '';
+      const password = loginPassword ? loginPassword.value : '';
 
-      if (!email || !pass) {
+      if (!email || !password) {
         showToast('Preencha seu e-mail e senha.', '⚠️');
         return;
       }
 
-      const users = getRegisteredAccounts();
-      const found = users.find(u => (u.email.toLowerCase() === email.toLowerCase() || u.username.toLowerCase() === email.toLowerCase()));
-
-      if (found) {
-        if (found.password !== pass) {
-          showToast('Senha incorreta!', '❌');
-          return;
-        }
-        // Conectar conta existente
-        userProfile.displayName = found.displayName || found.username;
-        userProfile.username = found.username;
-        userProfile.tag = found.tag || '0001';
-        saveUserProfile();
-        applyUserProfile();
-      } else {
-        // Criar ou entrar como usuário padrão
-        const usernamePart = email.split('@')[0] || 'Bads';
-        userProfile.displayName = usernamePart;
-        userProfile.username = usernamePart.toLowerCase();
-        saveUserProfile();
-        applyUserProfile();
+      const recaptchaToken = getRecaptchaToken('login');
+      if (recaptchaSiteKey && !recaptchaToken) {
+        showToast('Confirme que você não é um robô.', '⚠️');
+        return;
       }
 
-      localStorage.setItem('badiscord_session_active', 'true');
-      if (authOverlay) authOverlay.style.display = 'none';
-      showToast(`Bem-vindo de volta, ${userProfile.displayName}!`, '👋');
+      try {
+        const account = await loginAccount(email, password, recaptchaToken);
+        await finalizeAuthSession(account);
+        showToast(`Bem-vindo de volta, ${account.displayName}!`, '👋');
+      } catch (error) {
+        resetRecaptcha('login');
+        showToast(error.message || 'Não foi possível entrar.', '❌');
+      }
     });
   }
 
-  // 2. REGISTRO DE CONTA
   if (btnRegisterSubmit) {
-    btnRegisterSubmit.addEventListener('click', () => {
+    btnRegisterSubmit.addEventListener('click', async () => {
       const email = regEmail ? regEmail.value.trim() : '';
-      const dispName = regDisplayName ? regDisplayName.value.trim() : '';
+      const displayName = regDisplayName ? regDisplayName.value.trim() : '';
       const username = regUsername ? regUsername.value.trim() : '';
-      const pass = regPassword ? regPassword.value : '';
+      const password = regPassword ? regPassword.value : '';
 
-      if (!email || !username || !pass) {
+      if (!email || !username || !password) {
         showToast('Preencha os campos obrigatórios (*).', '⚠️');
         return;
       }
-      if (pass.length < 6) {
-        showToast('A senha deve ter no mínimo 6 caracteres.', '⚠️');
+      if (!regPasswordConfirm || password !== regPasswordConfirm.value) {
+        showToast('As senhas não conferem.', '⚠️');
         return;
       }
 
-      const users = getRegisteredAccounts();
-      if (users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
-        showToast('Esse e-mail já está registrado.', '⚠️');
+      const recaptchaToken = getRecaptchaToken('register');
+      if (recaptchaSiteKey && !recaptchaToken) {
+        showToast('Confirme que você não é um robô.', '⚠️');
         return;
       }
 
-      const tagRandom = String(Math.floor(1000 + Math.random() * 9000));
-      const newUser = {
-        email,
-        displayName: dispName || username,
-        username,
-        tag: tagRandom,
-        password: pass,
-        twoFactorEnabled: true
-      };
-
-      users.push(newUser);
-      saveRegisteredAccounts(users);
-
-      // Logar imediatamente com a nova conta
-      userProfile.displayName = newUser.displayName;
-      userProfile.username = newUser.username;
-      userProfile.tag = newUser.tag;
-      saveUserProfile();
-      applyUserProfile();
-
-      localStorage.setItem('badiscord_session_active', 'true');
-      if (authOverlay) authOverlay.style.display = 'none';
-      showToast(`Conta criada com sucesso! Olá, ${newUser.displayName}#${newUser.tag}!`, '🎉');
+      try {
+        const account = await registerAccount({ email, username, displayName, password, recaptchaToken });
+        await finalizeAuthSession(account);
+        showToast(`Conta criada com sucesso! Olá, ${account.displayName}#${account.tag}!`, '🎉');
+      } catch (error) {
+        resetRecaptcha('register');
+        showToast(error.message || 'Não foi possível criar a conta.', '⚠️');
+      }
     });
   }
 
-  // 3. RECUPERAÇÃO DE CONTA — ENVIAR 2FA
   if (btnSend2FACode) {
-    btnSend2FACode.addEventListener('click', () => {
+    btnSend2FACode.addEventListener('click', async () => {
       const email = forgotEmail ? forgotEmail.value.trim() : '';
       if (!email) {
         showToast('Informe o seu e-mail cadastrado.', '⚠️');
@@ -5918,59 +6064,49 @@ applyUserProfile();
       }
 
       targetRecoveryEmail = email;
-      // Gera código de 6 dígitos
-      active2FACode = String(Math.floor(100000 + Math.random() * 900000));
-
-      if (authGenerated2FACode) {
-        authGenerated2FACode.textContent = active2FACode;
+      try {
+        const response = await fetch('/api/auth/recovery/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Não foi possível iniciar a recuperação.');
+        active2FACode = payload.recoveryId;
+        if (authGenerated2FACode) authGenerated2FACode.textContent = payload.demoCode || 'enviado para seu e-mail';
+        switchAuthView('2fa');
+        showToast(`Código 2FA enviado para ${email}!`, '📩');
+      } catch (error) {
+        showToast(error.message || 'Não foi possível iniciar a recuperação.', '❌');
       }
-
-      switchAuthView('2fa');
-      showToast(`Código 2FA enviado para ${email}!`, '📩');
     });
   }
 
-  // 4. CONFIRMAR 2FA E REDEFINIR SENHA
   if (btnConfirm2FAReset) {
-    btnConfirm2FAReset.addEventListener('click', () => {
+    btnConfirm2FAReset.addEventListener('click', async () => {
       const codeTyped = input2FACode ? input2FACode.value.trim() : '';
       const newPass = inputNewPassword2FA ? inputNewPassword2FA.value : '';
 
-      if (!codeTyped || codeTyped !== active2FACode) {
-        showToast('Código de 2 fatores inválido ou incorreto.', '❌');
-        return;
+      try {
+        const response = await fetch('/api/auth/recovery/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ recoveryId: active2FACode, code: codeTyped, newPassword: newPass })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Não foi possível redefinir a senha.');
+        await finalizeAuthSession(payload.user);
+        showToast('Senha redefinida com sucesso via 2FA! Conectado.', '🔐');
+      } catch (error) {
+        showToast(error.message || 'Não foi possível redefinir a senha.', '❌');
       }
-
-      if (!newPass || newPass.length < 6) {
-        showToast('A nova senha deve ter no mínimo 6 caracteres.', '⚠️');
-        return;
-      }
-
-      const users = getRegisteredAccounts();
-      const user = users.find(u => u.email.toLowerCase() === targetRecoveryEmail.toLowerCase());
-      if (user) {
-        user.password = newPass;
-        saveRegisteredAccounts(users);
-        userProfile.displayName = user.displayName;
-        userProfile.username = user.username;
-        userProfile.tag = user.tag;
-        saveUserProfile();
-        applyUserProfile();
-      }
-
-      localStorage.setItem('badiscord_session_active', 'true');
-      if (authOverlay) authOverlay.style.display = 'none';
-      showToast('Senha redefinida com sucesso via 2FA! Conectado.', '🔐');
     });
   }
 
-  // Permitir deslogar pelo menu de presença ou configurações
   window.logoutBADISCORD = function() {
-    localStorage.removeItem('badiscord_session_active');
-    if (authOverlay) {
-      switchAuthView('login');
-      authOverlay.style.display = 'flex';
-    }
+    logoutAccount();
   };
 
   const menuItemSwitchAccount = document.getElementById('menuItemSwitchAccount');
@@ -5980,3 +6116,11 @@ applyUserProfile();
     });
   }
 })();
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    ensureAuthState();
+  });
+} else {
+  ensureAuthState();
+}

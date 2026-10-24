@@ -13,6 +13,7 @@
     "build:zip": "electron-builder --win zip"
   },
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
     "cors": "^2.8.5",
     "dotenv": "^18.0.9",
     "express": "^4.21.0",

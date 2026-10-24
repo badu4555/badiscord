@@ -5,6 +5,10 @@ services:
     buildCommand: npm install
     startCommand: npm run server
     healthCheckPath: /health
+    disk:
+      name: badiscord-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: PORT
         value: "10000"
@@ -15,4 +19,10 @@ services:
       - key: LIVEKIT_WS_URL
         sync: false
       - key: ALLOWED_ORIGINS
+        sync: false
+      - key: DB_PATH
+        value: /var/data/badiscord.db
+      - key: RECAPTCHA_SITE_KEY
+        sync: false
+      - key: RECAPTCHA_SECRET_KEY
         sync: false

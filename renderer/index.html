@@ -4,16 +4,26 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BADISCORD</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="styles.css">
+  <script src="https://www.google.com/recaptcha/api.js?render=explicit" async defer></script>
   <script src="../node_modules/livekit-client/dist/livekit-client.umd.js"></script>
 </head>
 <body>
   <!-- TELA DE AUTENTICAÇÃO: LOGIN, REGISTRO E RECUPERAÇÃO COM 2FA -->
-  <div class="auth-overlay" id="authOverlay" style="display: none;">
+  <div class="auth-overlay" id="authOverlay" style="display: flex;">
     <!-- Fundo estilizado do Discord com partículas sutis -->
     <div class="auth-bg-art"></div>
 
     <div class="auth-modal-card">
+      <div class="auth-brand" aria-label="BADISCORD logo">
+        <div class="auth-brand-mark">B</div>
+        <div class="auth-brand-text">
+          <span class="auth-brand-name">BADISCORD</span>
+          <span class="auth-brand-sub">Comunidade digital</span>
+        </div>
+      </div>
+
       <!-- 1. ABA DE LOGIN -->
       <div class="auth-view-pane" id="viewAuthLogin">
         <div class="auth-header-wrap">
@@ -23,15 +33,20 @@
 
         <form class="auth-form" id="formLogin" onsubmit="return false;">
           <div class="auth-field-group">
-            <label class="auth-field-label">E-MAIL OU NÚMERO DE TELEFONE <span class="auth-required">*</span></label>
-            <input type="text" class="auth-input" id="loginEmail" placeholder="seu-email@exemplo.com" required>
+            <label class="auth-field-label" for="loginEmail">E-MAIL OU NÚMERO DE TELEFONE <span class="auth-required">*</span></label>
+            <input type="email" class="auth-input" id="loginEmail" placeholder="seu-email@exemplo.com" autocomplete="username" required>
           </div>
 
           <div class="auth-field-group">
-            <label class="auth-field-label">SENHA <span class="auth-required">*</span></label>
-            <input type="password" class="auth-input" id="loginPassword" placeholder="••••••••" required>
+            <label class="auth-field-label" for="loginPassword">SENHA <span class="auth-required">*</span></label>
+            <div class="password-input-wrap">
+              <input type="password" class="auth-input" id="loginPassword" placeholder="Sua senha" minlength="8" autocomplete="current-password" required>
+              <button type="button" class="password-toggle" data-password-toggle="loginPassword" aria-label="Mostrar senha">👁</button>
+            </div>
             <span class="auth-link-forgot" id="btnGoToForgot">Esqueceu sua senha?</span>
           </div>
+
+          <div class="auth-captcha" id="loginRecaptcha"></div>
 
           <button type="submit" class="auth-submit-btn" id="btnLoginSubmit">Entrar</button>
         </form>
@@ -46,28 +61,42 @@
       <div class="auth-view-pane" id="viewAuthRegister" style="display: none;">
         <div class="auth-header-wrap">
           <h2 class="auth-title">Criar uma conta</h2>
+          <p class="auth-subtitle">Abra sua conta BADISCORD para entrar e participar do servidor.</p>
         </div>
 
         <form class="auth-form" id="formRegister" onsubmit="return false;">
           <div class="auth-field-group">
-            <label class="auth-field-label">E-MAIL <span class="auth-required">*</span></label>
+            <label class="auth-field-label" for="regEmail">E-MAIL <span class="auth-required">*</span></label>
             <input type="email" class="auth-input" id="regEmail" placeholder="seu-email@exemplo.com" required>
           </div>
 
           <div class="auth-field-group">
-            <label class="auth-field-label">NOME DE EXIBIÇÃO</label>
+            <label class="auth-field-label" for="regDisplayName">NOME DE EXIBIÇÃO</label>
             <input type="text" class="auth-input" id="regDisplayName" placeholder="Como as pessoas devem te chamar?">
           </div>
 
           <div class="auth-field-group">
-            <label class="auth-field-label">NOME DE USUÁRIO <span class="auth-required">*</span></label>
+            <label class="auth-field-label" for="regUsername">NOME DE USUÁRIO <span class="auth-required">*</span></label>
             <input type="text" class="auth-input" id="regUsername" placeholder="exemplo_user" required>
           </div>
 
           <div class="auth-field-group">
-            <label class="auth-field-label">SENHA <span class="auth-required">*</span></label>
-            <input type="password" class="auth-input" id="regPassword" placeholder="Mínimo 6 caracteres" required>
+            <label class="auth-field-label" for="regPassword">SENHA <span class="auth-required">*</span></label>
+            <div class="password-input-wrap">
+              <input type="password" class="auth-input" id="regPassword" placeholder="8+ caracteres, letra, número e símbolo" minlength="8" autocomplete="new-password" required>
+              <button type="button" class="password-toggle" data-password-toggle="regPassword" aria-label="Mostrar senha">👁</button>
+            </div>
           </div>
+
+          <div class="auth-field-group">
+            <label class="auth-field-label" for="regPasswordConfirm">CONFIRMAR SENHA <span class="auth-required">*</span></label>
+            <div class="password-input-wrap">
+              <input type="password" class="auth-input" id="regPasswordConfirm" placeholder="Digite a senha novamente" minlength="8" autocomplete="new-password" required>
+              <button type="button" class="password-toggle" data-password-toggle="regPasswordConfirm" aria-label="Mostrar senha">👁</button>
+            </div>
+          </div>
+
+          <div class="auth-captcha" id="registerRecaptcha"></div>
 
           <button type="submit" class="auth-submit-btn" id="btnRegisterSubmit">Continuar</button>
         </form>
@@ -387,6 +416,7 @@
       <!-- 1. VISÃO DE SALA DE VOZ (Chamada e Transmissão 1080p) -->
       <div class="view-pane" id="voiceStageView">
         <header class="stage-header">
+          <button type="button" class="mobile-back-button" id="btnMobileBack" aria-label="Voltar para canais">☰</button>
           <div class="header-left">
             <span class="channel-header-icon">🔊</span>
             <h3 id="currentChannelTitle">VAVA</h3>
@@ -1091,10 +1121,9 @@
 
       <div class="presence-menu-item" id="menuItemSwitchAccount">
         <div class="item-left">
-          <span class="item-icon">👤</span>
-          <span>Mudar de conta</span>
+          <span class="item-icon">🚪</span>
+          <span>Sair</span>
         </div>
-        <span class="item-arrow">❯</span>
       </div>
     </div>
 
@@ -1123,7 +1152,7 @@
         <div class="status-option-left">
           <span class="status-bubble dnd"></span>
           <div class="status-text-wrap">
-            <span class="status-name">Não perturbar</span>
+            <span class="status-name">Ocupado</span>
             <span class="status-desc">Você não receberá notificação na área de trabalho</span>
           </div>
         </div>
