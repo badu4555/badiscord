@@ -7579,6 +7579,25 @@ body {
   gap: 6px;
 }
 
+.auth-download-link {
+  display: block;
+  margin-top: 18px;
+  padding: 11px 14px;
+  border: 1px solid rgba(88, 101, 242, 0.55);
+  border-radius: 6px;
+  color: #c9cdfd;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.auth-download-link:hover {
+  background: rgba(88, 101, 242, 0.16);
+  border-color: #5865f2;
+}
+
 .auth-link-primary {
   color: #00a8fc;
   cursor: pointer;

@@ -1,0 +1,56 @@
+name: Build and publish Windows desktop app
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Python for native dependencies
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME must match package version v$version."
+          }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build installer and portable package
+        run: npm run build:release
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $assets = @(Get-ChildItem -Path dist -File | Where-Object { $_.Extension -in @(".exe", ".zip") } | ForEach-Object { $_.FullName })
+          if ($assets.Count -lt 2) {
+            throw "Expected a Windows installer and portable ZIP in dist/."
+          }
+          $version = node -p "require('./package.json').version"
+          & gh release create $env:GITHUB_REF_NAME @assets --title "BADISCORD $version" --generate-notes --verify-tag
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }

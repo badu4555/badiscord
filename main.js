@@ -1,7 +1,7 @@
 if (!process.versions.electron) {
   require('./server/server');
 } else {
-const { app, BrowserWindow, ipcMain, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -191,6 +191,15 @@ function createWindow() {
     try {
       fs.writeFileSync(path.join(app.getPath('userData'), 'render-gone.log'), `Render process gone: ${JSON.stringify(details)}\n`);
     } catch (e) {}
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://github.com/badu4555/badiscord/releases/')) {
+      shell.openExternal(url).catch((error) => {
+        console.error('Não foi possível abrir a página de download:', error);
+      });
+    }
+    return { action: 'deny' };
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));

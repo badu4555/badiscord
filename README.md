@@ -30,13 +30,20 @@ No desktop, o botão de transmitir abre a lista de janelas; selecionar uma janel
 
 ---
 
-## 📦 Como Gerar o Instalador / Executável (.exe)
+## Baixar o aplicativo desktop para Windows
 
-Para criar um arquivo executável portátil (`.exe`) para distribuir para amigos:
+Baixe o instalador `.exe` ou a versão portátil `.zip` na [página de releases do BADISCORD](https://github.com/badu4555/badiscord/releases/latest). O instalador cria atalhos no Menu Iniciar e na área de trabalho. A versão portátil pode ser extraída e executada sem instalação.
+
+Os pacotes ainda não são assinados digitalmente; o Windows pode exibir um aviso do SmartScreen na primeira execução.
+
+## Gerar os pacotes para Windows
+
+Em Windows com Visual Studio Build Tools (C++ x64 e Windows SDK) e Python 3 instalados, execute:
 ```powershell
-npm run build:exe
+npm ci
+npm run build:release
 ```
-O executável `.exe` será gerado automaticamente na pasta `dist/`.
+O instalador e o ZIP portátil serão gerados na pasta `dist/`. As versões publicadas são compiladas automaticamente pelo GitHub Actions ao enviar uma tag `vX.Y.Z` que corresponda à versão no `package.json`; os dois pacotes são anexados a uma GitHub Release.
 
 ## Publicar o backend no Render
 
