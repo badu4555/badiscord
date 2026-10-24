@@ -34,6 +34,8 @@ No desktop, o botão de transmitir abre a lista de janelas; selecionar uma janel
 
 Baixe o instalador `.exe` ou a versão portátil `.zip` na [página de releases do BADISCORD](https://github.com/badu4555/badiscord/releases/latest). O instalador cria atalhos no Menu Iniciar e na área de trabalho. A versão portátil pode ser extraída e executada sem instalação.
 
+O aplicativo desktop precisa de conexão com a internet para abrir o BADISCORD e entrar na conta. Ele usa o domínio oficial HTTPS para que o login, os cookies de sessão e o reCAPTCHA funcionem corretamente.
+
 Os pacotes ainda não são assinados digitalmente; o Windows pode exibir um aviso do SmartScreen na primeira execução.
 
 ## Gerar os pacotes para Windows

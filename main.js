@@ -5,6 +5,19 @@ const { app, BrowserWindow, ipcMain, desktopCapturer, shell } = require('electro
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const APP_ORIGIN = app.isPackaged
+  ? 'https://badiscord.onrender.com'
+  : 'http://localhost:3000';
+
+function isTrustedRenderer(event) {
+  try {
+    return event.sender === mainWindow?.webContents
+      && event.senderFrame === event.sender.mainFrame
+      && new URL(event.senderFrame.url).origin === APP_ORIGIN;
+  } catch {
+    return false;
+  }
+}
 
 function ensureWritableElectronPaths() {
   const os = require('os');
@@ -202,7 +215,17 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    try {
+      if (new URL(url).origin !== APP_ORIGIN) event.preventDefault();
+    } catch {
+      event.preventDefault();
+    }
+  });
+
+  mainWindow.loadURL(`${APP_ORIGIN}/`).catch((error) => {
+    console.error('Não foi possível carregar o BADISCORD:', error);
+  });
   mainWindow.setMenuBarVisibility(false);
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -211,7 +234,8 @@ function createWindow() {
 }
 
 // Handler para listar telas e janelas disponíveis para transmissão (como no Discord)
-ipcMain.handle('get-screen-sources', async () => {
+ipcMain.handle('get-screen-sources', async (event) => {
+  if (!isTrustedRenderer(event)) throw new Error('Origem da captura de tela inválida.');
   try {
     let sources = [];
     try {
@@ -295,14 +319,14 @@ ipcMain.handle('get-screen-sources', async () => {
 });
 
 ipcMain.handle('start-process-audio-capture', async (event, sourceId) => {
-  if (!mainWindow || event.sender !== mainWindow.webContents) {
+  if (!isTrustedRenderer(event)) {
     throw new Error('Origem da captura de áudio inválida.');
   }
   return startProcessAudioCapture(sourceId);
 });
 
 ipcMain.handle('resume-process-audio-capture', (event) => {
-  if (!mainWindow || event.sender !== mainWindow.webContents || !processAudioCapture?.headerReady) {
+  if (!isTrustedRenderer(event) || !processAudioCapture?.headerReady) {
     throw new Error('A captura isolada de áudio não está pronta.');
   }
   const capture = processAudioCapture;
@@ -315,13 +339,14 @@ ipcMain.handle('resume-process-audio-capture', (event) => {
 });
 
 ipcMain.handle('stop-process-audio-capture', (event) => {
-  if (!mainWindow || event.sender !== mainWindow.webContents) return false;
+  if (!isTrustedRenderer(event)) throw new Error('Origem da captura de áudio inválida.');
   stopProcessAudioCapture();
   return true;
 });
 
 // Handler ultra-rápido e leve para detecção de jogos em tempo real (sem gerar thumbnails pesados)
-ipcMain.handle('get-detected-game', async () => {
+ipcMain.handle('get-detected-game', async (event) => {
+  if (!isTrustedRenderer(event)) throw new Error('Origem da detecção de jogos inválida.');
   try {
     const sources = await desktopCapturer.getSources({
       types: ['window'],
@@ -398,8 +423,12 @@ app.whenReady().then(() => {
   app.on('web-contents-created', (event, contents) => {
     contents.session.setPermissionRequestHandler((webContents, permission, callback) => {
       const allowedPermissions = ['media', 'camera', 'microphone', 'display-capture'];
+      let isTrustedOrigin = false;
+      try {
+        isTrustedOrigin = new URL(webContents.getURL()).origin === APP_ORIGIN;
+      } catch {}
 
-      if (allowedPermissions.includes(permission)) {
+      if (isTrustedOrigin && allowedPermissions.includes(permission)) {
         callback(true);
         return;
       }
