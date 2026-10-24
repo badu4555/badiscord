@@ -46,6 +46,38 @@ const channelMessagesCache = new Map();
 const directMessagesCache = new Map();
 let recaptchaSiteKey = '';
 const recaptchaWidgets = {};
+const USER_VOLUMES_STORAGE_KEY = 'badiscord_user_volumes';
+let userVolumes = {};
+try {
+  const savedUserVolumes = JSON.parse(localStorage.getItem(USER_VOLUMES_STORAGE_KEY) || '{}');
+  if (savedUserVolumes && typeof savedUserVolumes === 'object' && !Array.isArray(savedUserVolumes)) {
+    userVolumes = savedUserVolumes;
+  }
+} catch (error) {
+  console.warn('Não foi possível carregar os volumes individuais:', error);
+}
+
+function getUserVolume(identity) {
+  const volume = Number(userVolumes[identity]);
+  return Number.isFinite(volume) ? Math.max(0, Math.min(100, volume)) : 100;
+}
+
+function setUserVolume(identity, value) {
+  if (typeof identity !== 'string' || !identity || identity === 'self' || identity === authenticatedAccount?.id) return;
+  const volume = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+  userVolumes[identity] = volume;
+  try {
+    localStorage.setItem(USER_VOLUMES_STORAGE_KEY, JSON.stringify(userVolumes));
+  } catch (error) {
+    console.warn('Não foi possível salvar o volume individual:', error);
+  }
+
+  remoteAudioElements.forEach((element) => {
+    if (element.dataset.participantIdentity === identity && !remoteScreenAudioElements.has(element)) {
+      element.volume = volume / 100;
+    }
+  });
+}
 
 async function initializeRecaptcha() {
   try {
@@ -627,6 +659,8 @@ async function connectToLiveKitRoom(channelName) {
             audioElement.volume = streamPlayerVolume / 100;
             audioElement.muted = isDeafened || isStreamAudioMuted;
             remoteScreenAudioElements.add(audioElement);
+          } else {
+            audioElement.volume = getUserVolume(participant.identity) / 100;
           }
           document.body.appendChild(audioElement);
           remoteAudioElements.add(audioElement);
@@ -1596,6 +1630,9 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
   onlineMembers.forEach((member) => {
     const userItem = document.createElement('div');
     userItem.className = 'channel-user-item';
+    userItem.dataset.participantIdentity = member.id;
+    userItem.dataset.channelName = channelName;
+    userItem.dataset.serverId = serverId;
     userItem.id = member.id === 'self' ? 'sidebarLocalUser' : '';
     if (member.id === 'self' && isLocalSpeaking) userItem.classList.add('speaking');
 
@@ -1628,6 +1665,9 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
     if (liveIndicator) userItem.appendChild(liveIndicator);
     userItem.appendChild(micIcon);
     targetList.appendChild(userItem);
+    userItem.addEventListener('click', () => {
+      openMemberProfilePopover(member);
+    });
   });
 }
 
@@ -1643,6 +1683,7 @@ function renderVoiceParticipants() {
   onlineMembers.forEach((member) => {
     const card = document.createElement('div');
     card.className = 'participant-card';
+    card.dataset.participantIdentity = member.id;
     if (member.id === 'self') {
       card.id = 'localParticipantCard';
       if (isLocalSpeaking) card.classList.add('speaking');
@@ -1703,6 +1744,9 @@ function renderVoiceParticipants() {
     card.appendChild(tag);
     card.appendChild(micIcon);
     participantsGrid.appendChild(card);
+    card.addEventListener('click', () => {
+      openMemberProfilePopover(member);
+    });
   });
 }
 
@@ -4162,6 +4206,9 @@ const userPopoverAvatar = document.getElementById('userPopoverAvatar');
 const userPopoverName = document.getElementById('userPopoverName');
 const userPopoverTag = document.getElementById('userPopoverTag');
 const userPopoverAbout = document.getElementById('userPopoverAbout');
+const userPopoverVolume = document.getElementById('userPopoverVolume');
+const userPopoverVolumeSlider = document.getElementById('userPopoverVolumeSlider');
+const userPopoverVolumeValue = document.getElementById('userPopoverVolumeValue');
 const userPopoverActivity = document.getElementById('userPopoverActivity');
 const userActivityType = document.getElementById('userActivityType');
 const userActivityIcon = document.getElementById('userActivityIcon');
@@ -4217,7 +4264,18 @@ function openMemberProfilePopover(member) {
   }
 
   // Moderação visível apenas para outros membros (não para si mesmo)
-  const isSelf = member.isOwner || member.name.toLowerCase() === (userProfile.displayName || '').toLowerCase();
+  const isSelf = member.isOwner
+    || member.id === authenticatedAccount?.id
+    || member.name.toLowerCase() === (userProfile.displayName || '').toLowerCase();
+  if (userPopoverVolume) {
+    const canAdjustVolume = !isSelf && typeof member.id === 'string' && Boolean(member.id);
+    userPopoverVolume.style.display = canAdjustVolume ? 'block' : 'none';
+    if (canAdjustVolume && userPopoverVolumeSlider) {
+      userPopoverVolumeSlider.dataset.participantIdentity = member.id;
+      userPopoverVolumeSlider.value = String(getUserVolume(member.id));
+      if (userPopoverVolumeValue) userPopoverVolumeValue.value = `${userPopoverVolumeSlider.value}%`;
+    }
+  }
   if (userPopoverModActions) {
     userPopoverModActions.style.display = isSelf ? 'none' : 'flex';
   }
@@ -4226,6 +4284,15 @@ function openMemberProfilePopover(member) {
   userProfilePopover.style.top = '120px';
   userProfilePopover.style.right = '260px';
   userProfilePopover.style.display = 'block';
+}
+
+if (userPopoverVolumeSlider) {
+  userPopoverVolumeSlider.addEventListener('input', () => {
+    const volume = Number(userPopoverVolumeSlider.value);
+    const identity = userPopoverVolumeSlider.dataset.participantIdentity;
+    setUserVolume(identity, volume);
+    if (userPopoverVolumeValue) userPopoverVolumeValue.value = `${volume}%`;
+  });
 }
 
 if (btnCloseUserPopover) {
@@ -7415,6 +7482,21 @@ initializeFreeProfileCustomization();
       infoValue.textContent = currentChannel || 'Canal de Voz';
     }
 
+    const volumeSection = voiceUserContextMenu.querySelector('.vctx-volume-section');
+    const volumeSlider = document.getElementById('vctxVolumeSlider');
+    const volumeValue = document.getElementById('vctxVolumeValue');
+    const canAdjustVolume = !userData.isOwner
+      && userData.id !== authenticatedAccount?.id
+      && typeof userData.id === 'string'
+      && Boolean(userData.id);
+    if (volumeSection) volumeSection.style.display = canAdjustVolume ? 'block' : 'none';
+    if (canAdjustVolume && volumeSlider) {
+      volumeSlider.dataset.participantIdentity = userData.id;
+      volumeSlider.value = String(getUserVolume(userData.id));
+      if (volumeValue) volumeValue.value = `${volumeSlider.value}%`;
+      volumeSlider.dispatchEvent(new Event('input'));
+    }
+
     // Reset checkboxes
     document.querySelectorAll('.vctx-checkbox').forEach(cb => cb.classList.remove('checked'));
   }
@@ -7579,10 +7661,13 @@ initializeFreeProfileCustomization();
   const vctxVolumeSlider = document.getElementById('vctxVolumeSlider');
   if (vctxVolumeSlider) {
     vctxVolumeSlider.addEventListener('input', () => {
-      // Visual feedback - change track color
-      const val = vctxVolumeSlider.value;
-      const pct = val / 200 * 100;
-      vctxVolumeSlider.style.background = 'linear-gradient(to right, #5865F2 0%, #5865F2 ' + pct + '%, #4e5058 ' + pct + '%, #4e5058 100%)';
+      const val = Number(vctxVolumeSlider.value);
+      const pct = val;
+      const identity = vctxVolumeSlider.dataset.participantIdentity;
+      if (identity) setUserVolume(identity, val);
+      const volumeValue = document.getElementById('vctxVolumeValue');
+      if (volumeValue) volumeValue.value = `${val}%`;
+      vctxVolumeSlider.style.background = `linear-gradient(to right, #5865F2 0%, #5865F2 ${pct}%, #4e5058 ${pct}%, #4e5058 100%)`;
     });
     // Initialize track color
     vctxVolumeSlider.dispatchEvent(new Event('input'));
@@ -7596,15 +7681,8 @@ initializeFreeProfileCustomization();
     e.preventDefault();
     const card = e.target.closest('.participant-card');
     if (!card) return;
-    openVoiceUserContextMenu(e.clientX, e.clientY, {
-      name: userProfile.displayName || 'Bads',
-      tag: userProfile.tag || '0001',
-      fullTag: (userProfile.displayName || 'Bads') + '#' + (userProfile.tag || '0001'),
-      avatarUrl: userProfile.avatarUrl,
-      bannerColor: userProfile.bannerColor || '#5865F2',
-      game: typeof detectedGame !== 'undefined' && detectedGame ? detectedGame.name : '',
-      isOwner: true
-    });
+    const member = getVoiceChannelParticipants().find((participant) => participant.id === card.dataset.participantIdentity);
+    if (member) openVoiceUserContextMenu(e.clientX, e.clientY, member);
   });
 
   // Add right-click to sidebar channel user items
@@ -7612,15 +7690,9 @@ initializeFreeProfileCustomization();
     const channelUser = e.target.closest('.channel-user-item');
     if (!channelUser) return;
     e.preventDefault();
-    openVoiceUserContextMenu(e.clientX, e.clientY, {
-      name: userProfile.displayName || 'Bads',
-      tag: userProfile.tag || '0001',
-      fullTag: (userProfile.displayName || 'Bads') + '#' + (userProfile.tag || '0001'),
-      avatarUrl: userProfile.avatarUrl,
-      bannerColor: userProfile.bannerColor || '#5865F2',
-      game: typeof detectedGame !== 'undefined' && detectedGame ? detectedGame.name : '',
-      isOwner: true
-    });
+    const members = getVoiceChannelParticipants(channelUser.dataset.channelName, channelUser.dataset.serverId);
+    const member = members.find((participant) => participant.id === channelUser.dataset.participantIdentity);
+    if (member) openVoiceUserContextMenu(e.clientX, e.clientY, member);
   });
 
   // Add right-click to member-items in the members sidebar
@@ -7639,6 +7711,7 @@ initializeFreeProfileCustomization();
 
     openVoiceUserContextMenu(e.clientX, e.clientY, {
       name: memberName,
+      id: isMe ? 'self' : (friendData?.id || memberItem.dataset.participantIdentity || ''),
       tag: friendData ? friendData.tag : (isMe ? userProfile.tag : '0000'),
       fullTag: memberName + '#' + (friendData ? friendData.tag : (isMe ? userProfile.tag : '0000')),
       avatarUrl: isMe ? userProfile.avatarUrl : null,

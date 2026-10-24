@@ -5447,6 +5447,35 @@ body {
   border-radius: 6px;
 }
 
+.user-popover-volume {
+  background: #1e1f22;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.user-popover-volume label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: #b5bac1;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.user-popover-volume output,
+.vctx-volume-slider-wrap output {
+  min-width: 38px;
+  color: #dbdee1;
+  text-align: right;
+  font-size: 12px;
+}
+
+.user-popover-volume input {
+  width: 100%;
+  accent-color: #5865f2;
+  cursor: pointer;
+}
+
 /* Bloco de Atividade (Jogando / Ouvindo) */
 .user-popover-activity {
   background: #1e1f22;
@@ -6684,10 +6713,13 @@ body {
 .vctx-volume-slider-wrap {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .vctx-volume-slider {
+  flex: 1;
   width: 100%;
+  min-width: 0;
   height: 6px;
   -webkit-appearance: none;
   appearance: none;

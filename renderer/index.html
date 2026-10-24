@@ -913,6 +913,14 @@
 
       <div class="user-popover-about" id="userPopoverAbout">Usando o BADISCORD!</div>
 
+      <div class="user-popover-volume" id="userPopoverVolume" style="display: none;">
+        <label for="userPopoverVolumeSlider">
+          <span>Volume do usuário</span>
+          <output id="userPopoverVolumeValue" for="userPopoverVolumeSlider">100%</output>
+        </label>
+        <input type="range" id="userPopoverVolumeSlider" min="0" max="100" value="100">
+      </div>
+
       <!-- Caixa de Atividade (Jogando / Ouvindo Música - Foto 1) -->
       <div class="user-popover-activity" id="userPopoverActivity">
         <div class="activity-top-header">
@@ -1233,7 +1241,8 @@
     <div class="vctx-volume-section">
       <div class="vctx-volume-label">Volume do usuário</div>
       <div class="vctx-volume-slider-wrap">
-        <input type="range" id="vctxVolumeSlider" class="vctx-volume-slider" min="0" max="200" value="100">
+        <input type="range" id="vctxVolumeSlider" class="vctx-volume-slider" min="0" max="100" value="100">
+        <output id="vctxVolumeValue" for="vctxVolumeSlider">100%</output>
       </div>
     </div>
 

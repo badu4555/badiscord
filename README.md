@@ -6,6 +6,7 @@ Aplicativo para Windows desenvolvido com a mesma arquitetura do **Discord Deskto
 - **Transmissão de tela em 720p, 1080p e 2K (1440p)** com seleção de FPS.
 - **Áudio isolado da janela selecionada** no aplicativo desktop Windows, sem incluir o áudio dos demais aplicativos.
 - **Lista de participantes por canal de voz**, atualizada sem precisar entrar no canal.
+- **Controle de volume individual** dos participantes, salvo no dispositivo.
 - Interface escura clássica no padrão Discord.
 
 ---
