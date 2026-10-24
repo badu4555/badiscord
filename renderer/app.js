@@ -424,6 +424,8 @@ let livekitScreenTrack = null;
 let livekitScreenAudioTrack = null;
 let livekitConnectionInFlight = false;
 const remoteAudioElements = new Set();
+let remoteAudioPlaybackNeedsGesture = false;
+let remoteAudioPlaybackWarningShown = false;
 const remoteScreenTracks = new Map();
 const remoteCameraTracks = new Map();
 const remoteScreenAudioElements = new Set();
@@ -501,6 +503,36 @@ function clearRemoteAudioElements(participantIdentity = '') {
     remoteScreenAudioElements.delete(element);
   });
 }
+
+function playRemoteAudioElement(element) {
+  if (!element || element.muted || isDeafened) return;
+  element.play().then(() => {
+    remoteAudioPlaybackNeedsGesture = false;
+  }).catch((error) => {
+    if (error.name === 'NotAllowedError') {
+      remoteAudioPlaybackNeedsGesture = true;
+      if (!remoteAudioPlaybackWarningShown) {
+        showToast('O navegador bloqueou o áudio automático. Clique na página para liberar o som.', '🔊');
+        remoteAudioPlaybackWarningShown = true;
+      }
+      return;
+    }
+    console.warn('Não foi possível reproduzir o áudio recebido:', error);
+  });
+}
+
+async function resumeRemoteAudioPlayback() {
+  if (!remoteAudioPlaybackNeedsGesture || isDeafened) return;
+  try {
+    await livekitRoom?.startAudio();
+  } catch (error) {
+    console.warn('Não foi possível ativar o áudio da sala:', error);
+  }
+  remoteAudioElements.forEach(playRemoteAudioElement);
+}
+
+document.addEventListener('pointerdown', resumeRemoteAudioPlayback);
+document.addEventListener('keydown', resumeRemoteAudioPlayback);
 
 async function connectToLiveKitRoom(channelName) {
   if (!hasAuthenticatedSession()) {
@@ -588,14 +620,17 @@ async function connectToLiveKitRoom(channelName) {
         if (track.kind === 'audio') {
           const audioElement = track.attach();
           audioElement.autoplay = true;
+          audioElement.playsInline = true;
           audioElement.dataset.participantIdentity = participant.identity;
+          audioElement.muted = isDeafened;
           if (publication.source === window.LivekitClient.Track.Source.ScreenShareAudio) {
             audioElement.volume = streamPlayerVolume / 100;
-            audioElement.muted = isStreamAudioMuted;
+            audioElement.muted = isDeafened || isStreamAudioMuted;
             remoteScreenAudioElements.add(audioElement);
           }
           document.body.appendChild(audioElement);
           remoteAudioElements.add(audioElement);
+          playRemoteAudioElement(audioElement);
         } else if (publication.source === window.LivekitClient.Track.Source.ScreenShare) {
           remoteScreenTracks.set(participant.identity, {
             track,
@@ -5898,13 +5933,10 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     let stream;
     let captureProcessAudio = false;
     if (sourceId === '__browser_display__') {
-      if (includeAudio) {
-        showToast('Áudio exclusivo do jogo só está disponível no aplicativo desktop Windows. Esta transmissão será somente vídeo.', '⚠️');
-      }
       const width = targetRes === 1440 ? 2560 : (targetRes === 1080 ? 1920 : 1280);
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: { width: { ideal: width }, height: { ideal: targetRes }, frameRate: { ideal: targetFps, max: targetFps } },
-        audio: false
+        audio: includeAudio
       });
     } else {
       const isWindowSource = sourceId.startsWith('window:');
@@ -5930,7 +5962,12 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
 
     localScreenTrack = stream.getVideoTracks()[0];
     if (!localScreenTrack) throw new Error('O navegador não retornou uma faixa de vídeo para compartilhar.');
-    if (sourceId === '__browser_display__' || !window.electronAPI) {
+    if (sourceId === '__browser_display__') {
+      localScreenAudioTrack = includeAudio ? (stream.getAudioTracks()[0] || null) : null;
+      if (includeAudio && !localScreenAudioTrack) {
+        showToast('O navegador ou a fonte selecionada não forneceu áudio. Tente compartilhar uma aba ou habilitar o áudio do sistema na janela de compartilhamento.', '⚠️');
+      }
+    } else if (!window.electronAPI) {
       localScreenAudioTrack = null;
     } else if (captureProcessAudio) {
       try {
