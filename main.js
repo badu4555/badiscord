@@ -4,6 +4,7 @@ if (!process.versions.electron) {
 const { app, BrowserWindow, ipcMain, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
 
 function ensureWritableElectronPaths() {
   const os = require('os');
@@ -38,6 +39,131 @@ process.on('uncaughtException', (err) => {
 });
 
 let mainWindow;
+let processAudioCapture = null;
+
+function relayProcessAudioPcm(capture, data) {
+  const combined = capture.unalignedPcm.length
+    ? Buffer.concat([capture.unalignedPcm, data])
+    : data;
+  const alignedLength = combined.length - (combined.length % 8);
+  if (alignedLength && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('process-audio-chunk', Uint8Array.from(combined.subarray(0, alignedLength)));
+  }
+  capture.unalignedPcm = Buffer.from(combined.subarray(alignedLength));
+}
+
+function stopProcessAudioCapture() {
+  const capture = processAudioCapture;
+  processAudioCapture = null;
+  if (!capture) return;
+  clearTimeout(capture.startTimeout);
+  capture.child.stdout.removeAllListeners('data');
+  if (!capture.child.killed) capture.child.kill();
+}
+
+async function startProcessAudioCapture(sourceId) {
+  if (process.platform !== 'win32') {
+    throw new Error('A captura isolada de áudio está disponível somente no aplicativo desktop para Windows.');
+  }
+  const windowSource = /^window:(\d+):[01]$/.exec(String(sourceId || ''));
+  if (!windowSource) {
+    throw new Error('Selecione uma janela de aplicativo para capturar o áudio exclusivo do jogo.');
+  }
+
+  const currentSources = await desktopCapturer.getSources({
+    types: ['window'],
+    thumbnailSize: { width: 0, height: 0 }
+  });
+  if (!currentSources.some((source) => source.id === sourceId)) {
+    throw new Error('A janela selecionada não está mais disponível. Atualize a lista e tente novamente.');
+  }
+
+  stopProcessAudioCapture();
+  const helperPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'process-audio-capture.exe')
+    : path.join(__dirname, 'native', 'process-audio-capture.exe');
+  if (!fs.existsSync(helperPath)) {
+    throw new Error('O módulo nativo de áudio não foi compilado. Execute npm run build:native-audio e tente novamente.');
+  }
+
+  const capture = {
+    child: spawn(helperPath, [windowSource[1]], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }),
+    headerReady: false,
+    pendingOutput: Buffer.alloc(0),
+    unalignedPcm: Buffer.alloc(0),
+    errorOutput: '',
+    startTimeout: null,
+    startSettled: false
+  };
+  processAudioCapture = capture;
+
+  return new Promise((resolve, reject) => {
+    const failStart = (error) => {
+      if (capture.startSettled) return;
+      capture.startSettled = true;
+      clearTimeout(capture.startTimeout);
+      if (processAudioCapture === capture) processAudioCapture = null;
+      if (!capture.child.killed) capture.child.kill();
+      reject(error);
+    };
+
+    capture.startTimeout = setTimeout(() => {
+      failStart(new Error('A captura isolada de áudio demorou demais para iniciar.'));
+    }, 15000);
+
+    capture.child.stderr.on('data', (chunk) => {
+      capture.errorOutput = (capture.errorOutput + chunk.toString()).slice(-2000);
+    });
+    capture.child.stdout.on('data', (chunk) => {
+      if (!capture.headerReady) {
+        capture.pendingOutput = Buffer.concat([capture.pendingOutput, chunk]);
+        if (capture.pendingOutput.length < 16) return;
+        const header = capture.pendingOutput.subarray(0, 16);
+        if (header.subarray(0, 8).toString('binary') !== 'BDSPCM1\0') {
+          failStart(new Error('O módulo nativo retornou um formato de áudio inválido.'));
+          return;
+        }
+        const sampleRate = header.readUInt32LE(8);
+        const channels = header.readUInt32LE(12);
+        if (sampleRate < 8000 || sampleRate > 192000 || channels !== 2) {
+          failStart(new Error('O módulo nativo retornou uma configuração de áudio incompatível.'));
+          return;
+        }
+        capture.headerReady = true;
+        capture.sampleRate = sampleRate;
+        capture.pendingOutput = capture.pendingOutput.subarray(16);
+        capture.child.stdout.pause();
+        capture.startSettled = true;
+        clearTimeout(capture.startTimeout);
+        resolve({ sampleRate, channels });
+        return;
+      }
+      relayProcessAudioPcm(capture, chunk);
+    });
+    capture.child.on('error', (error) => {
+      if (!capture.headerReady) {
+        failStart(new Error(`Não foi possível iniciar a captura isolada de áudio: ${error.message}`));
+        return;
+      }
+      if (processAudioCapture === capture) processAudioCapture = null;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('process-audio-error', error.message);
+      }
+    });
+    capture.child.on('close', (code) => {
+      if (!capture.headerReady) {
+        failStart(new Error(capture.errorOutput.trim() || `A captura de áudio encerrou antes de iniciar (${code}).`));
+        return;
+      }
+      if (processAudioCapture === capture) {
+        processAudioCapture = null;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('process-audio-error', capture.errorOutput.trim() || 'A captura isolada de áudio foi interrompida.');
+        }
+      }
+    });
+  });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -69,6 +195,10 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   mainWindow.setMenuBarVisibility(false);
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    stopProcessAudioCapture();
+  });
 }
 
 // Handler para listar telas e janelas disponíveis para transmissão (como no Discord)
@@ -155,6 +285,32 @@ ipcMain.handle('get-screen-sources', async () => {
   }
 });
 
+ipcMain.handle('start-process-audio-capture', async (event, sourceId) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('Origem da captura de áudio inválida.');
+  }
+  return startProcessAudioCapture(sourceId);
+});
+
+ipcMain.handle('resume-process-audio-capture', (event) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents || !processAudioCapture?.headerReady) {
+    throw new Error('A captura isolada de áudio não está pronta.');
+  }
+  const capture = processAudioCapture;
+  if (capture.pendingOutput.length) {
+    relayProcessAudioPcm(capture, capture.pendingOutput);
+    capture.pendingOutput = Buffer.alloc(0);
+  }
+  capture.child.stdout.resume();
+  return true;
+});
+
+ipcMain.handle('stop-process-audio-capture', (event) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return false;
+  stopProcessAudioCapture();
+  return true;
+});
+
 // Handler ultra-rápido e leve para detecção de jogos em tempo real (sem gerar thumbnails pesados)
 ipcMain.handle('get-detected-game', async () => {
   try {
@@ -238,11 +394,11 @@ app.whenReady().then(() => {
         callback(true);
         return;
       }
-
       callback(false);
     });
   });
 
+  app.on('before-quit', stopProcessAudioCapture);
   createWindow();
 
   app.on('activate', () => {

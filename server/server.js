@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const { promisify } = require('util');
 const cors = require('cors');
 const Database = require('better-sqlite3');
-const { AccessToken } = require('livekit-server-sdk');
+const { AccessToken, RoomServiceClient } = require('livekit-server-sdk');
 
 const app = express();
 const scryptAsync = promisify(crypto.scrypt);
@@ -79,6 +79,9 @@ const isLiveKitConfigured = Boolean(
 const LIVEKIT_API_KEY = isLiveKitConfigured ? livekitApiKey : DEV_LIVEKIT_KEY;
 const LIVEKIT_API_SECRET = isLiveKitConfigured ? livekitApiSecret : DEV_LIVEKIT_SECRET;
 const LIVEKIT_WS_URL = isLiveKitConfigured ? livekitWsUrl : (hasPlaceholderLiveKitUrl(livekitWsUrl) ? REAL_LIVEKIT_WS_URL : (livekitWsUrl || REAL_LIVEKIT_WS_URL));
+const livekitRoomService = isLiveKitConfigured
+  ? new RoomServiceClient(LIVEKIT_WS_URL.replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:'), LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+  : null;
 const REMOTE_BACKEND_URL = process.env.REMOTE_BACKEND_URL || 'https://badiscord.onrender.com';
 const PUBLIC_APP_URL = normalize(process.env.PUBLIC_APP_URL).replace(/\/+$/, '');
 const PORT = Number(process.env.PORT || 3000);
@@ -713,6 +716,51 @@ function ensurePersonalServer(user) {
 
 app.get('/api/servers', requireAuth, (req, res) => {
   return res.json({ servers: listAccessibleServers(req.user.id) });
+});
+
+app.get('/api/servers/:serverId/voice-participants', requireAuth, async (req, res) => {
+  const serverId = normalize(req.params.serverId);
+  if (!SERVER_ID_POLICY.test(serverId)) {
+    return res.status(400).json({ error: 'Servidor inválido.' });
+  }
+  const server = db.prepare(`SELECT servers.voice_channels_json FROM servers
+    JOIN server_members ON server_members.server_id = servers.id
+    WHERE servers.id = ? AND server_members.user_id = ?`).get(serverId, req.user.id);
+  if (!server) return res.status(403).json({ error: 'Você não tem acesso a este servidor.' });
+  if (!isLiveKitConfigured || !livekitRoomService) {
+    return res.status(503).json({ error: 'A consulta de canais de voz não está configurada no servidor.' });
+  }
+
+  const voiceChannels = parseJsonValue(server.voice_channels_json, []);
+  const channels = Array.isArray(voiceChannels)
+    ? voiceChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean)
+    : [];
+  const roomNames = channels.map((channel) => (
+    `badiscord-${liveKitRoomSlug(serverId, 48)}-${liveKitRoomSlug(channel, 64)}`
+  ));
+
+  try {
+    const rooms = roomNames.length ? await livekitRoomService.listRooms(roomNames) : [];
+    const channelEntries = await Promise.all(rooms.map(async (room) => {
+      const participants = await livekitRoomService.listParticipants(room.name);
+      return [
+        room.name,
+        participants.map((participant) => ({
+          id: participant.identity,
+          name: participant.name || 'Usuário'
+        }))
+      ];
+    }));
+    const channelsByRoom = new Map(channelEntries);
+    const participantsByChannel = Object.fromEntries(channels.map((channel, index) => [
+      channel,
+      channelsByRoom.get(roomNames[index]) || []
+    ]));
+    return res.json({ channels: participantsByChannel });
+  } catch (error) {
+    console.error('Erro ao consultar participantes dos canais de voz:', error);
+    return res.status(502).json({ error: 'Não foi possível consultar os participantes dos canais de voz.' });
+  }
 });
 
 app.get('/api/servers/:serverId/channels/:channelName/messages', requireAuth, (req, res) => {

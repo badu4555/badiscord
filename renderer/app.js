@@ -363,6 +363,7 @@ async function finalizeAuthSession(account) {
   await loadFriendsFromServer();
   startFriendRequestPolling();
   if (await syncLocalServersWithBackend(account.homeServerId || '', true)) {
+    startVoiceRosterPolling();
     await loadServerInvites();
     restoreServerView(activeServerId);
     await loadCustomSoundboard();
@@ -380,6 +381,9 @@ function logoutAccount() {
   friendsPollingTimer = null;
   clearInterval(presenceHeartbeatTimer);
   presenceHeartbeatTimer = null;
+  clearInterval(voiceRosterPollingTimer);
+  voiceRosterPollingTimer = null;
+  serverVoiceRosters.clear();
   incomingFriendRequestIds = null;
   clearInterval(channelMessagesPollingTimer);
   channelMessagesPollingTimer = null;
@@ -403,6 +407,9 @@ async function ensureAuthState() {
     authenticatedAccount = null;
     clearInterval(friendsPollingTimer);
     friendsPollingTimer = null;
+    clearInterval(voiceRosterPollingTimer);
+    voiceRosterPollingTimer = null;
+    serverVoiceRosters.clear();
     incomingFriendRequestIds = null;
     clearCurrentSession();
     showAuthOverlay();
@@ -421,6 +428,9 @@ const remoteScreenTracks = new Map();
 const remoteCameraTracks = new Map();
 const remoteScreenAudioElements = new Set();
 let watchingLiveParticipantId = '';
+let currentVoiceRttMs = null;
+let pingMeasurementInProgress = false;
+const voiceRttByIdentity = new Map();
 
 function getStoredLiveKitUrl() {
   try {
@@ -518,7 +528,12 @@ async function connectToLiveKitRoom(channelName) {
 
       livekitRoom.on(window.LivekitClient.RoomEvent.ConnectionStateChanged, (state) => {
         console.log('LiveKit connection state:', state);
-        if (state === 'disconnected') clearRemoteAudioElements();
+        if (state === 'disconnected') {
+          clearRemoteAudioElements();
+          currentVoiceRttMs = null;
+          voiceRttByIdentity.clear();
+          updatePingUI(null);
+        }
         refreshVoiceParticipantViews();
       });
 
@@ -532,8 +547,30 @@ async function connectToLiveKitRoom(channelName) {
         clearRemoteAudioElements(participant.identity);
         remoteScreenTracks.delete(participant.identity);
         remoteCameraTracks.delete(participant.identity);
+        voiceRttByIdentity.delete(participant.identity);
         if (watchingLiveParticipantId === participant.identity) stopWatchingLive();
         refreshVoiceParticipantViews();
+      });
+
+      livekitRoom.on(window.LivekitClient.RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+        if (topic !== 'badiscord-voice-rtt' || !participant) return;
+        try {
+          const report = JSON.parse(new TextDecoder().decode(payload));
+          const sentAt = Number(report.sentAt);
+          const rttMs = Number(report.rttMs);
+          if (
+            report.type !== 'badiscord-voice-rtt' ||
+            !Number.isFinite(sentAt) ||
+            Math.abs(Date.now() - sentAt) > 15000 ||
+            !Number.isFinite(rttMs) ||
+            rttMs < 0 ||
+            rttMs > 10000
+          ) return;
+          voiceRttByIdentity.set(participant.identity, { rttMs, receivedAt: Date.now() });
+          updateParticipantRttBadge(participant.identity, rttMs);
+        } catch (error) {
+          console.warn('Não foi possível interpretar a medição de latência recebida:', error);
+        }
       });
 
       livekitRoom.on(window.LivekitClient.RoomEvent.TrackPublished, refreshVoiceParticipantViews);
@@ -699,6 +736,9 @@ try {
 }
 let activeServerId = servers[0]?.id || '';
 let serverSyncTimeout = null;
+const serverVoiceRosters = new Map();
+let voiceRosterPollingTimer = null;
+let voiceRosterRequestInProgress = false;
 
 function saveServers() {
   try {
@@ -1065,6 +1105,9 @@ function selectServer(serverId) {
     if (guildTitle) guildTitle.textContent = srv.name;
     if (guildBadge) guildBadge.textContent = srv.icon || '🍺';
     renderChannels(srv);
+    if (authenticatedAccount) refreshServerVoiceRoster(serverId).catch((error) => {
+      console.warn('Não foi possível atualizar os participantes dos canais de voz:', error);
+    });
   }
   if (authenticatedAccount) loadCustomSoundboard();
 }
@@ -1149,10 +1192,46 @@ function renderChannels(server) {
     });
   });
 
-  if (currentChannel) {
-    updateSidebarChannelUsers(currentChannel);
-  }
+  (server.voiceChannels || []).forEach((channelName) => updateSidebarChannelUsers(channelName));
   applyProfileCustomization();
+}
+
+async function refreshServerVoiceRoster(serverId = activeServerId) {
+  if (!authenticatedAccount || !serverId || voiceRosterRequestInProgress) return;
+  voiceRosterRequestInProgress = true;
+  try {
+    const response = await fetch(`/api/servers/${encodeURIComponent(serverId)}/voice-participants`, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível consultar os canais de voz.');
+    if (serverId !== activeServerId) return;
+
+    const rosters = new Map();
+    Object.entries(payload.channels || {}).forEach(([channelName, participants]) => {
+      rosters.set(channelName, Array.isArray(participants) ? participants : []);
+    });
+    serverVoiceRosters.set(serverId, rosters);
+    const server = servers.find((item) => item.id === serverId);
+    (server?.voiceChannels || []).forEach((channelName) => updateSidebarChannelUsers(channelName, serverId));
+  } finally {
+    voiceRosterRequestInProgress = false;
+  }
+}
+
+function startVoiceRosterPolling() {
+  clearInterval(voiceRosterPollingTimer);
+  voiceRosterPollingTimer = null;
+  if (!authenticatedAccount) return;
+  refreshServerVoiceRoster().catch((error) => {
+    console.warn('Não foi possível carregar os participantes dos canais de voz:', error);
+  });
+  voiceRosterPollingTimer = setInterval(() => {
+    refreshServerVoiceRoster().catch((error) => {
+      console.warn('Não foi possível atualizar os participantes dos canais de voz:', error);
+    });
+  }, 5000);
 }
 
 function closeVoiceChannelSettingsMenu() {
@@ -1294,15 +1373,49 @@ function getServerOnlineProfiles() {
   });
 }
 
-function getVoiceChannelParticipants() {
-  if (!hasAuthenticatedSession() || !currentChannel) return [];
+function getVoiceChannelParticipants(channelName = currentChannel, serverId = activeServerId) {
+  if (!hasAuthenticatedSession() || !channelName) return [];
 
-  const roomName = getLiveKitRoomName(currentChannel);
+  const roomName = getLiveKitRoomName(channelName, serverId);
   const isCurrentVoiceRoom = Boolean(
     livekitRoom &&
     livekitRoom.state === 'connected' &&
     livekitRoom.name === roomName
   );
+  const profilesById = new Map();
+  getStoredPresenceMembers().forEach((member) => {
+    const id = member?.id ? String(member.id) : '';
+    if (id) profilesById.set(id, member);
+  });
+  (Array.isArray(friendsList) ? friendsList : []).forEach((friend) => {
+    const id = friend?.id ? String(friend.id) : '';
+    if (id && !profilesById.has(id)) profilesById.set(id, friend);
+  });
+
+  if (!isCurrentVoiceRoom) {
+    return (serverVoiceRosters.get(serverId)?.get(channelName) || []).map((participant) => {
+      const profile = profilesById.get(participant.id) || {};
+      const name = participant.name || profile.name || participant.id || 'Usuário';
+      return {
+        id: participant.id,
+        name,
+        tag: profile.tag || '0001',
+        fullTag: profile.fullTag || `${name}#${profile.tag || '0001'}`,
+        initial: profile.initial || name[0].toUpperCase(),
+        color: profile.color || '#5865F2',
+        avatarUrl: profile.avatarUrl || '',
+        game: profile.game || '',
+        detail: profile.detail || 'Disponível',
+        status: 'online',
+        isOwner: false,
+        isSpeaking: false,
+        isStreaming: false,
+        pingMs: null,
+        viewerCount: 0
+      };
+    });
+  }
+
   const localMember = {
     id: 'self',
     name: userProfile.displayName || 'Bads',
@@ -1317,22 +1430,9 @@ function getVoiceChannelParticipants() {
     isOwner: true,
     isSpeaking: isLocalSpeaking,
     isStreaming: isLocalStreamer,
+    pingMs: currentVoiceRttMs,
     viewerCount: isLocalStreamer && isCurrentVoiceRoom ? livekitRoom.remoteParticipants.size : 0
   };
-
-  if (!isCurrentVoiceRoom) {
-    return [localMember];
-  }
-
-  const profilesById = new Map();
-  getStoredPresenceMembers().forEach((member) => {
-    const id = member?.id ? String(member.id) : '';
-    if (id) profilesById.set(id, member);
-  });
-  (Array.isArray(friendsList) ? friendsList : []).forEach((friend) => {
-    const id = friend?.id ? String(friend.id) : '';
-    if (id && !profilesById.has(id)) profilesById.set(id, friend);
-  });
 
   const participants = [livekitRoom.localParticipant, ...livekitRoom.remoteParticipants.values()];
   return participants.filter(Boolean).map((participant) => {
@@ -1343,6 +1443,7 @@ function getVoiceChannelParticipants() {
     const isStreaming = Array.from(participant.videoTrackPublications.values()).some((publication) => (
       publication.source === window.LivekitClient.Track.Source.ScreenShare
     )) || remoteScreenTracks.has(participant.identity);
+    const pingReport = voiceRttByIdentity.get(participant.identity);
     return {
       id: participant.identity,
       name,
@@ -1358,6 +1459,7 @@ function getVoiceChannelParticipants() {
       isSpeaking: Boolean(participant.isSpeaking),
       isMuted: participant.isMicrophoneEnabled === false,
       isStreaming,
+      pingMs: pingReport && Date.now() - pingReport.receivedAt < 15000 ? pingReport.rttMs : null,
       viewerCount: isStreaming ? livekitRoom.remoteParticipants.size : 0
     };
   });
@@ -1448,17 +1550,14 @@ function refreshVoiceParticipantViews() {
   renderVoiceParticipants();
 }
 
-function updateSidebarChannelUsers(channelName) {
-  document.querySelectorAll('.channel-users-list').forEach(list => {
-    list.innerHTML = '';
-  });
-
+function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
   if (!channelName) return;
 
   const targetList = document.getElementById(`users-${channelName}`);
   if (!targetList) return;
+  targetList.innerHTML = '';
 
-  const onlineMembers = getVoiceChannelParticipants();
+  const onlineMembers = getVoiceChannelParticipants(channelName, serverId);
   onlineMembers.forEach((member) => {
     const userItem = document.createElement('div');
     userItem.className = 'channel-user-item';
@@ -1477,16 +1576,19 @@ function updateSidebarChannelUsers(channelName) {
     const name = document.createElement('span');
     name.className = 'channel-user-name';
     name.textContent = member.name;
+    const isCurrentVoiceRoom = livekitRoom?.state === 'connected' &&
+      livekitRoom.name === getLiveKitRoomName(channelName, serverId);
 
     const micIcon = document.createElement('span');
     micIcon.className = 'channel-user-mic';
     micIcon.id = member.id === 'self' ? 'sidebarUserMic' : '';
     micIcon.textContent = member.id === 'self'
       ? (isDeafened ? '🔇 🚫🎧' : (isMuted ? '🔇' : '🎤'))
-      : (member.isMuted ? '🔇' : (member.game ? '🎮' : '🔊'));
+      : (member.isMuted === true ? '🔇' : (member.isMuted === false ? (member.game ? '🎮' : '🔊') : ''));
 
     userItem.appendChild(avatar);
     userItem.appendChild(name);
+    if (isCurrentVoiceRoom) userItem.appendChild(createParticipantRttBadge(member));
     const liveIndicator = renderLiveIndicator(member);
     if (liveIndicator) userItem.appendChild(liveIndicator);
     userItem.appendChild(micIcon);
@@ -1544,6 +1646,7 @@ function renderVoiceParticipants() {
     const nameSpan = document.createElement('span');
     nameSpan.textContent = member.name;
     tag.appendChild(nameSpan);
+    tag.appendChild(createParticipantRttBadge(member));
     const liveIndicator = renderLiveIndicator(member);
     if (liveIndicator) tag.appendChild(liveIndicator);
 
@@ -1628,24 +1731,6 @@ function closeVoiceSwitchConfirmation() {
   if (voiceSwitchModal) voiceSwitchModal.style.display = 'none';
   pendingVoiceSwitchTarget = null;
   resolveVoiceSwitchPrompt = null;
-}
-
-function startPingMonitor() {
-  if (!vcPingValue || !pingDot) return;
-
-  const updatePing = () => {
-    const ping = Math.max(18, Math.min(110, 18 + Math.round(Math.random() * 72)));
-    vcPingValue.textContent = `${ping} ms`;
-    vcPingValue.style.color = ping < 50 ? '#57f287' : ping < 80 ? '#fbbf24' : '#ed4245';
-    if (pingDot) {
-      pingDot.style.backgroundColor = ping < 50 ? '#57f287' : ping < 80 ? '#fbbf24' : '#ed4245';
-    }
-  };
-
-  updatePing();
-  if (!window.__badiscordPingInterval) {
-    window.__badiscordPingInterval = setInterval(updatePing, 5000);
-  }
 }
 
 async function disconnectVoice(showToastMessage = true) {
@@ -1733,6 +1818,7 @@ async function joinVoiceChannel(channelName) {
   try {
     const room = await connectToLiveKitRoom(channelName);
     if (!room || room.state !== 'connected') throw new Error('Não foi possível conectar ao canal de voz.');
+    await measurePing();
     const microphoneTrack = await publishMicToLiveKit();
     if (!microphoneTrack?.mediaStreamTrack) throw new Error('Não foi possível ativar o microfone.');
     localAudioTrack = microphoneTrack.mediaStreamTrack;
@@ -2948,7 +3034,7 @@ if (btnStageMic) {
 }
 
 // ==========================================
-// DETECÇÃO DE JOGOS EM TEMPO REAL & 1-CLICK STREAM
+// DETECÇÃO DE JOGOS EM TEMPO REAL
 // ==========================================
 let detectedGame = null;
 
@@ -2966,7 +3052,10 @@ async function checkRunningGame() {
 
     if (localScreenTrack) {
       if (panel) panel.classList.add('is-live');
-      if (statusEl) statusEl.textContent = 'AO VIVO em 1080p 60FPS';
+      const configuredResolution = localStorage.getItem('badiscord_stream_res') || '1080';
+      const resolutionLabel = configuredResolution === '1440' ? '2K (1440p)' : `${configuredResolution}p`;
+      const configuredFps = localStorage.getItem('badiscord_stream_fps') || '60';
+      if (statusEl) statusEl.textContent = `AO VIVO em ${resolutionLabel} ${configuredFps}FPS`;
       if (btnQuick) {
         btnQuick.innerHTML = '⏹️';
         btnQuick.title = 'Parar Transmissão';
@@ -2981,7 +3070,8 @@ async function checkRunningGame() {
       if (statusEl) statusEl.textContent = game.isGame ? 'Detectado • Pronto para transmitir' : 'Não Compartilhando';
       if (btnQuick) {
         btnQuick.innerHTML = '🖥️';
-        btnQuick.title = `Transmitir ${game.name} em 1080p 60FPS`;
+        const configuredResolution = localStorage.getItem('badiscord_stream_res') || '1080';
+        btnQuick.title = `Selecionar ${game.name} para transmitir em ${configuredResolution === '1440' ? '2K' : `${configuredResolution}p`}`;
       }
       if (iconBox) {
         if (game.appIcon) {
@@ -3015,6 +3105,11 @@ if (btnGameQuickStream) {
       return;
     }
 
+    const savedRes = localStorage.getItem('badiscord_stream_res') || '1080';
+    const savedFps = localStorage.getItem('badiscord_stream_fps') || '60';
+    if (selectResolution) selectResolution.value = savedRes;
+    if (selectFps) selectFps.value = savedFps;
+
     if (!window.electronAPI) {
       if (!navigator.mediaDevices?.getDisplayMedia) {
         showToast('Este navegador não permite compartilhar a tela. Você ainda pode assistir às lives.', '⚠️');
@@ -3024,21 +3119,14 @@ if (btnGameQuickStream) {
       return;
     }
 
-    // Se houver um jogo detectado aberto agora, inicia a live direta daquele jogo!
-    if (detectedGame && detectedGame.id) {
-      showToast(`Iniciando transmissão de ${detectedGame.name}...`, '🎮');
-      await startStreamWithSourceId(detectedGame.id, detectedGame.name);
-    } else {
-      // Caso contrário, abre o modal de seleção
-      currentCaptureTab = 'windows';
-      if (tabWindows) tabWindows.classList.add('active');
-      if (tabScreens) tabScreens.classList.remove('active');
-      if (inputSearchSources) inputSearchSources.value = '';
-      sourceSearchQuery = '';
+    currentCaptureTab = 'windows';
+    if (tabWindows) tabWindows.classList.add('active');
+    if (tabScreens) tabScreens.classList.remove('active');
+    if (inputSearchSources) inputSearchSources.value = '';
+    sourceSearchQuery = '';
 
-      await fetchAndRenderSources();
-      screenShareModal.style.display = 'flex';
-    }
+    await fetchAndRenderSources();
+    screenShareModal.style.display = 'flex';
   });
 }
 
@@ -5003,7 +5091,7 @@ let pingInterval = null;
 function startPingMonitor() {
   stopPingMonitor();
   measurePing();
-  pingInterval = setInterval(measurePing, 2000);
+  pingInterval = setInterval(measurePing, 5000);
 }
 
 function stopPingMonitor() {
@@ -5011,46 +5099,127 @@ function stopPingMonitor() {
     clearInterval(pingInterval);
     pingInterval = null;
   }
+  currentVoiceRttMs = null;
+  voiceRttByIdentity.clear();
+  updatePingUI(null);
 }
 
 async function measurePing() {
-  if (!currentChannel) return;
-  const start = performance.now();
-  let latency = 0;
-
-  try {
-    const res = await fetch('https://badiscord.onrender.com/health', {
-      method: 'GET',
-      cache: 'no-store'
-    });
-    if (res.ok) {
-      latency = Math.round(performance.now() - start);
-    } else {
-      throw new Error();
-    }
-  } catch (e) {
-    latency = Math.floor(16 + Math.random() * 14);
+  if (!currentChannel || !livekitRoom || livekitRoom.state !== 'connected' || pingMeasurementInProgress) {
+    updatePingUI(null);
+    return;
   }
+  pingMeasurementInProgress = true;
+  const room = livekitRoom;
+  const channel = currentChannel;
+  try {
+    const pcManager = room.engine?.pcManager;
+    const peerConnections = [pcManager?.subscriber, pcManager?.publisher]
+      .filter((peerConnection) => typeof peerConnection?.getStats === 'function');
+    let rttMs = null;
 
-  updatePingUI(Math.max(5, latency));
+    for (const peerConnection of peerConnections) {
+      let stats;
+      try {
+        stats = await peerConnection.getStats();
+      } catch (error) {
+        console.warn('Não foi possível consultar as estatísticas da conexão de voz:', error);
+        continue;
+      }
+      if (room !== livekitRoom || room.state !== 'connected' || channel !== currentChannel) return;
+      if (!stats) continue;
+      const reports = Array.from(stats.values());
+      const transports = reports.filter((report) => report.type === 'transport');
+      const candidatePairs = reports.filter((report) => report.type === 'candidate-pair');
+      const selectedPairIds = new Set(transports.map((transport) => transport.selectedCandidatePairId).filter(Boolean));
+      const selectedPair = candidatePairs.find((pair) => selectedPairIds.has(pair.id)) ||
+        candidatePairs.find((pair) => pair.selected && pair.state === 'succeeded');
+      if (typeof selectedPair?.currentRoundTripTime === 'number' && Number.isFinite(selectedPair.currentRoundTripTime)) {
+        rttMs = Math.round(selectedPair.currentRoundTripTime * 1000);
+        break;
+      }
+    }
+
+    currentVoiceRttMs = rttMs;
+    updatePingUI(rttMs);
+    if (rttMs !== null) {
+      const identity = room.localParticipant.identity;
+      voiceRttByIdentity.set(identity, { rttMs, receivedAt: Date.now() });
+      updateParticipantRttBadge('self', rttMs);
+      try {
+        await room.localParticipant.publishData(
+          new TextEncoder().encode(JSON.stringify({
+            type: 'badiscord-voice-rtt',
+            rttMs,
+            sentAt: Date.now()
+          })),
+          { reliable: false, topic: 'badiscord-voice-rtt' }
+        );
+      } catch (error) {
+        console.warn('Não foi possível compartilhar a medição de latência com o canal:', error);
+      }
+    }
+  } catch (error) {
+    currentVoiceRttMs = null;
+    updatePingUI(null);
+    console.warn('Não foi possível medir o RTT da conexão de voz:', error);
+  } finally {
+    if (room === livekitRoom && room.state === 'connected') {
+      const staleBefore = Date.now() - 15000;
+      voiceRttByIdentity.forEach((report, identity) => {
+        if (report.receivedAt < staleBefore) {
+          voiceRttByIdentity.delete(identity);
+          if (identity !== room.localParticipant.identity) updateParticipantRttBadge(identity, null);
+        }
+      });
+    }
+    pingMeasurementInProgress = false;
+  }
+}
+
+function updateParticipantRttBadge(identity, ms) {
+  const badges = document.querySelectorAll('.participant-rtt');
+  const quality = ms === null ? 'ping-unavailable' : ms > 120 ? 'ping-bad' : ms > 60 ? 'ping-medium' : 'ping-good';
+  badges.forEach((badge) => {
+    if (badge.dataset.participantIdentity !== identity) return;
+    badge.textContent = ms === null ? '-- ms' : `${ms} ms`;
+    badge.className = `participant-rtt ${quality}`;
+    badge.title = ms === null
+      ? 'Aguardando medição do RTT deste participante'
+      : 'RTT deste participante até o servidor de voz';
+  });
+}
+
+function createParticipantRttBadge(member) {
+  const ms = typeof member.pingMs === 'number' ? member.pingMs : null;
+  const quality = ms === null ? 'ping-unavailable' : ms > 120 ? 'ping-bad' : ms > 60 ? 'ping-medium' : 'ping-good';
+  const badge = document.createElement('span');
+  badge.className = `participant-rtt ${quality}`;
+  badge.dataset.participantIdentity = member.id;
+  badge.textContent = ms === null ? '-- ms' : `${ms} ms`;
+  badge.title = ms === null
+    ? 'Aguardando medição do RTT deste participante'
+    : 'RTT deste participante até o servidor de voz';
+  return badge;
 }
 
 function updatePingUI(ms) {
-  if (vcPingValue) vcPingValue.textContent = ms;
-  if (stagePingPill) stagePingPill.textContent = `📶 ${ms} ms`;
+  const displayValue = ms === null ? '--' : String(ms);
+  if (vcPingValue) vcPingValue.textContent = displayValue;
+  if (stagePingPill) stagePingPill.textContent = `📶 ${displayValue} ms`;
 
   const vcPingTooltipText = document.getElementById('vcPingTooltipText');
   if (vcPingTooltipText) {
-    vcPingTooltipText.textContent = `${ms} ms`;
+    vcPingTooltipText.textContent = ms === null ? 'RTT do servidor de voz indisponível' : `${ms} ms até o servidor de voz`;
   }
 
-  let quality = 'ping-good';
+  let quality = ms === null ? 'ping-unavailable' : 'ping-good';
   let icon = '📶';
 
-  if (ms > 120) {
+  if (ms !== null && ms > 120) {
     quality = 'ping-bad';
     icon = '⚠️';
-  } else if (ms > 60) {
+  } else if (ms !== null && ms > 60) {
     quality = 'ping-medium';
     icon = '📶';
   }
@@ -5059,6 +5228,7 @@ function updatePingUI(ms) {
   if (stagePingPill) stagePingPill.className = `ping-pill ${quality}`;
   if (pingDot) pingDot.className = `status-dot ${quality}`;
   if (vcSignalIcon) vcSignalIcon.textContent = icon;
+  if (participantsGrid) updateParticipantRttBadge('self', ms);
 }
 
 // ==========================================
@@ -5201,6 +5371,8 @@ function renderSourcesFiltered() {
     const item = document.createElement('div');
     item.className = 'source-item';
     item.dataset.id = source.id;
+    item.setAttribute('role', 'button');
+    item.tabIndex = 0;
 
     // Container do Thumbnail
     const thumbContainer = document.createElement('div');
@@ -5253,7 +5425,9 @@ function renderSourcesFiltered() {
     item.appendChild(thumbContainer);
     item.appendChild(meta);
 
-    item.addEventListener('click', () => {
+    item.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       document.querySelectorAll('.source-item').forEach(i => {
         i.classList.remove('selected');
         const selBadge = i.querySelector('.source-selected-badge');
@@ -5277,6 +5451,12 @@ function renderSourcesFiltered() {
       }
       const dot = document.querySelector('.target-indicator-dot');
       if (dot) dot.classList.add('active');
+    });
+    item.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        item.click();
+      }
     });
 
     sourcesGrid.appendChild(item);
@@ -5303,6 +5483,127 @@ let hudTimeout = null;
 let streamAudioCtx = null;
 let streamGainNode = null;
 let streamSourceNode = null;
+let removeProcessAudioChunkListener = null;
+let removeProcessAudioErrorListener = null;
+let isProcessAudioCaptureActive = false;
+
+async function createProcessAudioTrack(sourceId) {
+  if (!window.electronAPI?.startProcessAudioCapture) {
+    throw new Error('A captura isolada de áudio não está disponível neste aplicativo.');
+  }
+
+  const captureOptions = await window.electronAPI.startProcessAudioCapture(sourceId);
+  let audioContext;
+  let workletUrl = '';
+  let workletNode = null;
+
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: captureOptions.sampleRate
+    });
+    await audioContext.resume();
+    if (audioContext.state !== 'running') {
+      throw new Error('O navegador não iniciou o processador de áudio da transmissão.');
+    }
+    const workletSource = `
+      class BadiscordProcessAudio extends AudioWorkletProcessor {
+        constructor() {
+          super();
+          this.chunks = [];
+          this.currentChunk = null;
+          this.frameOffset = 0;
+          this.port.onmessage = (event) => {
+            this.chunks.push(new Float32Array(event.data));
+            if (this.chunks.length > 20) this.chunks.shift();
+          };
+        }
+        process(inputs, outputs) {
+          const channels = outputs[0];
+          const left = channels[0];
+          const right = channels[1] || channels[0];
+          for (let frame = 0; frame < left.length; frame += 1) {
+            if (!this.currentChunk || this.frameOffset >= this.currentChunk.length / 2) {
+              this.currentChunk = this.chunks.shift() || null;
+              this.frameOffset = 0;
+            }
+            if (this.currentChunk) {
+              left[frame] = this.currentChunk[this.frameOffset * 2];
+              right[frame] = this.currentChunk[this.frameOffset * 2 + 1];
+              this.frameOffset += 1;
+            } else {
+              left[frame] = 0;
+              right[frame] = 0;
+            }
+          }
+          return true;
+        }
+      }
+      registerProcessor('badiscord-process-audio', BadiscordProcessAudio);
+    `;
+    workletUrl = URL.createObjectURL(new Blob([workletSource], { type: 'application/javascript' }));
+    await audioContext.audioWorklet.addModule(workletUrl);
+    workletNode = new AudioWorkletNode(audioContext, 'badiscord-process-audio', {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [2]
+    });
+    const destination = audioContext.createMediaStreamDestination();
+    workletNode.connect(destination);
+    streamSourceNode = audioContext.createMediaStreamSource(destination.stream);
+    streamGainNode = audioContext.createGain();
+    streamGainNode.gain.value = 0;
+    streamSourceNode.connect(streamGainNode);
+    streamGainNode.connect(audioContext.destination);
+
+    removeProcessAudioChunkListener = window.electronAPI.onProcessAudioChunk((chunk) => {
+      const view = chunk instanceof ArrayBuffer
+        ? new Uint8Array(chunk)
+        : (ArrayBuffer.isView(chunk) ? new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength) : null);
+      if (!view) {
+        console.error('O processo principal enviou um bloco de áudio inválido.');
+        return;
+      }
+      const alignedLength = view.length - (view.length % 8);
+      if (!alignedLength) return;
+      const audioData = view.slice(0, alignedLength).buffer;
+      workletNode.port.postMessage(audioData, [audioData]);
+    });
+    removeProcessAudioErrorListener = window.electronAPI.onProcessAudioError((message) => {
+      showToast(`A captura isolada de áudio foi interrompida: ${message}`, '⚠️');
+      stopCurrentStream();
+    });
+
+    streamAudioCtx = audioContext;
+    isProcessAudioCaptureActive = true;
+    await window.electronAPI.resumeProcessAudioCapture();
+    const audioTrack = destination.stream.getAudioTracks()[0];
+    if (!audioTrack) throw new Error('O processador não criou uma faixa de áudio para a transmissão.');
+    return audioTrack;
+  } catch (error) {
+    if (removeProcessAudioChunkListener) removeProcessAudioChunkListener();
+    if (removeProcessAudioErrorListener) removeProcessAudioErrorListener();
+    removeProcessAudioChunkListener = null;
+    removeProcessAudioErrorListener = null;
+    isProcessAudioCaptureActive = false;
+    try { workletNode?.disconnect(); } catch (cleanupError) {
+      console.warn('Não foi possível desconectar o processador de áudio:', cleanupError);
+    }
+    if (audioContext && audioContext.state !== 'closed') {
+      try { await audioContext.close(); } catch (cleanupError) {
+        console.warn('Não foi possível fechar a captura de áudio:', cleanupError);
+      }
+    }
+    try { await window.electronAPI.stopProcessAudioCapture(); } catch (cleanupError) {
+      console.warn('Não foi possível interromper o processo de captura de áudio:', cleanupError);
+    }
+    streamAudioCtx = null;
+    streamGainNode = null;
+    streamSourceNode = null;
+    throw error;
+  } finally {
+    if (workletUrl) URL.revokeObjectURL(workletUrl);
+  }
+}
 
 function updateStreamVolume(val, showHud = false) {
   val = Math.max(0, Math.min(100, Math.round(val)));
@@ -5369,6 +5670,18 @@ async function stopCurrentStream() {
   if (streamGainNode) {
     try { streamGainNode.gain.value = 0; } catch (e) {}
   }
+  if (removeProcessAudioChunkListener) removeProcessAudioChunkListener();
+  if (removeProcessAudioErrorListener) removeProcessAudioErrorListener();
+  removeProcessAudioChunkListener = null;
+  removeProcessAudioErrorListener = null;
+  if (isProcessAudioCaptureActive && window.electronAPI?.stopProcessAudioCapture) {
+    try {
+      await window.electronAPI.stopProcessAudioCapture();
+    } catch (error) {
+      console.warn('Não foi possível encerrar o processo de captura isolada:', error);
+    }
+  }
+  isProcessAudioCaptureActive = false;
   if (streamAudioCtx) {
     try { streamAudioCtx.close(); } catch (e) {}
     streamAudioCtx = null;
@@ -5406,14 +5719,17 @@ async function stopCurrentStream() {
 
   if (btnShareScreen) {
     btnShareScreen.classList.remove('live-active');
-    btnShareScreen.innerHTML = '<span>🖥️</span> Transmitir Tela (1080p)';
+    const configuredResolution = localStorage.getItem('badiscord_stream_res') || '1080';
+    btnShareScreen.innerHTML = `<span>🖥️</span> Transmitir Tela (${configuredResolution === '1440' ? '2K' : `${configuredResolution}p`})`;
   }
 
   const panel = document.getElementById('gameActivityPanel');
   if (panel) panel.classList.remove('is-live');
   if (btnGameQuickStream) {
     btnGameQuickStream.innerHTML = '🖥️';
-    btnGameQuickStream.title = 'Transmitir Jogo em 1080p 60FPS';
+    const configuredResolution = localStorage.getItem('badiscord_stream_res') || '1080';
+    const resolutionLabel = configuredResolution === '1440' ? '2K' : `${configuredResolution}p`;
+    btnGameQuickStream.title = `Transmitir Jogo em ${resolutionLabel}`;
   }
   if (gameActivityStatus) {
     gameActivityStatus.textContent = 'Não Compartilhando';
@@ -5543,12 +5859,6 @@ btnShareScreen.addEventListener('click', async () => {
     return;
   }
 
-  // Carregar preferências salvas de resolução e FPS
-  const savedRes = localStorage.getItem('badiscord_stream_res') || '1080';
-  const savedFps = localStorage.getItem('badiscord_stream_fps') || '60';
-  if (selectResolution) selectResolution.value = savedRes;
-  if (selectFps) selectFps.value = savedFps;
-
   // Garantir que a aba Janelas & Jogos esteja ativa por padrão
   currentCaptureTab = 'windows';
   if (tabWindows) tabWindows.classList.add('active');
@@ -5586,56 +5896,51 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
 
   try {
     let stream;
+    let captureProcessAudio = false;
     if (sourceId === '__browser_display__') {
-      const width = targetRes === 1440 ? 2560 : (targetRes === 1080 ? 1920 : 1280);
-      try {
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { width: { ideal: width }, height: { ideal: targetRes }, frameRate: { ideal: targetFps, max: targetFps } },
-          audio: includeAudio
-        });
-      } catch (captureError) {
-        if (!includeAudio) throw captureError;
-        console.warn('Áudio do compartilhamento não está disponível neste navegador:', captureError);
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { width: { ideal: width }, height: { ideal: targetRes }, frameRate: { ideal: targetFps, max: targetFps } },
-          audio: false
-        });
-      }
-    } else {
-      const videoConstraints = {
-      mandatory: {
-        chromeMediaSource: 'desktop',
-        chromeMediaSourceId: sourceId,
-        maxWidth: targetRes === 1440 ? 2560 : (targetRes === 1080 ? 1920 : 1280),
-        maxHeight: targetRes,
-        maxFrameRate: targetFps
-      }
-    };
-
       if (includeAudio) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: { mandatory: { chromeMediaSource: 'desktop' } },
-            video: videoConstraints
-          });
-        } catch (audioErr) {
-          console.warn('Captura com áudio não disponível nesta fonte, prosseguindo com vídeo puro:', audioErr);
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: videoConstraints
-          });
-        }
-      } else {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: videoConstraints
-        });
+        showToast('Áudio exclusivo do jogo só está disponível no aplicativo desktop Windows. Esta transmissão será somente vídeo.', '⚠️');
       }
+      const width = targetRes === 1440 ? 2560 : (targetRes === 1080 ? 1920 : 1280);
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: { ideal: width }, height: { ideal: targetRes }, frameRate: { ideal: targetFps, max: targetFps } },
+        audio: false
+      });
+    } else {
+      const isWindowSource = sourceId.startsWith('window:');
+      captureProcessAudio = includeAudio && isWindowSource && Boolean(window.electronAPI?.startProcessAudioCapture);
+      if (includeAudio && !captureProcessAudio) {
+        showToast('Para transmitir áudio exclusivo do jogo, selecione uma janela no aplicativo desktop Windows. A live continuará somente com vídeo.', '⚠️');
+      }
+      const videoConstraints = {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: sourceId,
+          maxWidth: targetRes === 1440 ? 2560 : (targetRes === 1080 ? 1920 : 1280),
+          maxHeight: targetRes,
+          maxFrameRate: targetFps
+        }
+      };
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: videoConstraints
+      });
     }
 
     localScreenTrack = stream.getVideoTracks()[0];
     if (!localScreenTrack) throw new Error('O navegador não retornou uma faixa de vídeo para compartilhar.');
-    localScreenAudioTrack = stream.getAudioTracks()[0] || null;
+    if (sourceId === '__browser_display__' || !window.electronAPI) {
+      localScreenAudioTrack = null;
+    } else if (captureProcessAudio) {
+      try {
+        localScreenAudioTrack = await createProcessAudioTrack(sourceId);
+      } catch (audioError) {
+        console.error('Não foi possível capturar o áudio exclusivo da janela:', audioError);
+        showToast(`${audioError.message || 'Falha ao capturar o áudio do jogo.'} A live continuará somente com vídeo.`, '⚠️');
+      }
+    }
+    if (localScreenTrack.contentHint !== undefined) localScreenTrack.contentHint = 'motion';
     const room = await connectToLiveKitRoom(currentChannel);
     if (!room || room.state !== 'connected') throw new Error('Não foi possível conectar ao canal de voz para transmitir.');
     const screenShareSource = window.LivekitClient.Track.Source.ScreenShare;
@@ -5643,7 +5948,11 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     await room.localParticipant.publishTrack(localScreenTrack, {
       source: screenShareSource,
       name: sourceTitle || 'BADISCORD Live',
-      stream: `screen-share-${authenticatedAccount.id}`
+      stream: `screen-share-${authenticatedAccount.id}`,
+      videoEncoding: {
+        maxBitrate: targetRes === 1440 ? 9000000 : (targetRes === 1080 ? 5000000 : 2500000),
+        maxFramerate: targetFps
+      }
     });
     if (localScreenAudioTrack) {
       await room.localParticipant.publishTrack(localScreenAudioTrack, {
@@ -5671,34 +5980,16 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
       participantsGrid.style.display = 'none';
     }
 
-    // Áudio do jogo conectado via Web Audio GainNode isolado (inicia mudo localmente)
-    if (localScreenAudioTrack) {
-      try {
-        if (streamAudioCtx) {
-          try { streamAudioCtx.close(); } catch (e) {}
-        }
-        streamAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const audioStream = new MediaStream([localScreenAudioTrack]);
-        streamSourceNode = streamAudioCtx.createMediaStreamSource(audioStream);
-        streamGainNode = streamAudioCtx.createGain();
-        streamGainNode.gain.value = 0;
-        streamSourceNode.connect(streamGainNode);
-        streamGainNode.connect(streamAudioCtx.destination);
-      } catch (errAudio) {
-        console.warn('Web Audio para prévia da stream:', errAudio);
-      }
-    }
-
     if (btnShareScreen) {
       btnShareScreen.classList.add('live-active');
-      btnShareScreen.innerHTML = '<span>⏹️</span> Parar Transmissão';
+      btnShareScreen.innerHTML = `<span>⏹️</span> Parar Transmissão (${targetRes === 1440 ? '2K' : `${targetRes}p`})`;
     }
 
     const panel = document.getElementById('gameActivityPanel');
     if (panel) panel.classList.add('is-live');
 
     if (gameActivityStatus) {
-      gameActivityStatus.textContent = 'AO VIVO em 1080p 60FPS';
+      gameActivityStatus.textContent = `AO VIVO em ${targetRes === 1440 ? '2K (1440p)' : `${targetRes}p`} ${targetFps}FPS`;
     }
 
     if (btnGameQuickStream) {

@@ -290,7 +290,7 @@
           <span class="game-activity-title" id="gameActivityTitle">Detectando jogos...</span>
           <span class="game-activity-status" id="gameActivityStatus">Não Compartilhando</span>
         </div>
-        <button class="game-activity-share-btn" id="btnGameQuickStream" title="Transmitir Jogo em 1080p 60FPS">
+        <button class="game-activity-share-btn" id="btnGameQuickStream" title="Selecionar janela para transmitir">
           🖥️
         </button>
       </div>
@@ -313,13 +313,13 @@
             </div>
           </div>
           <div class="vc-actions-top">
-            <button class="vc-rtc-waves-btn" id="vcPingBadge">
+            <button class="vc-rtc-waves-btn" id="vcPingBadge" title="RTT até o servidor de voz" aria-label="RTT da conexão de voz">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M4 10a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0v-2a1 1 0 0 1 1-1zm5-4a1 1 0 0 1 1 1v10a1 1 0 1 1-2 0V7a1 1 0 0 1 1-1zm5 2a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0V9a1 1 0 0 1 1-1zm5 3a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0v-2a1 1 0 0 1 1-1z"/>
               </svg>
               <!-- Tooltip flutuante de ping estilo Discord no botão de ondas/latência -->
               <div class="vc-ping-tooltip" id="vcPingTooltip">
-                <span id="vcPingTooltipText">-- ms</span>
+                <span id="vcPingTooltipText">RTT do servidor de voz indisponível</span>
               </div>
             </button>
             <button class="vc-disconnect-btn" id="btnQuickDisconnect" title="Desconectar da Chamada">
@@ -417,9 +417,9 @@
             <h3 id="currentChannelTitle">VAVA</h3>
           </div>
           <div class="header-right" id="connectionBadge" style="display: none;">
-            <span class="status-dot ping-good" id="pingDot"></span>
+            <span class="status-dot ping-unavailable" id="pingDot"></span>
             <span id="rtcStatusText">Voz Conectada</span>
-            <span class="ping-pill ping-good" id="stagePingPill">📶 -- ms</span>
+            <span class="ping-pill ping-unavailable" id="stagePingPill" title="RTT até o servidor de voz">📶 -- ms</span>
           </div>
         </header>
 
@@ -764,7 +764,7 @@
           <div class="modal-header-icon">🎮</div>
           <div>
             <h3>Transmitir Jogo ou Janela</h3>
-            <p class="modal-subtitle">Escolha especificamente a janela do seu jogo. Sua área de trabalho, outras janelas e notificações não serão transmitidas.</p>
+            <p class="modal-subtitle">Selecionar uma janela não abre o jogo. A transmissão só começa quando você confirmar; sua área de trabalho, outras janelas e notificações não serão transmitidas.</p>
           </div>
         </div>
         <button class="close-modal" id="btnCloseModal">✕</button>
@@ -805,10 +805,11 @@
           <strong id="selectedTargetName" class="target-name">Nenhuma janela escolhida ainda</strong>
         </div>
         <div class="target-audio-opt">
-          <label class="stream-audio-checkbox-label" title="Transmitir o som do jogo junto com o vídeo">
+          <label class="stream-audio-checkbox-label" title="Captura somente o processo da janela selecionada no aplicativo desktop para Windows.">
             <input type="checkbox" id="chkStreamAudio" checked>
-            <span>🔊 Áudio do Jogo</span>
+            <span>🔊 Áudio exclusivo da janela</span>
           </label>
+          <small class="stream-audio-warning">Disponível no app Windows ao selecionar uma janela, não um monitor.</small>
         </div>
       </div>
 
@@ -816,9 +817,9 @@
         <div class="quality-item">
           <label>QUALIDADE DE VÍDEO:</label>
           <select id="selectResolution" class="discord-select-sm">
-            <option value="1080" selected>1080p (Full HD - Alta Fidelidade)</option>
-            <option value="1440">1440p (2K Quad HD Ultra)</option>
-            <option value="720">720p (HD 60FPS)</option>
+            <option value="720">720p (HD)</option>
+            <option value="1080" selected>1080p (Full HD)</option>
+            <option value="1440">2K (1440p Quad HD)</option>
           </select>
         </div>
         <div class="quality-item">
@@ -1555,9 +1556,9 @@
               <div>
                 <label class="sub-label">Resolução Padrão</label>
                 <select id="prefResolution" class="discord-select">
-                  <option value="1080" selected>1080p (Full HD 60FPS - Recomendado)</option>
-                  <option value="1440">1440p (2K Quad HD Ultra)</option>
-                  <option value="720">720p (HD 60FPS - Economia de Banda)</option>
+                  <option value="720">720p (HD - Economia de Banda)</option>
+                  <option value="1080" selected>1080p (Full HD - Recomendado)</option>
+                  <option value="1440">2K (1440p Quad HD)</option>
                 </select>
               </div>
               <div>

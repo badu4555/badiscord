@@ -2,15 +2,16 @@
   "name": "badiscord",
   "productName": "BADISCORD",
   "version": "1.0.0",
-  "description": "Aplicativo Desktop de Voz e Streaming 1080p inspirado no Discord",
+  "description": "Aplicativo Desktop de Voz e Streaming até 2K",
   "main": "main.js",
   "scripts": {
     "start": "node server/server.js",
-    "desktop": "electron .",
+    "build:native-audio": "node scripts/build-native-audio.js",
+    "desktop": "npm run build:native-audio && electron .",
     "server": "node server/server.js",
-    "dev": "concurrently \"node server/server.js\" \"electron .\"",
-    "build:exe": "electron-builder --win dir",
-    "build:zip": "electron-builder --win zip"
+    "dev": "npm run build:native-audio && concurrently \"node server/server.js\" \"electron .\"",
+    "build:exe": "npm run build:native-audio && electron-builder --win dir",
+    "build:zip": "npm run build:native-audio && electron-builder --win zip"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
@@ -28,6 +29,12 @@
   "build": {
     "appId": "com.badiscord.app",
     "productName": "BADISCORD",
+    "extraResources": [
+      {
+        "from": "native/process-audio-capture.exe",
+        "to": "process-audio-capture.exe"
+      }
+    ],
     "win": {
       "target": [
         "dir",

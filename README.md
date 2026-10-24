@@ -3,7 +3,9 @@
 Aplicativo para Windows desenvolvido com a mesma arquitetura do **Discord Desktop** (Electron + WebRTC + Node.js), incluindo:
 - **Canais de Voz** com cancelamento de eco, supressão de ruído e áudio Opus em 48 kHz.
 - **Detecção de Fala em Tempo Real** (borda verde iluminada no avatar quando você fala).
-- **Transmissão de Tela / Janelas em 1080p 60 FPS** usando a API nativa `desktopCapturer` do Electron.
+- **Transmissão de tela em 720p, 1080p e 2K (1440p)** com seleção de FPS.
+- **Áudio isolado da janela selecionada** no aplicativo desktop Windows, sem incluir o áudio dos demais aplicativos.
+- **Lista de participantes por canal de voz**, atualizada sem precisar entrar no canal.
 - Interface escura clássica no padrão Discord.
 
 ---
@@ -13,15 +15,18 @@ Aplicativo para Windows desenvolvido com a mesma arquitetura do **Discord Deskto
 ### Passo 1: Acessar a pasta e instalar dependências
 Abra o PowerShell ou Prompt de Comando e execute:
 ```powershell
-cd C:\Users\Luis_\.gemini\antigravity\scratch\voice-live-pc
+cd C:\Users\Luis_\badiscord
 npm install
 ```
+Para compilar a captura de áudio isolada, instale o Visual Studio Build Tools com o compilador C++ x64 e o Windows SDK, além do Python 3 para o `node-gyp` reconstruir o driver SQLite no empacotamento. A captura por processo requer Windows 10 build 20348 ou posterior.
 
 ### Passo 2: Iniciar a aplicação
 ```powershell
 npm run desktop
 ```
-*O aplicativo abrirá diretamente em uma janela nativa no seu Windows!*
+O comando compila o helper nativo de áudio antes de abrir o aplicativo. O áudio exclusivo só está disponível no aplicativo desktop Windows ao selecionar uma janela; no navegador ou ao compartilhar um monitor, a transmissão fica somente com vídeo.
+
+No desktop, o botão de transmitir abre a lista de janelas; selecionar uma janela não inicia nem abre o jogo, e a captura começa somente após confirmar a transmissão. O indicador de latência usa o RTT ICE da conexão com o servidor LiveKit. Participantes conectados compartilham essa medição para que ela apareça ao lado de cada pessoa; ela representa a rota até o servidor de voz (não uma conexão direta entre participantes). Se não houver estatísticas disponíveis, o app mostra `--` em vez de inventar um valor.
 
 ---
 

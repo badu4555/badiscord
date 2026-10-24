@@ -534,8 +534,19 @@ body {
   border: 1px solid rgba(218, 55, 60, 0.3);
 }
 
+.ping-unavailable {
+  color: var(--text-muted) !important;
+  background-color: rgba(128, 132, 142, 0.12);
+  border: 1px solid rgba(128, 132, 142, 0.22);
+}
+
 .status-dot.ping-bad {
   background-color: var(--status-red);
+  border: none;
+}
+
+.status-dot.ping-unavailable {
+  background-color: var(--text-muted);
   border: none;
 }
 
@@ -1102,6 +1113,16 @@ body {
 
 .participant-name-tag .live-watch-button {
   font-size: 11px;
+}
+
+.participant-rtt {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 4px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .participant-game-pill {
@@ -1723,6 +1744,18 @@ body {
   font-size: 12px;
   font-weight: 600;
   user-select: none;
+}
+
+.target-audio-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.stream-audio-warning {
+  color: var(--text-muted);
+  font-size: 10px;
 }
 
 .stream-audio-checkbox-label input {

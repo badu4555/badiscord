@@ -5,3 +5,5 @@ dist/
 !.env.example
 *.log
 server/data/*.db*
+native/process-audio-capture.exe
+native/process-audio-capture.obj
