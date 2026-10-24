@@ -14,6 +14,15 @@ const scryptAsync = promisify(crypto.scrypt);
 const AUTH_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const PASSWORD_POLICY = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 const EMAIL_POLICY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_CUSTOM_SOUND_BYTES = 4 * 1024 * 1024;
+const MAX_CUSTOM_SOUND_COUNT = 20;
+const MAX_CUSTOM_SOUND_STORAGE_BYTES = 20 * 1024 * 1024;
+const SERVER_ID_POLICY = /^[a-zA-Z0-9_-]{1,80}$/;
+const ALLOWED_SOUND_TYPES = new Set([
+  'audio/aac', 'audio/flac', 'audio/mp3', 'audio/mp4', 'audio/mpeg',
+  'audio/ogg', 'audio/wav', 'audio/webm', 'audio/wave', 'audio/x-m4a',
+  'audio/x-wav', 'audio/vnd.wave'
+]);
 const USERNAME_POLICY = /^[a-z0-9_]{3,24}$/;
 const normalize = (value) => typeof value === 'string' ? value.trim() : '';
 const RECAPTCHA_SITE_KEY = normalize(process.env.RECAPTCHA_SITE_KEY);
@@ -36,7 +45,7 @@ app.use(cors({
   }
   , credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '6mb' }));
 app.use('/node_modules', express.static(nodeModulesDir));
 app.use(express.static(publicDir));
 
@@ -112,6 +121,24 @@ db.exec(`
     created_at TEXT NOT NULL,
     PRIMARY KEY (user_a, user_b)
   );
+  CREATE TABLE IF NOT EXISTS servers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    icon TEXT NOT NULL DEFAULT '🎮',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    text_channels_json TEXT NOT NULL DEFAULT '[]',
+    voice_channels_json TEXT NOT NULL DEFAULT '[]',
+    owner_id TEXT REFERENCES users(id),
+    is_public INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS server_members (
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'member',
+    joined_at TEXT NOT NULL,
+    PRIMARY KEY (server_id, user_id)
+  );
   CREATE TABLE IF NOT EXISTS server_invites (
     id TEXT PRIMARY KEY,
     sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -122,9 +149,46 @@ db.exec(`
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS custom_sounds (
+    id TEXT PRIMARY KEY,
+    server_id TEXT NOT NULL DEFAULT 'srv-1',
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    audio_data BLOB NOT NULL,
+    created_at TEXT NOT NULL
+  );
   CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS friend_requests_receiver_idx ON friend_requests(receiver_id, status);
+  CREATE INDEX IF NOT EXISTS server_members_user_id_idx ON server_members(user_id);
 `);
+
+const serverColumns = new Set(db.pragma('table_info(servers)').map((column) => column.name));
+[
+  ['metadata_json', "TEXT NOT NULL DEFAULT '{}'"],
+  ['text_channels_json', "TEXT NOT NULL DEFAULT '[]'"],
+  ['voice_channels_json', "TEXT NOT NULL DEFAULT '[]'"]
+].forEach(([column, definition]) => {
+  if (!serverColumns.has(column)) db.exec(`ALTER TABLE servers ADD COLUMN ${column} ${definition}`);
+});
+
+const customSoundColumns = db.pragma('table_info(custom_sounds)');
+if (!customSoundColumns.some((column) => column.name === 'server_id')) {
+  db.exec("ALTER TABLE custom_sounds ADD COLUMN server_id TEXT NOT NULL DEFAULT 'srv-1'");
+}
+db.exec('CREATE INDEX IF NOT EXISTS custom_sounds_server_id_idx ON custom_sounds(server_id, created_at)');
+
+const sharedServerSeeds = [
+  ['srv-1', 'Comunidade Principal', '🎮'],
+  ['srv-2', 'Comunidade DEV', '💻'],
+  ['pub-1', 'Comunidade BADISCORD 🎮', '🎮'],
+  ['pub-2', 'Espaço dos Devs 💻', '💻'],
+  ['pub-3', 'Lounge de Músicas & Clipes 🎵', '🎧'],
+  ['pub-4', 'Competitivo & Scrims 🏆', '🏆']
+];
+const seedSharedServer = db.prepare(`INSERT OR IGNORE INTO servers (id, name, icon, is_public, created_at)
+  VALUES (?, ?, ?, 1, ?)`);
+sharedServerSeeds.forEach(([id, name, icon]) => seedSharedServer.run(id, name, icon, new Date().toISOString()));
 
 const normalizeEmail = (value) => normalize(value).toLowerCase();
 const normalizeUsername = (value) => normalize(value).toLowerCase();
@@ -301,21 +365,40 @@ app.post('/api/auth/register', async (req, res) => {
     createdAt: new Date().toISOString()
   };
 
-  db.prepare(`INSERT INTO users (id, email, username, display_name, tag, password_hash, created_at)
-    VALUES (@id, @email, @username, @displayName, @tag, @passwordHash, @createdAt)`).run(user);
+  const homeServerId = `home-${user.id}`;
+  db.transaction(() => {
+    db.prepare(`INSERT INTO users (id, email, username, display_name, tag, password_hash, created_at)
+      VALUES (@id, @email, @username, @displayName, @tag, @passwordHash, @createdAt)`).run(user);
+    db.prepare(`INSERT INTO servers (id, name, icon, owner_id, is_public, created_at)
+      VALUES (?, ?, '🎮', ?, 0, ?)`).run(homeServerId, user.displayName, user.id, user.createdAt);
+    db.prepare(`INSERT INTO server_members (server_id, user_id, role, joined_at)
+      VALUES (?, ?, 'owner', ?)`).run(homeServerId, user.id, user.createdAt);
+  })();
   createSession(res, user.id);
-  return res.status(201).json({ user: publicUser({ ...user, display_name: user.displayName, created_at: user.createdAt }) });
+  return res.status(201).json({
+    user: publicUser({ ...user, display_name: user.displayName, created_at: user.createdAt }),
+    homeServerId
+  });
 });
 
 app.post('/api/auth/login', async (req, res) => {
   if (!RECAPTCHA_SECRET_KEY && process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'O reCAPTCHA ainda não foi configurado no servidor.' });
   if (!(await verifyRecaptcha(req.body?.recaptchaToken, req))) return res.status(400).json({ error: 'Confirme que você não é um robô.' });
+
   const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || '');
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
 
-  if (!EMAIL_POLICY.test(email) || !user || !(await verifyPassword(password, user.password_hash))) {
-    return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
+  if (!EMAIL_POLICY.test(email)) {
+    return res.status(401).json({ error: 'E-mail inválido.' });
+  }
+
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user) {
+    return res.status(401).json({ error: 'Conta não cadastrada.' });
+  }
+
+  if (!(await verifyPassword(password, user.password_hash))) {
+    return res.status(401).json({ error: 'Senha incorreta.' });
   }
 
   createSession(res, user.id);
@@ -380,6 +463,270 @@ function formatFriend(user, status) {
   };
 }
 
+function canAccessServer(userId, serverId) {
+  return Boolean(db.prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, userId));
+}
+
+function parseJsonValue(value, fallback) {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function formatServer(server, userId) {
+  const metadata = parseJsonValue(server.metadata_json, {});
+  return {
+    id: server.id,
+    name: server.name,
+    icon: server.icon,
+    iconUrl: metadata.iconUrl || '',
+    bannerColor: metadata.bannerColor || '#eab308',
+    description: metadata.description || '',
+    traits: Array.isArray(metadata.traits) ? metadata.traits : [],
+    serverTag: metadata.serverTag || 'KBM!',
+    serverTagBadge: metadata.serverTagBadge || '🗡️',
+    serverTagColor: metadata.serverTagColor || '#eb459e',
+    voiceSettings: metadata.voiceSettings && typeof metadata.voiceSettings === 'object' ? metadata.voiceSettings : {},
+    textChannels: parseJsonValue(server.text_channels_json, ['geral']),
+    voiceChannels: parseJsonValue(server.voice_channels_json, ['Geral 🔊']),
+    isPublic: Boolean(server.is_public),
+    isOwner: server.owner_id === userId,
+    role: server.role || 'member'
+  };
+}
+
+function listAccessibleServers(userId) {
+  return db.prepare(`SELECT servers.*, server_members.role
+    FROM servers JOIN server_members ON server_members.server_id = servers.id
+    WHERE server_members.user_id = ? ORDER BY servers.name COLLATE NOCASE`).all(userId)
+    .map((server) => formatServer(server, userId));
+}
+
+function listPublicServers() {
+  return db.prepare('SELECT * FROM servers WHERE is_public = 1 ORDER BY name COLLATE NOCASE').all()
+    .map((server) => formatServer(server, ''));
+}
+
+function ensurePersonalServer(user) {
+  const serverId = `home-${user.id}`;
+  const createdAt = new Date().toISOString();
+  db.transaction(() => {
+    db.prepare(`INSERT OR IGNORE INTO servers (id, name, icon, owner_id, is_public, created_at)
+      VALUES (?, ?, '🎮', ?, 0, ?)`).run(serverId, user.display_name, user.id, createdAt);
+    db.prepare(`INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at)
+      VALUES (?, ?, 'owner', ?)`).run(serverId, user.id, createdAt);
+  })();
+  return serverId;
+}
+
+app.get('/api/servers', requireAuth, (req, res) => {
+  return res.json({ servers: listAccessibleServers(req.user.id) });
+});
+
+app.get('/api/servers/public', (req, res) => {
+  return res.json({ servers: listPublicServers() });
+});
+
+app.post('/api/servers', requireAuth, (req, res) => {
+  const name = normalize(req.body?.name).slice(0, 32);
+  const icon = normalize(req.body?.icon).slice(0, 16) || '🎮';
+  if (!name) return res.status(400).json({ error: 'Informe o nome do servidor.' });
+
+  const id = `srv-${crypto.randomUUID()}`;
+  const createdAt = new Date().toISOString();
+  const textChannels = ['geral', 'clipes', 'comandos'];
+  const voiceChannels = ['Lounge 🔊', 'Call do Jogo'];
+  db.transaction(() => {
+    db.prepare(`INSERT INTO servers (id, name, icon, text_channels_json, voice_channels_json, owner_id, is_public, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?)`).run(id, name, icon, JSON.stringify(textChannels), JSON.stringify(voiceChannels), req.user.id, createdAt);
+    db.prepare(`INSERT INTO server_members (server_id, user_id, role, joined_at)
+      VALUES (?, ?, 'owner', ?)`).run(id, req.user.id, createdAt);
+  })();
+  const server = db.prepare('SELECT servers.*, server_members.role FROM servers JOIN server_members ON server_members.server_id = servers.id WHERE servers.id = ? AND server_members.user_id = ?')
+    .get(id, req.user.id);
+  return res.status(201).json({ server: formatServer(server, req.user.id) });
+});
+
+app.patch('/api/servers/:id', requireAuth, (req, res) => {
+  const server = db.prepare('SELECT * FROM servers WHERE id = ? AND owner_id = ?').get(req.params.id, req.user.id);
+  if (!server) return res.status(404).json({ error: 'Servidor não encontrado ou você não é o proprietário.' });
+  const name = normalize(req.body?.name).slice(0, 32);
+  const icon = normalize(req.body?.icon).slice(0, 16) || '🎮';
+  const iconUrl = typeof req.body?.iconUrl === 'string' ? req.body.iconUrl.slice(0, 5 * 1024 * 1024) : '';
+  const bannerColor = /^#[0-9a-f]{6}$/i.test(req.body?.bannerColor) ? req.body.bannerColor : '#eab308';
+  const description = normalize(req.body?.description).slice(0, 1000);
+  const traits = Array.isArray(req.body?.traits) ? req.body.traits.slice(0, 5).map((trait) => normalize(trait).slice(0, 40)) : [];
+  const serverTag = normalize(req.body?.serverTag).toUpperCase().slice(0, 16) || 'KBM!';
+  const serverTagBadge = normalize(req.body?.serverTagBadge).slice(0, 8) || '🗡️';
+  const serverTagColor = /^#[0-9a-f]{6}$/i.test(req.body?.serverTagColor) ? req.body.serverTagColor : '#eb459e';
+  const currentMetadata = parseJsonValue(server.metadata_json, {});
+  const rawVoiceSettings = req.body?.voiceSettings && typeof req.body.voiceSettings === 'object' && !Array.isArray(req.body.voiceSettings)
+    ? req.body.voiceSettings
+    : currentMetadata.voiceSettings || {};
+  const voiceSettings = Object.fromEntries(Object.entries(rawVoiceSettings).slice(0, 100).map(([channel, settings]) => [
+    normalize(channel).slice(0, 80),
+    { bitrate: [64, 96, 128, 256].includes(Number(settings?.bitrate)) ? Number(settings.bitrate) : 96 }
+  ]));
+  const textChannels = Array.isArray(req.body?.textChannels) ? req.body.textChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['geral'];
+  const voiceChannels = Array.isArray(req.body?.voiceChannels) ? req.body.voiceChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['Geral 🔊'];
+  if (!name) return res.status(400).json({ error: 'Informe o nome do servidor.' });
+
+  const isPublic = typeof req.body?.isPublic === 'boolean' ? Number(req.body.isPublic) : server.is_public;
+  const metadata = JSON.stringify({ iconUrl, bannerColor, description, traits, serverTag, serverTagBadge, serverTagColor, voiceSettings });
+  db.prepare(`UPDATE servers SET name = ?, icon = ?, metadata_json = ?, text_channels_json = ?,
+    voice_channels_json = ?, is_public = ? WHERE id = ?`)
+    .run(name, icon, metadata, JSON.stringify(textChannels), JSON.stringify(voiceChannels), isPublic, server.id);
+  const updated = db.prepare('SELECT servers.*, server_members.role FROM servers JOIN server_members ON server_members.server_id = servers.id WHERE servers.id = ? AND server_members.user_id = ?')
+    .get(server.id, req.user.id);
+  return res.json({ server: formatServer(updated, req.user.id) });
+});
+
+app.delete('/api/servers/:id', requireAuth, (req, res) => {
+  const server = db.prepare('SELECT id, owner_id FROM servers WHERE id = ? AND owner_id = ?').get(req.params.id, req.user.id);
+  if (!server) return res.status(404).json({ error: 'Servidor não encontrado ou você não é o proprietário.' });
+  if (server.id === `home-${req.user.id}`) return res.status(400).json({ error: 'O servidor pessoal da conta não pode ser excluído.' });
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM custom_sounds WHERE server_id = ?').run(server.id);
+    db.prepare('DELETE FROM server_invites WHERE server_id = ?').run(server.id);
+    db.prepare('DELETE FROM server_members WHERE server_id = ?').run(server.id);
+    db.prepare('DELETE FROM servers WHERE id = ?').run(server.id);
+  })();
+  return res.json({ ok: true });
+});
+
+app.post('/api/servers/sync', requireAuth, (req, res) => {
+  const homeServerId = ensurePersonalServer(req.user);
+  const clientServers = Array.isArray(req.body?.servers) ? req.body.servers.slice(0, 100) : [];
+  const now = new Date().toISOString();
+  const syncServer = db.transaction((server) => {
+    const id = normalize(server?.id);
+    const name = normalize(server?.name).slice(0, 32);
+    const icon = normalize(server?.icon).slice(0, 16) || '🎮';
+    if (!SERVER_ID_POLICY.test(id) || !name) return;
+
+    const existing = db.prepare('SELECT id, owner_id, is_public FROM servers WHERE id = ?').get(id);
+    if (!existing) {
+      const metadata = JSON.stringify({
+        iconUrl: typeof server.iconUrl === 'string' ? server.iconUrl.slice(0, 5 * 1024 * 1024) : '',
+        bannerColor: /^#[0-9a-f]{6}$/i.test(server.bannerColor) ? server.bannerColor : '#eab308',
+        description: normalize(server.description).slice(0, 1000),
+        traits: Array.isArray(server.traits) ? server.traits.slice(0, 5).map((trait) => normalize(trait).slice(0, 40)) : [],
+        serverTag: normalize(server.serverTag).toUpperCase().slice(0, 16) || 'KBM!',
+        serverTagBadge: normalize(server.serverTagBadge).slice(0, 8) || '🗡️',
+        serverTagColor: /^#[0-9a-f]{6}$/i.test(server.serverTagColor) ? server.serverTagColor : '#eb459e',
+        voiceSettings: server.voiceSettings && typeof server.voiceSettings === 'object' && !Array.isArray(server.voiceSettings)
+          ? Object.fromEntries(Object.entries(server.voiceSettings).slice(0, 100).map(([channel, settings]) => [
+            normalize(channel).slice(0, 80),
+            { bitrate: [64, 96, 128, 256].includes(Number(settings?.bitrate)) ? Number(settings.bitrate) : 96 }
+          ]))
+          : {}
+      });
+      const textChannels = Array.isArray(server.textChannels) ? server.textChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['geral'];
+      const voiceChannels = Array.isArray(server.voiceChannels) ? server.voiceChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['Geral 🔊'];
+      db.prepare(`INSERT INTO servers (id, name, icon, metadata_json, text_channels_json, voice_channels_json, owner_id, is_public, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`)
+        .run(id, name, icon, metadata, JSON.stringify(textChannels), JSON.stringify(voiceChannels), req.user.id, now);
+      db.prepare('INSERT INTO server_members (server_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)')
+        .run(id, req.user.id, 'owner', now);
+      return;
+    }
+
+    if (existing.owner_id === req.user.id) {
+      const metadata = JSON.stringify({
+        iconUrl: typeof server.iconUrl === 'string' ? server.iconUrl.slice(0, 5 * 1024 * 1024) : '',
+        bannerColor: /^#[0-9a-f]{6}$/i.test(server.bannerColor) ? server.bannerColor : '#eab308',
+        description: normalize(server.description).slice(0, 1000),
+        traits: Array.isArray(server.traits) ? server.traits.slice(0, 5).map((trait) => normalize(trait).slice(0, 40)) : [],
+        serverTag: normalize(server.serverTag).toUpperCase().slice(0, 16) || 'KBM!',
+        serverTagBadge: normalize(server.serverTagBadge).slice(0, 8) || '🗡️',
+        serverTagColor: /^#[0-9a-f]{6}$/i.test(server.serverTagColor) ? server.serverTagColor : '#eb459e',
+        voiceSettings: server.voiceSettings && typeof server.voiceSettings === 'object' && !Array.isArray(server.voiceSettings)
+          ? Object.fromEntries(Object.entries(server.voiceSettings).slice(0, 100).map(([channel, settings]) => [
+            normalize(channel).slice(0, 80),
+            { bitrate: [64, 96, 128, 256].includes(Number(settings?.bitrate)) ? Number(settings.bitrate) : 96 }
+          ]))
+          : {}
+      });
+      const textChannels = Array.isArray(server.textChannels) ? server.textChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['geral'];
+      const voiceChannels = Array.isArray(server.voiceChannels) ? server.voiceChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['Geral 🔊'];
+      db.prepare(`UPDATE servers SET name = ?, icon = ?, metadata_json = ?, text_channels_json = ?, voice_channels_json = ? WHERE id = ?`)
+        .run(name, icon, metadata, JSON.stringify(textChannels), JSON.stringify(voiceChannels), id);
+    } else if (existing.is_public) {
+      db.prepare('INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)')
+        .run(id, req.user.id, 'member', now);
+    }
+  });
+  clientServers.forEach(syncServer);
+  return res.json({ homeServerId, servers: listAccessibleServers(req.user.id) });
+});
+
+app.get('/api/soundboard', requireAuth, (req, res) => {
+  const serverId = normalize(req.query.serverId);
+  if (!SERVER_ID_POLICY.test(serverId)) return res.status(400).json({ error: 'Servidor inválido.' });
+  if (!canAccessServer(req.user.id, serverId)) return res.status(403).json({ error: 'Você não faz parte deste servidor.' });
+  const sounds = db.prepare(`SELECT custom_sounds.id, custom_sounds.server_id AS serverId, custom_sounds.name,
+    custom_sounds.mime_type AS mimeType, custom_sounds.created_at AS createdAt,
+    length(custom_sounds.audio_data) AS size, users.username AS ownerUsername,
+    custom_sounds.user_id = ? AS isOwner
+    FROM custom_sounds JOIN users ON users.id = custom_sounds.user_id
+    WHERE custom_sounds.server_id = ? ORDER BY custom_sounds.created_at DESC`)
+    .all(req.user.id, serverId);
+  return res.json({ sounds });
+});
+
+app.post('/api/soundboard', requireAuth, (req, res) => {
+  const serverId = normalize(req.body?.serverId);
+  const name = normalize(req.body?.name).slice(0, 48);
+  const mimeType = normalize(req.body?.mimeType).toLowerCase();
+  const encodedAudio = typeof req.body?.audioBase64 === 'string' ? req.body.audioBase64 : '';
+  if (!SERVER_ID_POLICY.test(serverId) || !name || !ALLOWED_SOUND_TYPES.has(mimeType) || !encodedAudio || !/^[A-Za-z0-9+/]*={0,2}$/.test(encodedAudio)) {
+    return res.status(400).json({ error: 'Informe um nome e um arquivo de áudio válido.' });
+  }
+  if (!canAccessServer(req.user.id, serverId)) return res.status(403).json({ error: 'Você não faz parte deste servidor.' });
+
+  const audioData = Buffer.from(encodedAudio, 'base64');
+  if (!audioData.length || audioData.length > MAX_CUSTOM_SOUND_BYTES || audioData.toString('base64') !== encodedAudio) {
+    return res.status(400).json({ error: 'O áudio deve ter no máximo 4 MB e estar em um formato compatível.' });
+  }
+  const usage = db.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(length(audio_data)), 0) AS total_bytes
+    FROM custom_sounds WHERE user_id = ?`).get(req.user.id);
+  if (usage.count >= MAX_CUSTOM_SOUND_COUNT || usage.total_bytes + audioData.length > MAX_CUSTOM_SOUND_STORAGE_BYTES) {
+    return res.status(413).json({ error: 'Limite da conta atingido: até 20 áudios e 20 MB no total.' });
+  }
+
+  const id = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  db.prepare('INSERT INTO custom_sounds (id, server_id, user_id, name, mime_type, audio_data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(id, serverId, req.user.id, name, mimeType, audioData, createdAt);
+  return res.status(201).json({ sound: { id, serverId, name, mimeType, createdAt, size: audioData.length, ownerUsername: req.user.username, isOwner: true } });
+});
+
+app.get('/api/soundboard/:id/audio', requireAuth, (req, res) => {
+  const serverId = normalize(req.query.serverId);
+  if (!SERVER_ID_POLICY.test(serverId)) return res.status(400).json({ error: 'Servidor inválido.' });
+  if (!canAccessServer(req.user.id, serverId)) return res.status(403).json({ error: 'Você não faz parte deste servidor.' });
+  const sound = db.prepare('SELECT mime_type, audio_data FROM custom_sounds WHERE id = ? AND server_id = ?')
+    .get(req.params.id, serverId);
+  if (!sound) return res.status(404).json({ error: 'Áudio não encontrado.' });
+  res.setHeader('Content-Type', sound.mime_type);
+  res.setHeader('Content-Disposition', 'inline');
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  return res.send(sound.audio_data);
+});
+
+app.delete('/api/soundboard/:id', requireAuth, (req, res) => {
+  const sound = db.prepare('SELECT id, server_id, user_id FROM custom_sounds WHERE id = ?').get(req.params.id);
+  if (!sound) return res.status(404).json({ error: 'Áudio não encontrado.' });
+  if (!canAccessServer(req.user.id, sound.server_id)) return res.status(403).json({ error: 'Você não faz parte deste servidor.' });
+  if (sound.user_id !== req.user.id) return res.status(403).json({ error: 'Somente quem enviou o áudio pode removê-lo.' });
+  db.prepare('DELETE FROM custom_sounds WHERE id = ?').run(sound.id);
+  return res.json({ ok: true });
+});
+
 app.get('/api/friends', requireAuth, (req, res) => {
   const friends = db.prepare(`SELECT users.* FROM friendships
     JOIN users ON users.id = CASE WHEN friendships.user_a = ? THEN friendships.user_b ELSE friendships.user_a END
@@ -442,21 +789,44 @@ app.delete('/api/friends/:id', requireAuth, (req, res) => {
 app.post('/api/server-invites', requireAuth, (req, res) => {
   const receiverId = normalize(req.body?.receiverId);
   const serverId = normalize(req.body?.serverId);
-  const serverName = normalize(req.body?.serverName);
   const inviteUrl = normalize(req.body?.inviteUrl);
   const receiver = db.prepare('SELECT id FROM users WHERE id = ?').get(receiverId);
-  if (!receiver || !serverId || !serverName || !inviteUrl) return res.status(400).json({ error: 'Dados do convite inválidos.' });
+  const server = db.prepare('SELECT id, name FROM servers WHERE id = ?').get(serverId);
+  if (!receiver || !server || !inviteUrl) return res.status(400).json({ error: 'Dados do convite inválidos.' });
+  if (!canAccessServer(req.user.id, serverId)) return res.status(403).json({ error: 'Você não faz parte deste servidor.' });
+  if (receiver.id === req.user.id) return res.status(400).json({ error: 'Você já faz parte deste servidor.' });
   const id = crypto.randomUUID();
   db.prepare(`INSERT INTO server_invites (id, sender_id, receiver_id, server_id, server_name, invite_url, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(id, req.user.id, receiverId, serverId, serverName, inviteUrl, new Date().toISOString());
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(id, req.user.id, receiverId, serverId, server.name, inviteUrl, new Date().toISOString());
   return res.status(201).json({ id, ok: true });
 });
 
 app.get('/api/server-invites', requireAuth, (req, res) => {
-  const invites = db.prepare(`SELECT server_invites.*, users.display_name AS sender_name, users.username AS sender_username
+  const invites = db.prepare(`SELECT server_invites.*, users.display_name AS sender_name, users.username AS sender_username,
+    servers.icon AS server_icon
     FROM server_invites JOIN users ON users.id = server_invites.sender_id
+    JOIN servers ON servers.id = server_invites.server_id
     WHERE receiver_id = ? AND status = 'pending' ORDER BY created_at DESC`).all(req.user.id);
   return res.json({ invites });
+});
+
+app.post('/api/server-invites/:id/accept', requireAuth, (req, res) => {
+  const invite = db.prepare(`SELECT server_invites.id, server_invites.server_id, servers.name, servers.icon
+    FROM server_invites JOIN servers ON servers.id = server_invites.server_id
+    WHERE server_invites.id = ? AND server_invites.receiver_id = ? AND server_invites.status = 'pending'`)
+    .get(req.params.id, req.user.id);
+  if (!invite) return res.status(404).json({ error: 'Convite não encontrado ou já utilizado.' });
+
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    db.prepare('INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)')
+      .run(invite.server_id, req.user.id, 'member', now);
+    db.prepare("UPDATE server_invites SET status = 'accepted' WHERE id = ?").run(invite.id);
+  })();
+  const server = db.prepare(`SELECT servers.*, server_members.role FROM servers
+    JOIN server_members ON server_members.server_id = servers.id
+    WHERE servers.id = ? AND server_members.user_id = ?`).get(invite.server_id, req.user.id);
+  return res.json({ server: formatServer(server, req.user.id) });
 });
 
 app.get('/api/token', (req, res) => {

@@ -104,6 +104,53 @@ function initializePasswordToggles() {
   });
 }
 
+async function submitLoginForm() {
+  const form = document.getElementById('formLogin');
+  const emailInput = document.getElementById('loginEmail');
+  const passwordInput = document.getElementById('loginPassword');
+  const submitButton = document.getElementById('btnLoginSubmit');
+
+  if (!form || !emailInput || !passwordInput) return;
+
+  const email = String(emailInput.value || '').trim();
+  const password = String(passwordInput.value || '').trim();
+
+  if (!email || !password) {
+    showToast('Preencha o e-mail e a senha para entrar.', '⚠️');
+    return;
+  }
+
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = 'Entrando...';
+  }
+
+  try {
+    const user = await loginAccount(email, password, getRecaptchaToken('login'));
+    await finalizeAuthSession(user);
+    showToast('Login realizado com sucesso!', '✅');
+  } catch (error) {
+    resetRecaptcha('login');
+    showToast(error.message || 'Não foi possível entrar.', '⚠️');
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Entrar';
+    }
+  }
+}
+
+function initializeAuthForms() {
+  const loginForm = document.getElementById('formLogin');
+  if (loginForm) {
+    loginForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      submitLoginForm();
+    });
+  }
+
+}
+
 function hasAuthenticatedSession() {
   return Boolean(authenticatedAccount);
 }
@@ -214,7 +261,7 @@ async function registerAccount({ email, username, password, recaptchaToken = '' 
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || 'Não foi possível criar a conta.');
-  return payload.user;
+  return { ...payload.user, homeServerId: payload.homeServerId };
 }
 
 async function loginAccount(email, password, recaptchaToken = '') {
@@ -257,6 +304,11 @@ async function finalizeAuthSession(account) {
   renderVoiceParticipants();
   applyUserProfile();
   loadFriendsFromServer();
+  if (await syncLocalServersWithBackend(account.homeServerId || '', true)) {
+    await loadServerInvites();
+    restoreServerView(activeServerId);
+    await loadCustomSoundboard();
+  }
 }
 
 function logoutAccount() {
@@ -498,11 +550,16 @@ try {
   servers = DEFAULT_SERVERS;
 }
 let activeServerId = servers[0]?.id || 'srv-1';
+let serverSyncTimeout = null;
 
 function saveServers() {
   try {
     localStorage.setItem('badiscord_servers', JSON.stringify(servers));
   } catch (e) {}
+  if (authenticatedAccount) {
+    clearTimeout(serverSyncTimeout);
+    serverSyncTimeout = setTimeout(() => syncLocalServersWithBackend(), 500);
+  }
 }
 
 function playPopSound() {
@@ -628,10 +685,9 @@ function playDeafenSound(deafened) {
 // ELEMENTOS DA INTERFACE
 // ==========================================
 const guildList = document.getElementById('guildList');
-const btnMobileBack = document.getElementById('btnMobileBack');
-if (btnMobileBack) {
-  btnMobileBack.addEventListener('click', () => document.body.classList.remove('mobile-stage-open'));
-}
+document.querySelectorAll('.mobile-back-button').forEach((button) => {
+  button.addEventListener('click', () => document.body.classList.remove('mobile-stage-open'));
+});
 const btnAddGuild = document.getElementById('btnAddGuild');
 const btnHomeDM = document.getElementById('btnHomeDM');
 const serverHeaderWrapper = document.getElementById('serverHeaderWrapper');
@@ -698,6 +754,7 @@ const btnGameQuickStream = document.getElementById('btnGameQuickStream');
 // Popup Flutuante do Soundboard Rápido
 const soundboardQuickPopup = document.getElementById('soundboardQuickPopup');
 const btnCloseSoundboardQuick = document.getElementById('btnCloseSoundboardQuick');
+const customSoundboardQuickGrid = document.getElementById('customSoundboardQuickGrid');
 
 // Notificações Toast
 const toastNotification = document.getElementById('toastNotification');
@@ -857,6 +914,7 @@ function selectServer(serverId) {
     if (guildBadge) guildBadge.textContent = srv.icon || '🍺';
     renderChannels(srv);
   }
+  if (authenticatedAccount) loadCustomSoundboard();
 }
 
 // Renderização dos Canais de Texto e Voz do Servidor
@@ -1959,14 +2017,6 @@ if (menuItemPrivacy) {
   menuItemPrivacy.addEventListener('click', () => {
     closeServerDropdown();
     showToast('🔒 Configurações de privacidade salvas com sucesso.', '🔒');
-  });
-}
-
-if (menuItemEditProfile) {
-  menuItemEditProfile.addEventListener('click', () => {
-    closeServerDropdown();
-    openSettings();
-    switchSettingsTab('account');
   });
 }
 
@@ -3551,27 +3601,39 @@ document.querySelectorAll('.server-icon-choice').forEach(btn => {
 
 // Criar Servidor
 if (btnConfirmServer) {
-  btnConfirmServer.addEventListener('click', () => {
+  btnConfirmServer.addEventListener('click', async () => {
     const name = inputServerName ? inputServerName.value.trim() : '';
     if (!name) {
       showToast('Por favor, informe o nome do seu servidor!', '⚠️');
       return;
     }
 
-    const newSrv = {
-      id: 'srv-' + Date.now(),
-      name: name,
-      icon: selectedServerIcon,
-      textChannels: ['geral', 'clipes', 'comandos'],
-      voiceChannels: ['Lounge 🔊', 'Call do Jogo']
-    };
-
-    servers.push(newSrv);
-    saveServers();
-    closeCreateServerModal();
-
-    showToast(`Servidor "${name}" criado com sucesso! 🎉`, '✅');
-    restoreServerView(newSrv.id);
+    btnConfirmServer.disabled = true;
+    try {
+      const response = await fetch('/api/servers', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ name, icon: selectedServerIcon })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível criar o servidor.');
+      const newSrv = {
+        ...payload.server,
+        textChannels: ['geral', 'clipes', 'comandos'],
+        voiceChannels: ['Lounge 🔊', 'Call do Jogo']
+      };
+      servers.push(newSrv);
+      saveServers();
+      closeCreateServerModal();
+      await syncLocalServersWithBackend(newSrv.id);
+      showToast(`Servidor "${name}" criado com sucesso! 🎉`, '✅');
+      restoreServerView(newSrv.id);
+    } catch (error) {
+      showToast(error.message || 'Não foi possível criar o servidor.', '⚠️');
+    } finally {
+      btnConfirmServer.disabled = false;
+    }
   });
 }
 
@@ -3583,12 +3645,28 @@ const PUBLIC_SERVERS = [
   { id: 'pub-4', name: 'Competitivo & Scrims 🏆', icon: '🏆', desc: 'Lobbies de CS2, Valorant e campeonatos da galera.' }
 ];
 
-function renderExploreServers() {
+async function renderExploreServers() {
   if (!exploreServersList) return;
   exploreServersList.innerHTML = '';
 
-  PUBLIC_SERVERS.forEach(pub => {
-    const alreadyIn = servers.some(s => s.name === pub.name);
+  let publicServers = PUBLIC_SERVERS;
+  try {
+    const response = await fetch('/api/servers/public', { headers: { Accept: 'application/json' } });
+    if (response.ok) {
+      const payload = await response.json();
+      if (Array.isArray(payload.servers)) {
+        publicServers = payload.servers.map((server) => ({
+          ...server,
+          desc: server.description || PUBLIC_SERVERS.find((item) => item.id === server.id)?.desc || ''
+        }));
+      }
+    }
+  } catch (error) {
+    console.warn('Não foi possível carregar servidores públicos:', error);
+  }
+
+  publicServers.forEach(pub => {
+    const alreadyIn = servers.some(s => s.id === pub.id);
     const card = document.createElement('div');
     card.className = 'explore-server-card';
 
@@ -3619,16 +3697,19 @@ function renderExploreServers() {
     btnJoin.disabled = alreadyIn;
     if (alreadyIn) btnJoin.style.opacity = '0.5';
 
-    btnJoin.addEventListener('click', () => {
+    btnJoin.addEventListener('click', async () => {
       const newSrv = {
-        id: 'srv-' + Date.now(),
+        id: pub.id,
         name: pub.name,
         icon: pub.icon,
-        textChannels: ['geral', 'apresentacao', 'midia'],
-        voiceChannels: ['Bate-Papo 🔊', 'Call Geral']
+        isPublic: true,
+        textChannels: pub.textChannels?.length ? pub.textChannels : ['geral', 'apresentacao', 'midia'],
+        voiceChannels: pub.voiceChannels?.length ? pub.voiceChannels : ['Bate-Papo 🔊', 'Call Geral']
       };
       servers.push(newSrv);
       saveServers();
+      const joined = await syncLocalServersWithBackend(newSrv.id);
+      if (!joined) return;
       closeCreateServerModal();
       showToast(`Você entrou na comunidade "${pub.name}"! 🎉`, '✅');
       restoreServerView(newSrv.id);
@@ -4703,6 +4784,7 @@ showAuthOverlay();
 openAuthView('viewAuthLogin');
 initializeRecaptcha();
 initializePasswordToggles();
+initializeAuthForms();
 
 // ==========================================
 // CONFIGURAÇÕES DE VOZ E VÍDEO (ESTILO DISCORD)
@@ -5112,7 +5194,8 @@ function applyProfileCustomization() {
   const decoration = userProfile.profileDecoration || 'none';
   const widget = userProfile.profileWidget || 'none';
   const targets = [
-    document.getElementById('myAvatar'),
+    document.querySelector('.user-avatar-wrapper'),
+    document.getElementById('voiceSelfAvatarFrame'),
     document.getElementById('presenceAvatarImg'),
     document.getElementById('profileAvatarPreview')
   ].filter(Boolean);
@@ -5195,9 +5278,85 @@ if (btnSidebarProfileHeader) {
 // ==========================================
 // SOUNDBOARD: EFEITOS SONOROS INTERATIVOS
 // ==========================================
+let soundboardVolume = 100;
+let soundboardMuted = false;
+let soundboardAudioContext = null;
+let soundboardMasterGain = null;
+let customSoundboardSounds = [];
+let customSoundboardServerId = '';
+const activeCustomSoundPlayers = new Set();
+
+try {
+  const savedVolume = Number.parseInt(localStorage.getItem('badiscord_soundboard_volume'), 10);
+  if (Number.isFinite(savedVolume)) soundboardVolume = Math.max(0, Math.min(100, savedVolume));
+  soundboardMuted = localStorage.getItem('badiscord_soundboard_muted') === 'true';
+} catch (error) {}
+
+function getSoundboardAudioContext() {
+  if (!soundboardAudioContext) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    soundboardAudioContext = new AudioContextClass();
+    soundboardMasterGain = soundboardAudioContext.createGain();
+    soundboardMasterGain.connect(soundboardAudioContext.destination);
+  }
+  if (soundboardAudioContext.state === 'suspended') {
+    soundboardAudioContext.resume().catch(() => {});
+  }
+  return soundboardAudioContext;
+}
+
+function updateSoundboardControls() {
+  const muteButton = document.getElementById('btnSoundboardMute');
+  const muteIcon = document.getElementById('soundboardMuteIcon');
+  const muteLabel = document.getElementById('soundboardMuteLabel');
+  const volumeSlider = document.getElementById('soundboardVolume');
+  const volumeValue = document.getElementById('soundboardVolumeValue');
+
+  if (soundboardMasterGain && soundboardAudioContext) {
+    const outputVolume = soundboardMuted ? 0 : soundboardVolume / 100;
+    soundboardMasterGain.gain.setTargetAtTime(outputVolume, soundboardAudioContext.currentTime, 0.015);
+  }
+  activeCustomSoundPlayers.forEach((audio) => {
+    audio.volume = soundboardVolume / 100;
+    audio.muted = soundboardMuted;
+  });
+  if (muteButton) {
+    muteButton.setAttribute('aria-pressed', String(soundboardMuted));
+    muteButton.title = soundboardMuted ? 'Ativar sons' : 'Mutar sons';
+  }
+  if (muteIcon) muteIcon.textContent = soundboardMuted ? '🔇' : '🔊';
+  if (muteLabel) muteLabel.textContent = soundboardMuted ? 'Ativar sons' : 'Mutar sons';
+  if (volumeSlider) volumeSlider.value = String(soundboardVolume);
+  if (volumeValue) volumeValue.textContent = `${soundboardVolume}%`;
+}
+
+function initializeSoundboardControls() {
+  const muteButton = document.getElementById('btnSoundboardMute');
+  const volumeSlider = document.getElementById('soundboardVolume');
+  if (muteButton) {
+    muteButton.addEventListener('click', () => {
+      soundboardMuted = !soundboardMuted;
+      localStorage.setItem('badiscord_soundboard_muted', String(soundboardMuted));
+      updateSoundboardControls();
+    });
+  }
+  if (volumeSlider) {
+    volumeSlider.addEventListener('input', () => {
+      soundboardVolume = Number(volumeSlider.value);
+      localStorage.setItem('badiscord_soundboard_volume', String(soundboardVolume));
+      updateSoundboardControls();
+    });
+  }
+  updateSoundboardControls();
+}
+
+initializeSoundboardControls();
+
 function playSoundEffect(type) {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = getSoundboardAudioContext();
+    if (!ctx || soundboardMuted || soundboardVolume === 0) return;
     const now = ctx.currentTime;
 
     if (type === 'airhorn') {
@@ -5209,7 +5368,7 @@ function playSoundEffect(type) {
         gain.gain.setValueAtTime(0.25, now + idx * 0.12);
         gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.12 + 0.1);
         osc.connect(gain);
-        gain.connect(ctx.destination);
+        gain.connect(soundboardMasterGain);
         osc.start(now + idx * 0.12);
         osc.stop(now + idx * 0.12 + 0.1);
       });
@@ -5222,7 +5381,7 @@ function playSoundEffect(type) {
       gain.gain.setValueAtTime(0.25, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(soundboardMasterGain);
       osc.start(now);
       osc.stop(now + 0.22);
     } else if (type === 'bell') {
@@ -5233,7 +5392,7 @@ function playSoundEffect(type) {
       gain.gain.setValueAtTime(0.3, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(soundboardMasterGain);
       osc.start(now);
       osc.stop(now + 0.65);
     } else if (type === 'gameover') {
@@ -5245,7 +5404,7 @@ function playSoundEffect(type) {
         gain.gain.setValueAtTime(0.18, now + idx * 0.14);
         gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.14 + 0.12);
         osc.connect(gain);
-        gain.connect(ctx.destination);
+        gain.connect(soundboardMasterGain);
         osc.start(now + idx * 0.14);
         osc.stop(now + idx * 0.14 + 0.12);
       });
@@ -5258,7 +5417,7 @@ function playSoundEffect(type) {
       gain.gain.setValueAtTime(0.25, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(soundboardMasterGain);
       osc.start(now);
       osc.stop(now + 0.15);
     } else {
@@ -5270,7 +5429,7 @@ function playSoundEffect(type) {
       gain.gain.setValueAtTime(0.25, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(soundboardMasterGain);
       osc.start(now);
       osc.stop(now + 0.25);
     }
@@ -5282,6 +5441,269 @@ document.querySelectorAll('.soundboard-btn').forEach(btn => {
     playSoundEffect(btn.dataset.sound);
   });
 });
+
+function playCustomSound(sound) {
+  if (soundboardMuted || soundboardVolume === 0) return;
+  const audio = new Audio(`/api/soundboard/${encodeURIComponent(sound.id)}/audio?serverId=${encodeURIComponent(sound.serverId || activeServerId)}`);
+  audio.volume = soundboardVolume / 100;
+  activeCustomSoundPlayers.add(audio);
+  audio.addEventListener('ended', () => activeCustomSoundPlayers.delete(audio), { once: true });
+  audio.addEventListener('error', () => {
+    activeCustomSoundPlayers.delete(audio);
+    showToast('Não foi possível reproduzir esse áudio.', '⚠️');
+  }, { once: true });
+  audio.play().catch(() => {
+    activeCustomSoundPlayers.delete(audio);
+    showToast('Não foi possível reproduzir esse áudio.', '⚠️');
+  });
+}
+
+function renderCustomSoundboard() {
+  const settingsGrid = document.getElementById('customSoundboardGrid');
+  const quickGrid = customSoundboardQuickGrid;
+  if (settingsGrid) settingsGrid.replaceChildren();
+  if (quickGrid) {
+    quickGrid.replaceChildren();
+    quickGrid.style.display = customSoundboardSounds.length ? 'grid' : 'none';
+  }
+
+  customSoundboardSounds.forEach((sound) => {
+    if (settingsGrid) {
+      const item = document.createElement('div');
+      item.className = 'custom-soundboard-item';
+
+      const playButton = document.createElement('button');
+      playButton.type = 'button';
+      playButton.className = 'soundboard-btn';
+      playButton.textContent = `🔊 ${sound.name}`;
+      playButton.title = `Reproduzir ${sound.name}${sound.ownerUsername ? ` • enviado por @${sound.ownerUsername}` : ''}`;
+      playButton.addEventListener('click', () => playCustomSound(sound));
+
+      item.appendChild(playButton);
+      if (sound.isOwner) {
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'custom-soundboard-delete';
+        deleteButton.textContent = '✕';
+        deleteButton.title = `Remover ${sound.name}`;
+        deleteButton.setAttribute('aria-label', `Remover ${sound.name}`);
+        deleteButton.addEventListener('click', () => deleteCustomSound(sound));
+        item.appendChild(deleteButton);
+      }
+      settingsGrid.appendChild(item);
+    }
+
+    if (quickGrid) {
+      const quickButton = document.createElement('button');
+      quickButton.type = 'button';
+      quickButton.className = 'sb-btn';
+      quickButton.textContent = `🔊 ${sound.name}`;
+      quickButton.title = `Reproduzir ${sound.name}${sound.ownerUsername ? ` • enviado por @${sound.ownerUsername}` : ''}`;
+      quickButton.addEventListener('click', () => playCustomSound(sound));
+      quickGrid.appendChild(quickButton);
+    }
+  });
+}
+
+async function syncLocalServersWithBackend(preferredServerId = '', selectHomeServer = false) {
+  if (!authenticatedAccount) return false;
+  try {
+    const response = await fetch('/api/servers/sync', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        servers: servers.map(({ id, name, icon, iconUrl, bannerColor, description, traits, serverTag, serverTagBadge, serverTagColor, voiceSettings, textChannels, voiceChannels }) => ({
+          id, name, icon, iconUrl, bannerColor, description, traits, serverTag, serverTagBadge, serverTagColor, voiceSettings, textChannels, voiceChannels
+        }))
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível sincronizar os servidores.');
+    const localServersById = new Map(servers.map((server) => [server.id, server]));
+    const accessibleServers = Array.isArray(payload.servers) ? payload.servers : [];
+    servers = accessibleServers.map((server) => {
+      const localServer = localServersById.get(server.id) || {};
+      return {
+        ...localServer,
+        ...server,
+        isPublic: Boolean(server.isPublic),
+        textChannels: server.textChannels?.length ? server.textChannels : (localServer.textChannels || ['geral']),
+        voiceChannels: server.voiceChannels?.length ? server.voiceChannels : (localServer.voiceChannels || ['Geral 🔊'])
+      };
+    });
+    if (payload.homeServerId) {
+      try {
+        localStorage.setItem('badiscord_home_server_id', payload.homeServerId);
+      } catch (error) {}
+    }
+    const nextServerId = [preferredServerId, selectHomeServer ? payload.homeServerId : '', activeServerId, payload.homeServerId, servers[0]?.id]
+      .find((id) => id && servers.some((server) => server.id === id));
+    if (!nextServerId) throw new Error('Nenhum servidor acessível para esta conta.');
+    activeServerId = nextServerId;
+    try {
+      localStorage.setItem('badiscord_servers', JSON.stringify(servers));
+    } catch (error) {}
+    renderGuilds();
+    selectServer(activeServerId);
+    return true;
+  } catch (error) {
+    console.warn('Não foi possível sincronizar os servidores:', error);
+    showToast(error.message || 'Não foi possível sincronizar os servidores.', '⚠️');
+    return false;
+  }
+}
+
+async function loadServerInvites() {
+  try {
+    const response = await fetch('/api/server-invites', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' }
+    });
+    if (!response.ok) return;
+    const payload = await response.json();
+    for (const invite of (Array.isArray(payload.invites) ? payload.invites : [])) {
+      const serverName = invite.server_name || 'Servidor';
+      if (!window.confirm(`@${invite.sender_username} convidou você para "${serverName}". Entrar no servidor?`)) continue;
+
+      const acceptResponse = await fetch(`/api/server-invites/${encodeURIComponent(invite.id)}/accept`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Accept: 'application/json' }
+      });
+      const acceptPayload = await acceptResponse.json().catch(() => ({}));
+      if (!acceptResponse.ok) {
+        showToast(acceptPayload.error || 'Não foi possível aceitar o convite.', '⚠️');
+        continue;
+      }
+
+      const server = acceptPayload.server;
+      if (server && !servers.some((item) => item.id === server.id)) {
+        servers.push({
+          ...server,
+          id: server.id,
+          name: server.name,
+          icon: server.icon || '🎮',
+          textChannels: server.textChannels?.length ? server.textChannels : ['geral', 'clipes-e-jogos'],
+          voiceChannels: server.voiceChannels?.length ? server.voiceChannels : ['Geral 🔊']
+        });
+        saveServers();
+        renderGuilds();
+      }
+      showToast(`Você entrou em ${server?.name || serverName}.`, '✅');
+    }
+  } catch (error) {
+    console.warn('Não foi possível carregar convites de servidor:', error);
+  }
+}
+
+async function loadCustomSoundboard() {
+  if (!authenticatedAccount) return;
+  const serverId = activeServerId;
+  if (!serverId) return;
+  if (customSoundboardServerId !== serverId) {
+    customSoundboardServerId = serverId;
+    customSoundboardSounds = [];
+    renderCustomSoundboard();
+  }
+  try {
+    const response = await fetch(`/api/soundboard?serverId=${encodeURIComponent(serverId)}`, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' }
+    });
+    if (!response.ok) throw new Error('Não foi possível carregar os áudios deste servidor.');
+    const payload = await response.json();
+    if (serverId !== activeServerId) return;
+    customSoundboardSounds = Array.isArray(payload.sounds) ? payload.sounds : [];
+    renderCustomSoundboard();
+  } catch (error) {
+    if (serverId === activeServerId) showToast(error.message || 'Não foi possível carregar os áudios deste servidor.', '⚠️');
+  }
+}
+
+async function deleteCustomSound(sound) {
+  if (!window.confirm(`Remover o áudio "${sound.name}"?`)) return;
+  try {
+    const response = await fetch(`/api/soundboard/${encodeURIComponent(sound.id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { Accept: 'application/json' }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível remover o áudio.');
+    customSoundboardSounds = customSoundboardSounds.filter((item) => item.id !== sound.id);
+    renderCustomSoundboard();
+    showToast('Áudio removido.', '✅');
+  } catch (error) {
+    showToast(error.message || 'Não foi possível remover o áudio.', '⚠️');
+  }
+}
+
+const soundboardUploadButton = document.getElementById('btnSoundboardUpload');
+if (soundboardUploadButton) {
+  soundboardUploadButton.addEventListener('click', async () => {
+    const fileInput = document.getElementById('soundboardAudioFile');
+    const nameInput = document.getElementById('soundboardAudioName');
+    const status = document.getElementById('soundboardUploadStatus');
+    const file = fileInput?.files?.[0];
+    if (!file) {
+      if (status) status.textContent = 'Selecione um arquivo de áudio.';
+      return;
+    }
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    const fallbackTypes = {
+      aac: 'audio/aac', flac: 'audio/flac', m4a: 'audio/x-m4a', mp3: 'audio/mpeg',
+      mp4: 'audio/mp4', oga: 'audio/ogg', ogg: 'audio/ogg', opus: 'audio/ogg',
+      wav: 'audio/wav', webm: 'audio/webm'
+    };
+    const mimeType = file.type.startsWith('audio/') ? file.type : (fallbackTypes[extension] || '');
+    if (!mimeType) {
+      if (status) status.textContent = 'Escolha um arquivo de áudio compatível.';
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      if (status) status.textContent = 'O arquivo ultrapassa o limite de 4 MB.';
+      return;
+    }
+
+    soundboardUploadButton.disabled = true;
+    soundboardUploadButton.textContent = 'Enviando...';
+    if (status) status.textContent = '';
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Não foi possível ler o arquivo.'));
+        reader.readAsDataURL(file);
+      });
+      const audioBase64 = String(dataUrl).split(',')[1] || '';
+      const fallbackName = file.name.replace(/\.[^.]+$/, '');
+      const response = await fetch('/api/soundboard', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          name: nameInput?.value.trim() || fallbackName,
+          serverId: activeServerId,
+          mimeType,
+          audioBase64
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível adicionar o áudio.');
+      if (fileInput) fileInput.value = '';
+      if (nameInput) nameInput.value = '';
+      await loadCustomSoundboard();
+      if (status) status.textContent = 'Áudio adicionado.';
+      showToast('Áudio adicionado ao soundboard deste servidor.', '✅');
+    } catch (error) {
+      if (status) status.textContent = error.message || 'Não foi possível adicionar o áudio.';
+    } finally {
+      soundboardUploadButton.disabled = false;
+      soundboardUploadButton.textContent = 'Adicionar áudio';
+    }
+  });
+}
 
 // ==========================================
 // SELETOR DE TEMAS DE APARÊNCIA (COM PERSISTÊNCIA)
@@ -5853,6 +6275,8 @@ initializeFreeProfileCustomization();
   const srvPreviewInitial = document.getElementById('srvPreviewInitial');
   const srvPreviewImg = document.getElementById('srvPreviewImg');
   const srvDescriptionInput = document.getElementById('srvDescriptionInput');
+  const srvNameInput = document.getElementById('srvNameInput');
+  const srvPublicToggle = document.getElementById('srvPublicToggle');
   const srvBannerPalette = document.getElementById('srvBannerPalette');
   const btnChangeServerIcon = document.getElementById('btnChangeServerIcon');
   const btnRemoveServerIcon = document.getElementById('btnRemoveServerIcon');
@@ -5874,12 +6298,16 @@ initializeFreeProfileCustomization();
       iconUrl: target.iconUrl || '',
       bannerColor: target.bannerColor || '#eab308',
       description: target.description || '',
-      traits: [...(target.traits || ['', '', '', '', ''])]
+      traits: [...(target.traits || ['', '', '', '', ''])],
+      isPublic: Boolean(target.isPublic)
     };
 
     if (srvSettingsTitle) srvSettingsTitle.textContent = target.name;
     if (srvPreviewName) srvPreviewName.textContent = target.name;
+    if (srvNameInput) srvNameInput.value = target.name;
+    if (srvPublicToggle) srvPublicToggle.checked = tempServerState.isPublic;
     if (srvDescriptionInput) srvDescriptionInput.value = tempServerState.description;
+    if (btnSaveServerSettings) btnSaveServerSettings.disabled = target.isOwner === false;
 
     // Traits
     for (let i = 1; i <= 5; i++) {
@@ -5888,6 +6316,7 @@ initializeFreeProfileCustomization();
     }
 
     updateServerPreview();
+    switchServerSettingsTab('profile');
     if (srvSaveBar) srvSaveBar.style.display = 'none';
     serverSettingsOverlay.style.display = 'flex';
   }
@@ -5898,6 +6327,8 @@ initializeFreeProfileCustomization();
   }
 
   function updateServerPreview() {
+    if (srvSettingsTitle) srvSettingsTitle.textContent = tempServerState.name || 'Servidor';
+    if (srvPreviewName) srvPreviewName.textContent = tempServerState.name || 'Servidor';
     if (srvPreviewBanner) {
       srvPreviewBanner.style.background = tempServerState.bannerColor;
     }
@@ -5925,6 +6356,21 @@ initializeFreeProfileCustomization();
   // Event Listeners
   if (btnCloseServerSettings) {
     btnCloseServerSettings.addEventListener('click', closeServerSettings);
+  }
+
+  if (srvNameInput) {
+    srvNameInput.addEventListener('input', () => {
+      tempServerState.name = srvNameInput.value.trim();
+      updateServerPreview();
+      markUnsavedChanges();
+    });
+  }
+
+  if (srvPublicToggle) {
+    srvPublicToggle.addEventListener('change', () => {
+      tempServerState.isPublic = srvPublicToggle.checked;
+      markUnsavedChanges();
+    });
   }
 
   document.addEventListener('keydown', (e) => {
@@ -6077,22 +6523,52 @@ initializeFreeProfileCustomization();
 
   // Salvar
   if (btnSaveServerSettings) {
-    btnSaveServerSettings.addEventListener('click', () => {
-      if (!currentSrvEditing) return;
-      currentSrvEditing.bannerColor = tempServerState.bannerColor;
-      currentSrvEditing.iconUrl = tempServerState.iconUrl;
-      currentSrvEditing.description = tempServerState.description;
-      currentSrvEditing.traits = tempServerState.traits;
-      currentSrvEditing.serverTag = tempServerState.serverTag || 'KBM!';
-      currentSrvEditing.serverTagBadge = tempServerState.serverTagBadge || '🗡️';
-      currentSrvEditing.serverTagColor = tempServerState.serverTagColor || '#eb459e';
-
-      saveServers();
-      renderServersBar();
-      if (typeof showToast === 'function') {
-        showToast('Configurações e Tag do servidor salvas com sucesso!', '✅');
+    btnSaveServerSettings.addEventListener('click', async () => {
+      if (!currentSrvEditing || currentSrvEditing.isOwner === false) return;
+      const name = tempServerState.name.trim();
+      if (!name) {
+        showToast('Informe um nome para o servidor.', '⚠️');
+        return;
       }
-      if (srvSaveBar) srvSaveBar.style.display = 'none';
+      btnSaveServerSettings.disabled = true;
+      try {
+        const response = await fetch(`/api/servers/${encodeURIComponent(currentSrvEditing.id)}`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            name,
+            icon: currentSrvEditing.icon,
+            iconUrl: tempServerState.iconUrl,
+            bannerColor: tempServerState.bannerColor,
+            description: tempServerState.description,
+            traits: tempServerState.traits,
+            serverTag: tempServerState.serverTag,
+            serverTagBadge: tempServerState.serverTagBadge,
+            serverTagColor: tempServerState.serverTagColor,
+            textChannels: currentSrvEditing.textChannels,
+            voiceChannels: currentSrvEditing.voiceChannels,
+            isPublic: srvPublicToggle?.checked || false
+          })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Não foi possível salvar o servidor.');
+
+        Object.assign(currentSrvEditing, payload.server, {
+          serverTag: tempServerState.serverTag || 'KBM!',
+          serverTagBadge: tempServerState.serverTagBadge || '🗡️',
+          serverTagColor: tempServerState.serverTagColor || '#eb459e'
+        });
+        saveServers();
+        renderGuilds();
+        selectServer(activeServerId);
+        closeServerSettings();
+        showToast('Configurações do servidor salvas.', '✅');
+      } catch (error) {
+        showToast(error.message || 'Não foi possível salvar o servidor.', '⚠️');
+      } finally {
+        btnSaveServerSettings.disabled = currentSrvEditing?.isOwner === false;
+      }
     });
   }
 
@@ -6105,22 +6581,30 @@ initializeFreeProfileCustomization();
 
   // Excluir Servidor
   if (srvSettingsBtnDelete) {
-    srvSettingsBtnDelete.addEventListener('click', () => {
-      if (!currentSrvEditing) return;
-      if (confirm(`Tem certeza que deseja excluir permanentemente o servidor "${currentSrvEditing.name}"?`)) {
+    srvSettingsBtnDelete.addEventListener('click', async () => {
+      if (!currentSrvEditing || currentSrvEditing.isOwner === false) return;
+      if (!confirm(`Tem certeza que deseja excluir permanentemente o servidor "${currentSrvEditing.name}"?`)) return;
+      try {
+        const response = await fetch(`/api/servers/${encodeURIComponent(currentSrvEditing.id)}`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: { Accept: 'application/json' }
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Não foi possível excluir o servidor.');
+        const deletedServerId = currentSrvEditing.id;
+        servers = servers.filter((server) => server.id !== deletedServerId);
         closeServerSettings();
-        const idx = servers.findIndex(s => s.id === currentSrvEditing.id);
-        if (idx !== -1) {
-          servers.splice(idx, 1);
-          saveServers();
-          if (servers.length > 0) {
-            selectServer(servers[0].id);
-          } else {
-            switchView('home');
-          }
-          renderServersBar();
-          showToast('Servidor excluído.', '🗑️');
+        saveServers();
+        renderServersBar();
+        if (deletedServerId === activeServerId) {
+          const homeServerId = localStorage.getItem('badiscord_home_server_id');
+          const nextServer = servers.find((server) => server.id === homeServerId) || servers[0];
+          if (nextServer) restoreServerView(nextServer.id);
         }
+        showToast('Servidor excluído.', '🗑️');
+      } catch (error) {
+        showToast(error.message || 'Não foi possível excluir o servidor.', '⚠️');
       }
     });
   }

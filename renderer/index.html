@@ -31,16 +31,16 @@
           <p class="auth-subtitle">Estamos muito animados em ver você novamente!</p>
         </div>
 
-        <form class="auth-form" id="formLogin" onsubmit="return false;">
+        <form class="auth-form" id="formLogin" autocomplete="on">
           <div class="auth-field-group">
             <label class="auth-field-label" for="loginEmail">E-MAIL OU NÚMERO DE TELEFONE <span class="auth-required">*</span></label>
-            <input type="email" class="auth-input" id="loginEmail" placeholder="seu-email@exemplo.com" autocomplete="username" required>
+            <input type="email" class="auth-input" id="loginEmail" name="username" placeholder="seu-email@exemplo.com" autocomplete="username" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" required>
           </div>
 
           <div class="auth-field-group">
             <label class="auth-field-label" for="loginPassword">SENHA <span class="auth-required">*</span></label>
             <div class="password-input-wrap">
-              <input type="password" class="auth-input" id="loginPassword" placeholder="Sua senha" minlength="8" autocomplete="current-password" required>
+              <input type="password" class="auth-input" id="loginPassword" name="password" placeholder="Sua senha" minlength="8" autocomplete="current-password" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false" required>
               <button type="button" class="password-toggle" data-password-toggle="loginPassword" aria-label="Mostrar senha">👁</button>
             </div>
             <span class="auth-link-forgot" id="btnGoToForgot">Esqueceu sua senha?</span>
@@ -480,9 +480,11 @@
           <div class="participants-grid" id="participantsGrid" style="display: none;"></div>
 
           <aside class="voice-self-card" id="voiceSelfCard" aria-live="polite" style="display: none;">
-            <div class="voice-self-avatar" id="voiceSelfAvatar">
-              <span id="voiceSelfInitial">B</span>
-              <img id="voiceSelfAvatarImg" alt="" style="display: none;">
+            <div class="voice-self-avatar-frame" id="voiceSelfAvatarFrame">
+              <div class="voice-self-avatar" id="voiceSelfAvatar">
+                <span id="voiceSelfInitial">B</span>
+                <img id="voiceSelfAvatarImg" alt="" style="display: none;">
+              </div>
             </div>
             <div class="voice-self-details">
               <strong id="voiceSelfName">Bads</strong>
@@ -523,6 +525,7 @@
       <!-- 2. VISÃO DE CANAL DE CHAT DE TEXTO (Foto 1) -->
       <div class="view-pane" id="textChatView" style="display: none;">
         <header class="chat-header">
+          <button type="button" class="mobile-back-button" aria-label="Voltar para canais">☰</button>
           <div class="chat-header-left">
             <span class="chat-header-hash">#</span>
             <h3 class="chat-channel-title" id="chatChannelTitle">regras-da-casa</h3>
@@ -588,6 +591,7 @@
       <!-- 3. VISÃO DE INÍCIO / AMIGOS / MENSAGENS DIRETAS (Foto 2) -->
       <div class="view-pane" id="friendsView" style="display: none;">
         <header class="friends-header">
+          <button type="button" class="mobile-back-button" aria-label="Voltar para servidores">☰</button>
           <div class="friends-header-left">
             <span class="friends-header-icon">👥</span>
             <h3>Amigos</h3>
@@ -660,6 +664,7 @@
       <button class="sb-btn" data-sound="laser">⚡ Laser</button>
       <button class="sb-btn" data-sound="correct">✨ Vitória GG</button>
     </div>
+    <div class="sb-grid" id="customSoundboardQuickGrid" style="display: none;"></div>
   </div>
 
   <!-- Modal de Confirmação ao trocar de canal de voz -->
@@ -1659,6 +1664,17 @@
         <div class="settings-tab-pane" id="pane-soundboard" style="display: none;">
           <h2 class="settings-section-title">Painel de Efeitos Sonoros (Soundboard)</h2>
           <p class="section-desc">Clique nos botões abaixo para tocar sons instantâneos na chamada:</p>
+          <div class="soundboard-controls">
+            <button type="button" class="soundboard-mute-button" id="btnSoundboardMute" aria-pressed="false">
+              <span id="soundboardMuteIcon" aria-hidden="true">🔊</span>
+              <span id="soundboardMuteLabel">Mutar sons</span>
+            </button>
+            <label class="soundboard-volume-control" for="soundboardVolume">
+              <span>Volume</span>
+              <input type="range" id="soundboardVolume" min="0" max="100" step="1" value="100">
+            </label>
+            <output class="soundboard-volume-value" id="soundboardVolumeValue" for="soundboardVolume">100%</output>
+          </div>
           <div class="soundboard-grid">
             <button class="soundboard-btn" data-sound="airhorn">📢 Airhorn (Corneta)</button>
             <button class="soundboard-btn" data-sound="badumtss">🥁 Ba-Dum-Tss</button>
@@ -1669,6 +1685,20 @@
             <button class="soundboard-btn" data-sound="gameover">🎮 8-Bit Over</button>
             <button class="soundboard-btn" data-sound="laser">🔫 Laser</button>
           </div>
+          <h3 class="soundboard-custom-title">Áudios deste servidor</h3>
+          <div class="soundboard-upload">
+            <label class="soundboard-upload-field">
+              <span>Nome do efeito</span>
+              <input type="text" id="soundboardAudioName" maxlength="48" placeholder="Ex.: comemoração">
+            </label>
+            <label class="soundboard-upload-field">
+              <span>Arquivo de áudio</span>
+              <input type="file" id="soundboardAudioFile" accept="audio/*">
+            </label>
+            <button type="button" class="soundboard-upload-button" id="btnSoundboardUpload">Adicionar áudio</button>
+            <span class="soundboard-upload-status" id="soundboardUploadStatus" role="status" aria-live="polite"></span>
+          </div>
+          <div class="soundboard-grid" id="customSoundboardGrid"></div>
         </div>
 
         <!-- ABA: APARÊNCIA -->
@@ -1840,6 +1870,24 @@
       <div class="server-settings-inner" id="paneSrvProfile">
         <!-- Coluna da Esquerda: Formulários de Configuração -->
         <div class="srv-content-left">
+          <div class="srv-form-section">
+            <h3 class="srv-section-heading">Nome do servidor</h3>
+            <input type="text" class="srv-trait-input" id="srvNameInput" maxlength="32" autocomplete="off">
+          </div>
+
+          <div class="srv-divider"></div>
+
+          <div class="srv-form-section">
+            <h3 class="srv-section-heading">Visibilidade</h3>
+            <p class="srv-section-sub">Servidores privados ficam acessíveis por convite. Servidores públicos podem ser encontrados na aba Explorar.</p>
+            <div class="toggle-row">
+              <span class="toggle-title">Tornar servidor público</span>
+              <label class="discord-switch"><input type="checkbox" id="srvPublicToggle"><span class="discord-switch-slider"></span></label>
+            </div>
+          </div>
+
+          <div class="srv-divider"></div>
+
           <!-- Seção: Ícone -->
           <div class="srv-form-section">
             <h3 class="srv-section-heading">Ícone</h3>
