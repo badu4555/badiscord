@@ -443,7 +443,7 @@
               <span id="streamerName">Transmitindo Tela</span>
               <span class="live-viewer-count" id="liveViewerCount" aria-live="polite">👁 0</span>
               <span id="streamLoopbackBadge" class="stream-loopback-badge" style="display: none;">
-                🎧 Prévia Local Mudo (Anti-Eco)
+                🔊 Áudio enviado somente para quem está assistindo
               </span>
             </div>
 
@@ -457,7 +457,7 @@
 
             <!-- Barra Flutuante de Controles da Live (Estilo Discord / Twitch) -->
             <div class="stream-player-controls" id="streamPlayerControls">
-              <div class="stream-controls-left">
+              <div class="stream-controls-left" id="streamAudioControls">
                 <button class="stream-ctrl-btn" id="btnStreamAudioMute" title="Silenciar / Ativar Som da Live">
                   <span id="streamMuteIcon">🔊</span>
                 </button>
@@ -468,9 +468,6 @@
               </div>
 
               <div class="stream-controls-right">
-                <button class="stream-ctrl-btn stream-ctrl-subtle" id="btnToggleLoopbackAudio" title="Ativar/Desativar retorno de áudio da sua própria prévia local">
-                  <span id="loopbackBtnIcon">🔇</span> Retorno Local
-                </button>
                 <button class="stream-ctrl-btn" id="btnStreamFullscreen" title="Tela Cheia">
                   ⛶
                 </button>

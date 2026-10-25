@@ -13,7 +13,6 @@ let localAudioTrack = null;
 let localScreenTrack = null;
 let localScreenAudioTrack = null;
 let isLocalStreamer = false;
-let isLoopbackEnabled = false;
 let isMuted = false;
 let isDeafened = false;
 let isLocalSpeaking = false;
@@ -2123,8 +2122,6 @@ function watchLiveStream(participantId) {
     const viewerCount = document.getElementById('liveViewerCount');
     if (viewerCount) viewerCount.textContent = `👁 ${livekitRoom.remoteParticipants.size}`;
     if (btnStopStreamDirect) btnStopStreamDirect.style.display = 'none';
-    if (btnToggleLoopbackAudio) btnToggleLoopbackAudio.style.display = 'none';
-    if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'none';
     if (participantsGrid) participantsGrid.style.display = 'none';
     watchingLiveParticipantId = participantId;
     switchView('voice');
@@ -6570,8 +6567,7 @@ const streamVolumeSlider = document.getElementById('streamVolumeSlider');
 const streamVolumePercent = document.getElementById('streamVolumePercent');
 const btnStreamAudioMute = document.getElementById('btnStreamAudioMute');
 const streamMuteIcon = document.getElementById('streamMuteIcon');
-const btnToggleLoopbackAudio = document.getElementById('btnToggleLoopbackAudio');
-const loopbackBtnIcon = document.getElementById('loopbackBtnIcon');
+const streamAudioControls = document.getElementById('streamAudioControls');
 const btnStreamFullscreen = document.getElementById('btnStreamFullscreen');
 const btnStopStreamDirect = document.getElementById('btnStopStreamDirect');
 const streamVolumeHud = document.getElementById('streamVolumeHud');
@@ -6715,13 +6711,9 @@ function updateStreamVolume(val, showHud = false) {
   if (streamVolumeSlider) streamVolumeSlider.value = val;
   if (streamVolumePercent) streamVolumePercent.textContent = `${val}%`;
 
-  // Controle de volume através do GainNode isolado do Web Audio
+  // The captured game audio is sent to LiveKit only; never monitor it locally.
   if (streamGainNode) {
-    if (val === 0 || isStreamAudioMuted || (isLocalStreamer && !isLoopbackEnabled)) {
-      streamGainNode.gain.value = 0;
-    } else {
-      streamGainNode.gain.value = val / 100;
-    }
+    streamGainNode.gain.value = 0;
   }
   remoteScreenAudioElements.forEach((element) => {
     element.volume = val / 100;
@@ -6730,7 +6722,7 @@ function updateStreamVolume(val, showHud = false) {
 
   // Ícone dinâmico do som
   let icon = '🔊';
-  if (val === 0 || isStreamAudioMuted || (isLocalStreamer && !isLoopbackEnabled)) {
+  if (val === 0 || isStreamAudioMuted) {
     icon = '🔇';
   } else if (val < 50) {
     icon = '🔉';
@@ -6810,7 +6802,6 @@ async function stopCurrentStream() {
     participantsGrid.style.display = 'grid';
   }
   isLocalStreamer = false;
-  isLoopbackEnabled = false;
   localStreamResolution = null;
   localStreamFps = null;
   const resolutionBadge = document.querySelector('.res-pill');
@@ -6822,7 +6813,7 @@ async function stopCurrentStream() {
   const liveViewerCount = document.getElementById('liveViewerCount');
   if (liveViewerCount) liveViewerCount.textContent = '👁 0';
   if (btnStopStreamDirect) btnStopStreamDirect.style.display = '';
-  if (btnToggleLoopbackAudio) btnToggleLoopbackAudio.style.display = 'none';
+  if (streamAudioControls) streamAudioControls.style.display = '';
   const localIdentity = livekitRoom?.localParticipant?.identity;
   if (localIdentity) remoteScreenTracks.delete(localIdentity);
   refreshVoiceParticipantViews();
@@ -6845,10 +6836,6 @@ async function stopCurrentStream() {
     gameActivityStatus.textContent = 'Não Compartilhando';
   }
   if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'none';
-  if (btnToggleLoopbackAudio) {
-    btnToggleLoopbackAudio.classList.remove('active');
-    btnToggleLoopbackAudio.style.display = 'none';
-  }
   checkRunningGame();
 }
 
@@ -6856,15 +6843,6 @@ async function stopCurrentStream() {
 if (streamVolumeSlider) {
   streamVolumeSlider.addEventListener('input', (e) => {
     const val = parseInt(e.target.value, 10);
-    // Se o streamer local mexer no volume para cima, ativa o retorno voluntário
-    if (isLocalStreamer && !isLoopbackEnabled && val > 0) {
-      isLoopbackEnabled = true;
-      if (btnToggleLoopbackAudio) {
-        btnToggleLoopbackAudio.classList.add('active');
-        if (loopbackBtnIcon) loopbackBtnIcon.textContent = '🔊';
-      }
-      if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'none';
-    }
     updateStreamVolume(val, false);
   });
 }
@@ -6875,14 +6853,6 @@ if (streamViewerWrapper) {
     e.preventDefault();
     const step = 5;
     const nextVal = e.deltaY < 0 ? streamPlayerVolume + step : streamPlayerVolume - step;
-    if (isLocalStreamer && !isLoopbackEnabled && nextVal > 0) {
-      isLoopbackEnabled = true;
-      if (btnToggleLoopbackAudio) {
-        btnToggleLoopbackAudio.classList.add('active');
-        if (loopbackBtnIcon) loopbackBtnIcon.textContent = '🔊';
-      }
-      if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'none';
-    }
     updateStreamVolume(nextVal, true);
   }, { passive: false });
 }
@@ -6890,44 +6860,12 @@ if (streamViewerWrapper) {
 // Botão de Mutar / Desmutar
 if (btnStreamAudioMute) {
   btnStreamAudioMute.addEventListener('click', () => {
-    if (isStreamAudioMuted || (isLocalStreamer && !isLoopbackEnabled)) {
+    if (isStreamAudioMuted) {
       isStreamAudioMuted = false;
-      if (isLocalStreamer) {
-        isLoopbackEnabled = true;
-        if (btnToggleLoopbackAudio) btnToggleLoopbackAudio.classList.add('active');
-        if (loopbackBtnIcon) loopbackBtnIcon.textContent = '🔊';
-        if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'none';
-      }
       const restoreVol = streamPlayerVolume === 0 ? 80 : streamPlayerVolume;
       updateStreamVolume(restoreVol, true);
     } else {
       isStreamAudioMuted = true;
-      if (isLocalStreamer) {
-        isLoopbackEnabled = false;
-        if (btnToggleLoopbackAudio) btnToggleLoopbackAudio.classList.remove('active');
-        if (loopbackBtnIcon) loopbackBtnIcon.textContent = '🔇';
-        if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'inline-flex';
-      }
-      updateStreamVolume(0, true);
-    }
-  });
-}
-
-// Toggle de Retorno de Áudio Local
-if (btnToggleLoopbackAudio) {
-  btnToggleLoopbackAudio.addEventListener('click', () => {
-    isLoopbackEnabled = !isLoopbackEnabled;
-    if (isLoopbackEnabled) {
-      isStreamAudioMuted = false;
-      btnToggleLoopbackAudio.classList.add('active');
-      if (loopbackBtnIcon) loopbackBtnIcon.textContent = '🔊';
-      if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'none';
-      updateStreamVolume(streamPlayerVolume || 50, true);
-    } else {
-      isStreamAudioMuted = true;
-      btnToggleLoopbackAudio.classList.remove('active');
-      if (loopbackBtnIcon) loopbackBtnIcon.textContent = '🔇';
-      if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'inline-flex';
       updateStreamVolume(0, true);
     }
   });
@@ -7101,7 +7039,6 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
       });
     }
     isLocalStreamer = true;
-    isLoopbackEnabled = false;
     refreshVoiceParticipantViews();
     const liveViewerCount = document.getElementById('liveViewerCount');
     if (liveViewerCount) liveViewerCount.textContent = `👁 ${room.remoteParticipants.size}`;
@@ -7141,11 +7078,7 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     }
 
     if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'inline-flex';
-    if (btnToggleLoopbackAudio) {
-      btnToggleLoopbackAudio.style.display = 'inline-flex';
-      btnToggleLoopbackAudio.classList.remove('active');
-      if (loopbackBtnIcon) loopbackBtnIcon.textContent = '🔇';
-    }
+    if (streamAudioControls) streamAudioControls.style.display = 'none';
 
     updateStreamVolume(streamPlayerVolume, false);
 
