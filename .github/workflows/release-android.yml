@@ -1,20 +1,22 @@
 name: Build and publish Android APK
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Build and publish Windows desktop app"]
+    types: [completed]
 
 permissions:
   contents: write
 
 jobs:
   release:
+    if: github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v')
     runs-on: ubuntu-latest
     steps:
       - name: Check out release source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -45,6 +47,6 @@ jobs:
       - name: Publish APK to GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name }}
+          tag_name: ${{ github.event.workflow_run.head_branch }}
           files: BADISCORD-Android.apk
           fail_on_unmatched_files: true
