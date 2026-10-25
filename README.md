@@ -12,7 +12,7 @@ Aplicativo independente para comunidades, com clientes Web/Electron e backend No
 - **Lista de membros online e offline**, com cargos personalizados e seções definidas pelo dono ou administradores.
 - **Chamadas privadas de voz** entre amigos, ações de moderação persistidas no servidor e convite para jogar ou ouvir música.
 - **Atividade atual de jogo ou Spotify** no perfil e na lista de membros; ícones de jogos vêm do aplicativo detectado no desktop.
-- Temas visuais próprios, incluindo a paleta Aurora; personalizações de perfil disponíveis sem assinatura.
+- 24 temas visuais gratuitos, além de decorações e widgets animados e ícones de perfil compartilhados com amigos.
 
 ---
 

@@ -368,6 +368,7 @@ function createWindow() {
     minWidth: 940,
     minHeight: 600,
     backgroundColor: '#1e1f22',
+    icon: path.join(__dirname, 'assets', 'badiscord.ico'),
     title: 'BADISCORD',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

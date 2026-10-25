@@ -122,6 +122,9 @@ db.exec(`
     avatar_url TEXT NOT NULL DEFAULT '',
     profile_color TEXT NOT NULL DEFAULT '#5865F2',
     profile_tags_json TEXT NOT NULL DEFAULT '[]',
+    profile_decoration TEXT NOT NULL DEFAULT 'none',
+    profile_widget TEXT NOT NULL DEFAULT 'none',
+    profile_icon TEXT NOT NULL DEFAULT 'none',
     updated_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS recovery_codes (
@@ -289,7 +292,10 @@ const userPresenceColumns = new Set(db.pragma('table_info(user_presence)').map((
   ['activity_url', "TEXT NOT NULL DEFAULT ''"],
   ['avatar_url', "TEXT NOT NULL DEFAULT ''"],
   ['profile_color', "TEXT NOT NULL DEFAULT '#5865F2'"],
-  ['profile_tags_json', "TEXT NOT NULL DEFAULT '[]'"]
+  ['profile_tags_json', "TEXT NOT NULL DEFAULT '[]'"],
+  ['profile_decoration', "TEXT NOT NULL DEFAULT 'none'"],
+  ['profile_widget', "TEXT NOT NULL DEFAULT 'none'"],
+  ['profile_icon', "TEXT NOT NULL DEFAULT 'none'"]
 ].forEach(([column, definition]) => {
   if (!userPresenceColumns.has(column)) db.exec(`ALTER TABLE user_presence ADD COLUMN ${column} ${definition}`);
 });
@@ -600,6 +606,17 @@ app.post('/api/auth/recovery/reset', async (req, res) => {
 });
 
 const PRESENCE_STALE_AFTER_MS = 45_000;
+const PROFILE_DECORATIONS = new Set(['none', 'neon', 'galaxy', 'fire']);
+const PROFILE_WIDGETS = new Set(['none', 'pulse', 'orbit', 'spark', 'guardian', 'comet', 'prism']);
+const PROFILE_ICONS = new Set(['none', 'leaf', 'comet', 'star', 'flame', 'flower', 'moon', 'wave', 'crown', 'orbit', 'sun', 'gem']);
+
+function getProfileCustomization(presence) {
+  return {
+    profileDecoration: PROFILE_DECORATIONS.has(presence?.profile_decoration) ? presence.profile_decoration : 'none',
+    profileWidget: PROFILE_WIDGETS.has(presence?.profile_widget) ? presence.profile_widget : 'none',
+    profileIcon: PROFILE_ICONS.has(presence?.profile_icon) ? presence.profile_icon : 'none'
+  };
+}
 
 function parseProfileTags(value) {
   try {
@@ -618,7 +635,7 @@ function parseProfileTags(value) {
 
 function formatFriend(user, relationshipStatus) {
   const presence = db.prepare(`SELECT status, detail, game, activity_type, activity_text, activity_artwork, activity_url,
-      avatar_url, profile_color, profile_tags_json, updated_at
+      avatar_url, profile_color, profile_tags_json, profile_decoration, profile_widget, profile_icon, updated_at
     FROM user_presence WHERE user_id = ?`).get(user.id);
   const isStale = !presence || Date.now() - presence.updated_at > PRESENCE_STALE_AFTER_MS;
   const visibleStatus = isStale || presence.status === 'invisible' ? 'offline' : presence.status;
@@ -632,6 +649,7 @@ function formatFriend(user, relationshipStatus) {
     avatarUrl: presence?.avatar_url || '',
     color: presence?.profile_color || '#5865F2',
     profileTags: parseProfileTags(presence?.profile_tags_json),
+    ...getProfileCustomization(presence),
     detail: visibleStatus === 'offline' ? 'Offline' : (presence?.detail || 'Disponível'),
     game: visibleStatus === 'offline' ? '' : presence?.game || '',
     activityType: visibleStatus === 'offline' ? '' : presence?.activity_type || '',
@@ -903,7 +921,8 @@ app.get('/api/servers/:serverId/members', requireAuth, (req, res) => {
       server_member_mutes.user_id AS muted_user_id,
       user_presence.status, user_presence.detail, user_presence.game, user_presence.activity_type,
       user_presence.activity_text, user_presence.activity_artwork, user_presence.activity_url,
-      user_presence.avatar_url, user_presence.profile_color, user_presence.profile_tags_json, user_presence.updated_at
+      user_presence.avatar_url, user_presence.profile_color, user_presence.profile_tags_json,
+      user_presence.profile_decoration, user_presence.profile_widget, user_presence.profile_icon, user_presence.updated_at
     FROM server_members
     JOIN users ON users.id = server_members.user_id
     LEFT JOIN server_roles ON server_roles.id = server_members.role_id
@@ -924,6 +943,7 @@ app.get('/api/servers/:serverId/members', requireAuth, (req, res) => {
         avatarUrl: member.avatar_url || '',
         color: member.profile_color || '#5865F2',
         profileTags: parseProfileTags(member.profile_tags_json),
+        ...getProfileCustomization(member),
         roleId: member.role_id || '',
         role: member.role_name || (member.base_role === 'owner' ? 'Dono' : 'Membro'),
         roleColor: member.role_color || '#949ba4',
@@ -1515,8 +1535,11 @@ app.post('/api/presence', requireAuth, (req, res) => {
       .map((tag) => ({ type: tag.type, label: normalize(tag.label).slice(0, 24) }))
       .filter((tag) => tag.label)
     : [];
-  db.prepare(`INSERT INTO user_presence (user_id, status, detail, game, activity_type, activity_text, activity_artwork, activity_url, avatar_url, profile_color, profile_tags_json, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  const profileDecoration = PROFILE_DECORATIONS.has(req.body?.profileDecoration) ? req.body.profileDecoration : 'none';
+  const profileWidget = PROFILE_WIDGETS.has(req.body?.profileWidget) ? req.body.profileWidget : 'none';
+  const profileIcon = PROFILE_ICONS.has(req.body?.profileIcon) ? req.body.profileIcon : 'none';
+  db.prepare(`INSERT INTO user_presence (user_id, status, detail, game, activity_type, activity_text, activity_artwork, activity_url, avatar_url, profile_color, profile_tags_json, profile_decoration, profile_widget, profile_icon, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       status = excluded.status,
       detail = excluded.detail,
@@ -1528,9 +1551,38 @@ app.post('/api/presence', requireAuth, (req, res) => {
       avatar_url = excluded.avatar_url,
       profile_color = excluded.profile_color,
       profile_tags_json = excluded.profile_tags_json,
+      profile_decoration = excluded.profile_decoration,
+      profile_widget = excluded.profile_widget,
+      profile_icon = excluded.profile_icon,
       updated_at = excluded.updated_at`)
-    .run(req.user.id, status, detail, game, activityType, activityText, activityArtwork, activityUrl, avatarUrl, profileColor, JSON.stringify(profileTags), Date.now());
+    .run(req.user.id, status, detail, game, activityType, activityText, activityArtwork, activityUrl, avatarUrl, profileColor, JSON.stringify(profileTags), profileDecoration, profileWidget, profileIcon, Date.now());
   return res.json({ ok: true });
+});
+
+app.get('/api/profile/customization', requireAuth, (req, res) => {
+  const presence = db.prepare(`SELECT profile_decoration, profile_widget, profile_icon
+    FROM user_presence WHERE user_id = ?`).get(req.user.id);
+  return res.json({ customization: getProfileCustomization(presence) });
+});
+
+app.put('/api/profile/customization', requireAuth, (req, res) => {
+  const { profileDecoration, profileWidget, profileIcon } = req.body || {};
+  if (!PROFILE_DECORATIONS.has(profileDecoration)
+    || !PROFILE_WIDGETS.has(profileWidget)
+    || !PROFILE_ICONS.has(profileIcon)) {
+    return res.status(400).json({ error: 'Selecione uma decoração, um widget e um ícone válidos.' });
+  }
+
+  const now = Date.now();
+  db.prepare(`INSERT INTO user_presence (user_id, status, detail, game, profile_decoration, profile_widget, profile_icon, updated_at)
+    VALUES (?, 'online', '', '', ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      profile_decoration = excluded.profile_decoration,
+      profile_widget = excluded.profile_widget,
+      profile_icon = excluded.profile_icon,
+      updated_at = excluded.updated_at`)
+    .run(req.user.id, profileDecoration, profileWidget, profileIcon, now);
+  return res.json({ customization: { profileDecoration, profileWidget, profileIcon } });
 });
 
 app.get('/api/friends', requireAuth, (req, res) => {

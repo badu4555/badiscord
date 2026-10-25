@@ -30,8 +30,27 @@ const DEFAULT_PROFILE = {
   bannerColor: '#5865F2',
   aboutMe: 'Usando o BADISCORD!',
   presenceStatus: 'online',
-  profileTags: []
+  profileTags: [],
+  profileDecoration: 'none',
+  profileWidget: 'none',
+  profileIcon: 'none'
 };
+const PROFILE_DECORATION_VALUES = new Set(['none', 'neon', 'galaxy', 'fire']);
+const PROFILE_WIDGET_VALUES = new Set(['none', 'pulse', 'orbit', 'spark', 'guardian', 'comet', 'prism']);
+const PROFILE_ICON_GLYPHS = {
+  leaf: '❖',
+  comet: '✧',
+  star: '✦',
+  flame: '♨',
+  flower: '✿',
+  moon: '☾',
+  wave: '≈',
+  crown: '♛',
+  orbit: '◎',
+  sun: '☼',
+  gem: '◇'
+};
+const PROFILE_ICON_VALUES = new Set(['none', ...Object.keys(PROFILE_ICON_GLYPHS)]);
 
 let userProfile = DEFAULT_PROFILE;
 try {
@@ -48,6 +67,9 @@ userProfile.profileTags = Array.isArray(userProfile.profileTags)
     .map((tag) => ({ type: tag.type, label: tag.label.trim().slice(0, 24) }))
     .filter((tag) => tag.label)
   : [];
+userProfile.profileDecoration = PROFILE_DECORATION_VALUES.has(userProfile.profileDecoration) ? userProfile.profileDecoration : 'none';
+userProfile.profileWidget = PROFILE_WIDGET_VALUES.has(userProfile.profileWidget) ? userProfile.profileWidget : 'none';
+userProfile.profileIcon = PROFILE_ICON_VALUES.has(userProfile.profileIcon) ? userProfile.profileIcon : 'none';
 
 let authenticatedAccount = null;
 let messageCacheAccountId = '';
@@ -398,6 +420,9 @@ function syncPresenceRoster(account) {
     color: userProfile.bannerColor || '#5865F2',
     avatarUrl: userProfile.avatarUrl || '',
     profileTags: userProfile.profileTags,
+    profileDecoration: userProfile.profileDecoration,
+    profileWidget: userProfile.profileWidget,
+    profileIcon: userProfile.profileIcon,
     game: detectedGame && detectedGame.name ? detectedGame.name : '',
     initial: (memberName || 'B')[0].toUpperCase(),
     updatedAt: Date.now()
@@ -429,7 +454,10 @@ function publishPresenceStatus() {
       activityUrl: activity.url,
       avatarUrl: userProfile.avatarUrl || '',
       profileColor: userProfile.bannerColor || '#5865F2',
-      profileTags: userProfile.profileTags
+      profileTags: userProfile.profileTags,
+      profileDecoration: userProfile.profileDecoration,
+      profileWidget: userProfile.profileWidget,
+      profileIcon: userProfile.profileIcon
     })
   }).then(async (response) => {
     const payload = await response.json().catch(() => ({}));
@@ -515,9 +543,20 @@ async function loginAccount(email, password, recaptchaToken = '', rememberMe = f
   return payload.user;
 }
 
-function applySessionToProfile(account) {
+async function loadProfileCustomization() {
+  const response = await fetch('/api/profile/customization', {
+    credentials: 'include',
+    headers: { Accept: 'application/json' }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Não foi possível carregar as personalizações do perfil.');
+  return payload.customization || {};
+}
+
+function applySessionToProfile(account, customization = {}) {
   userProfile = {
     ...DEFAULT_PROFILE,
+    ...customization,
     displayName: account.displayName || account.username,
     username: account.username,
     tag: account.tag || generateAccountTag(),
@@ -540,7 +579,8 @@ async function finalizeAuthSession(account) {
   }
   authenticatedAccount = account;
 
-  applySessionToProfile(account);
+  const customization = await loadProfileCustomization();
+  applySessionToProfile(account, customization);
   await syncPresenceRoster(account);
   hideAuthOverlay();
   renderGuilds();
@@ -1982,6 +2022,9 @@ function getServerOnlineProfiles() {
     color: userProfile.bannerColor || '#5865F2',
     avatarUrl: userProfile.avatarUrl || '',
     profileTags: userProfile.profileTags,
+    profileDecoration: userProfile.profileDecoration,
+    profileWidget: userProfile.profileWidget,
+    profileIcon: userProfile.profileIcon,
     game: detectedGame && detectedGame.name ? detectedGame.name : '',
     detail: userProfile.aboutMe || 'Disponível',
     status: currentChannel ? 'online' : (userProfile.presenceStatus === 'invisible' ? 'offline' : (userProfile.presenceStatus || 'online')),
@@ -1995,6 +2038,9 @@ function getServerOnlineProfiles() {
     tag: member.tag || '0001',
     fullTag: member.fullTag || `${member.name || 'Bads'}#${member.tag || '0001'}`,
     profileTags: Array.isArray(member.profileTags) ? member.profileTags : [],
+    profileDecoration: member.profileDecoration || 'none',
+    profileWidget: member.profileWidget || 'none',
+    profileIcon: member.profileIcon || 'none',
     initial: member.initial || (member.name || 'B')[0].toUpperCase(),
     color: member.color || '#5865F2',
     avatarUrl: member.avatarUrl || '',
@@ -2016,6 +2062,9 @@ function getServerOnlineProfiles() {
     initial: friend.initial || friend.name[0].toUpperCase(),
     color: friend.color || '#5865F2',
     avatarUrl: friend.avatarUrl || '',
+    profileDecoration: friend.profileDecoration || 'none',
+    profileWidget: friend.profileWidget || 'none',
+    profileIcon: friend.profileIcon || 'none',
     game: friend.game || '',
     detail: friend.detail || 'Disponível',
     status: friend.status || 'online',
@@ -2070,6 +2119,9 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
         initial: profile.initial || name[0].toUpperCase(),
         color: profile.color || '#5865F2',
         avatarUrl: profile.avatarUrl || '',
+        profileDecoration: profile.profileDecoration || 'none',
+        profileWidget: profile.profileWidget || 'none',
+        profileIcon: profile.profileIcon || 'none',
         game: profile.game || '',
         activityType: profile.activityType || (profile.game ? 'game' : ''),
         activityText: profile.activityText || profile.game || '',
@@ -2094,6 +2146,9 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
     initial: (userProfile.displayName || 'B')[0].toUpperCase(),
     color: userProfile.bannerColor || '#5865F2',
     avatarUrl: userProfile.avatarUrl || '',
+    profileDecoration: userProfile.profileDecoration || 'none',
+    profileWidget: userProfile.profileWidget || 'none',
+    profileIcon: userProfile.profileIcon || 'none',
     game: detectedGame?.name || '',
     activityType: detectedGame?.name ? 'game' : (spotifyActivity ? 'music' : ''),
     activityText: detectedGame?.name || spotifyActivity?.text || '',
@@ -2133,6 +2188,9 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
       initial: profile.initial || name[0].toUpperCase(),
       color: profile.color || '#5865F2',
       avatarUrl: profile.avatarUrl || '',
+      profileDecoration: profile.profileDecoration || 'none',
+      profileWidget: profile.profileWidget || 'none',
+      profileIcon: profile.profileIcon || 'none',
       game: profile.game || '',
       activityType: profile.activityType || (profile.game ? 'game' : ''),
       activityText: profile.activityText || profile.game || '',
@@ -2272,6 +2330,7 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
       avatar.style.backgroundColor = member.color || '#5865F2';
       avatar.textContent = member.initial || member.name[0].toUpperCase();
     }
+    applyProfileAvatarCustomization(avatar, member);
 
     const name = document.createElement('span');
     name.className = 'channel-user-name';
@@ -2343,6 +2402,7 @@ function renderVoiceParticipants() {
       avatar.style.backgroundColor = member.color || '#5865F2';
       avatar.textContent = (member.name || 'U')[0].toUpperCase();
     }
+    applyProfileAvatarCustomization(avatar, member);
 
     const tag = document.createElement('div');
     tag.className = 'participant-name-tag';
@@ -4204,6 +4264,7 @@ function renderFriendsList(filter = '') {
     const dot = document.createElement('div');
     dot.className = `friend-card-avatar-dot${(friend.status || 'online') === 'offline' ? ' offline' : ''}`;
     avatar.appendChild(dot);
+    applyProfileAvatarCustomization(avatar, friend);
 
     const info = document.createElement('div');
     info.className = 'friend-card-info';
@@ -4944,6 +5005,7 @@ function renderServerMembers() {
       const dot = document.createElement('span');
       dot.className = `member-status-dot ${member.status === 'offline' ? 'offline' : member.status}`;
       avatar.appendChild(dot);
+      applyProfileAvatarCustomization(avatar, member);
 
       const info = document.createElement('div');
       info.className = 'member-info';
@@ -5202,6 +5264,7 @@ function openMemberProfilePopover(member, triggerEvent) {
       userPopoverAvatar.style.backgroundColor = member.color || member.bannerColor || '#5865F2';
       userPopoverAvatar.textContent = (member.name || 'U')[0].toUpperCase();
     }
+    applyProfileAvatarCustomization(userPopoverAvatar, member);
   }
 
   const activityType = member.activityType || (member.game ? 'game' : '');
@@ -7881,39 +7944,76 @@ function switchSettingsTab(tabName) {
   }
 }
 
+function applyProfileAvatarCustomization(target, profile = {}) {
+  if (!target) return;
+  target.classList.add('profile-avatar-customized');
+  target.querySelectorAll('.profile-avatar-layer').forEach((layer) => layer.remove());
+
+  const decoration = PROFILE_DECORATION_VALUES.has(profile.profileDecoration) ? profile.profileDecoration : 'none';
+  const widget = PROFILE_WIDGET_VALUES.has(profile.profileWidget) ? profile.profileWidget : 'none';
+  const icon = PROFILE_ICON_VALUES.has(profile.profileIcon) ? profile.profileIcon : 'none';
+
+  if (decoration !== 'none') {
+    const ring = document.createElement('span');
+    ring.className = `profile-avatar-layer profile-avatar-decoration decoration-${decoration}`;
+    ring.setAttribute('aria-hidden', 'true');
+    target.appendChild(ring);
+  }
+  if (widget !== 'none') {
+    const widgetRing = document.createElement('span');
+    widgetRing.className = `profile-avatar-layer profile-avatar-widget widget-${widget}`;
+    widgetRing.setAttribute('aria-hidden', 'true');
+    target.appendChild(widgetRing);
+  }
+  if (icon !== 'none') {
+    const iconBadge = document.createElement('span');
+    iconBadge.className = `profile-avatar-layer profile-avatar-icon profile-icon-${icon}`;
+    iconBadge.textContent = PROFILE_ICON_GLYPHS[icon];
+    iconBadge.setAttribute('aria-hidden', 'true');
+    target.appendChild(iconBadge);
+  }
+}
+
 function applyProfileCustomization() {
-  const decoration = userProfile.profileDecoration || 'none';
-  const widget = userProfile.profileWidget || 'none';
   const targets = [
     document.querySelector('.user-avatar-wrapper'),
     document.getElementById('voiceSelfAvatarFrame'),
     document.getElementById('presenceAvatarImg'),
     document.getElementById('profileAvatarPreview')
   ].filter(Boolean);
-  targets.forEach((target) => {
-    target.classList.remove('profile-decoration-none', 'profile-decoration-neon', 'profile-decoration-galaxy', 'profile-decoration-fire');
-    target.classList.remove(
-      'profile-widget-none',
-      'profile-widget-pulse',
-      'profile-widget-orbit',
-      'profile-widget-spark',
-      'profile-widget-guardian',
-      'profile-widget-comet',
-      'profile-widget-prism'
-    );
-    target.classList.add(`profile-decoration-${decoration}`, `profile-widget-${widget}`);
-  });
+  targets.forEach((target) => applyProfileAvatarCustomization(target, userProfile));
 }
 
 function initializeFreeProfileCustomization() {
   let selectedDecoration = userProfile.profileDecoration || 'none';
   let selectedWidget = userProfile.profileWidget || 'none';
+  let selectedIcon = userProfile.profileIcon || 'none';
   const decorationOptions = document.querySelectorAll('#profileDecorationOptions [data-decoration]');
   const widgetOptions = document.querySelectorAll('#profileWidgetOptions [data-widget]');
+  const iconOptions = document.querySelectorAll('#profileIconOptions [data-profile-icon]');
 
   const markSelected = () => {
-    decorationOptions.forEach((option) => option.classList.toggle('active', option.dataset.decoration === selectedDecoration));
-    widgetOptions.forEach((option) => option.classList.toggle('active', option.dataset.widget === selectedWidget));
+    decorationOptions.forEach((option) => {
+      const active = option.dataset.decoration === selectedDecoration;
+      option.classList.toggle('active', active);
+      option.setAttribute('aria-pressed', String(active));
+    });
+    widgetOptions.forEach((option) => {
+      const active = option.dataset.widget === selectedWidget;
+      option.classList.toggle('active', active);
+      option.setAttribute('aria-pressed', String(active));
+    });
+    iconOptions.forEach((option) => {
+      const active = option.dataset.profileIcon === selectedIcon;
+      option.classList.toggle('active', active);
+      option.setAttribute('aria-pressed', String(active));
+    });
+    applyProfileAvatarCustomization(document.getElementById('profileAvatarPreview'), {
+      ...userProfile,
+      profileDecoration: selectedDecoration,
+      profileWidget: selectedWidget,
+      profileIcon: selectedIcon
+    });
   };
 
   decorationOptions.forEach((option) => option.addEventListener('click', () => {
@@ -7924,18 +8024,58 @@ function initializeFreeProfileCustomization() {
     selectedWidget = option.dataset.widget;
     markSelected();
   }));
+  iconOptions.forEach((option) => option.addEventListener('click', () => {
+    selectedIcon = option.dataset.profileIcon;
+    markSelected();
+  }));
 
-  document.getElementById('btnSaveDecorations')?.addEventListener('click', () => {
+  document.getElementById('btnSaveDecorations')?.addEventListener('click', async () => {
+    const saveButton = document.getElementById('btnSaveDecorations');
+    const status = document.getElementById('decorationsSaveStatus');
+    if (saveButton) {
+      saveButton.disabled = true;
+      saveButton.textContent = 'Salvando...';
+    }
     userProfile.profileDecoration = selectedDecoration;
     userProfile.profileWidget = selectedWidget;
+    userProfile.profileIcon = selectedIcon;
     saveUserProfile();
     applyProfileCustomization();
-    const status = document.getElementById('decorationsSaveStatus');
-    if (status) {
-      status.textContent = '✓ Personalização salva';
-      setTimeout(() => { status.textContent = ''; }, 2500);
+    try {
+      const response = await fetch('/api/profile/customization', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          profileDecoration: selectedDecoration,
+          profileWidget: selectedWidget,
+          profileIcon: selectedIcon
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível compartilhar a personalização.');
+      if (status) {
+        status.textContent = '✓ Salvo e visível para seus amigos';
+        setTimeout(() => { status.textContent = ''; }, 3000);
+      }
+      await loadFriendsFromServer();
+      if (activeServerId) {
+        await loadServerMembers(activeServerId);
+        if (currentChannel) updateSidebarChannelUsers(currentChannel);
+      }
+      renderVoiceParticipants();
+      updateVoiceSelfCard();
+      showToast('Ícone, decoração e widget foram salvos para seus amigos.', '✨');
+    } catch (error) {
+      console.error('Não foi possível salvar as personalizações compartilhadas:', error);
+      if (status) status.textContent = error.message || 'Não foi possível compartilhar a personalização.';
+      showToast(error.message || 'Não foi possível salvar as personalizações.', '⚠️');
+    } finally {
+      if (saveButton) {
+        saveButton.disabled = false;
+        saveButton.textContent = 'Salvar personalização';
+      }
     }
-    showToast('Decoração e widget aplicados gratuitamente!', '✨');
   });
   markSelected();
 }
@@ -8628,6 +8768,94 @@ if (soundboardUploadButton) {
 // ==========================================
 // SELETOR DE TEMAS DE APARÊNCIA (COM PERSISTÊNCIA)
 // ==========================================
+const COLOR_THEME_PRESETS = [
+  { id: 'rose', name: 'Rosa pétala', color: '#db6b9f' },
+  { id: 'coral', name: 'Coral', color: '#e87570' },
+  { id: 'peach', name: 'Pêssego', color: '#e99568' },
+  { id: 'amber', name: 'Âmbar', color: '#d9a441' },
+  { id: 'citrus', name: 'Cítrico', color: '#b6bd4c' },
+  { id: 'lime', name: 'Lima', color: '#77ba55' },
+  { id: 'meadow', name: 'Prado', color: '#58b97e' },
+  { id: 'mint', name: 'Menta', color: '#4dbda7' },
+  { id: 'lagoon', name: 'Lagoa', color: '#45b2bd' },
+  { id: 'ocean', name: 'Oceano', color: '#4b9fce' },
+  { id: 'sky', name: 'Céu', color: '#638ed8' },
+  { id: 'iris', name: 'Íris', color: '#797de0' },
+  { id: 'violet', name: 'Violeta', color: '#9b76d8' },
+  { id: 'orchid', name: 'Orquídea', color: '#bb70c4' },
+  { id: 'berry', name: 'Amora', color: '#d66bba' },
+  { id: 'ruby', name: 'Rubi', color: '#d95270' },
+  { id: 'glacier', name: 'Geleira', color: '#83b9d7' },
+  { id: 'sage', name: 'Sálvia', color: '#86a982' },
+  { id: 'copper', name: 'Cobre', color: '#c97a52' },
+  { id: 'indigo', name: 'Índigo', color: '#566bc7' }
+];
+
+function mixThemeColor(base, accent, amount) {
+  const baseChannels = base.match(/[0-9a-f]{2}/gi).map((channel) => parseInt(channel, 16));
+  const accentChannels = accent.match(/[0-9a-f]{2}/gi).map((channel) => parseInt(channel, 16));
+  return `#${baseChannels.map((channel, index) => (
+    Math.round(channel * (1 - amount) + accentChannels[index] * amount).toString(16).padStart(2, '0')
+  )).join('')}`;
+}
+
+function getColorTheme(themeId) {
+  const preset = COLOR_THEME_PRESETS.find(({ id }) => id === themeId);
+  if (!preset) return null;
+  const rgb = preset.color.match(/[0-9a-f]{2}/gi).map((channel) => parseInt(channel, 16));
+  return {
+    '--bg-primary': mixThemeColor('#1c3030', preset.color, 0.18),
+    '--bg-secondary': mixThemeColor('#162728', preset.color, 0.16),
+    '--bg-tertiary': mixThemeColor('#101a1b', preset.color, 0.1),
+    '--bg-modifier-hover': `rgba(${rgb.join(', ')}, 0.1)`,
+    '--header-primary': '#f0faf6',
+    '--text-normal': '#dce9e3',
+    '--text-muted': '#a1b2aa',
+    '--brand-primary': preset.color,
+    '--brand-hover': mixThemeColor(preset.color, '#ffffff', 0.16),
+    '--brand-soft': `rgba(${rgb.join(', ')}, 0.16)`,
+    '--status-green': '#71dba5',
+    '--members-panel-bg': mixThemeColor('#162728', preset.color, 0.16),
+    '--members-text': '#dce9e3',
+    '--members-muted': '#a1b2aa',
+    '--members-header': '#c2d4cb',
+    '--members-hover': `rgba(${rgb.join(', ')}, 0.1)`,
+    '--members-border': `rgba(${rgb.join(', ')}, 0.14)`,
+    '--members-avatar-bg': mixThemeColor('#203a38', preset.color, 0.5),
+    '--members-status-border': mixThemeColor('#162728', preset.color, 0.16),
+    '--members-icon-bg': mixThemeColor('#203a38', preset.color, 0.2)
+  };
+}
+
+function renderColorThemeOptions() {
+  const container = document.getElementById('colorThemeOptions');
+  if (!container) return;
+  container.replaceChildren();
+  COLOR_THEME_PRESETS.forEach((preset) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'color-theme-option';
+    button.dataset.theme = preset.id;
+    button.setAttribute('aria-label', `Aplicar tema ${preset.name}`);
+    button.setAttribute('aria-pressed', 'false');
+    button.title = preset.name;
+
+    const swatch = document.createElement('span');
+    swatch.className = 'color-theme-swatch';
+    swatch.style.setProperty('--theme-swatch-color', preset.color);
+    swatch.setAttribute('aria-hidden', 'true');
+    const name = document.createElement('span');
+    name.className = 'color-theme-name';
+    name.textContent = preset.name;
+    button.append(swatch, name);
+    button.addEventListener('click', () => {
+      applyTheme(preset.id);
+      showToast(`Tema "${preset.name}" aplicado!`, '🎨');
+    });
+    container.appendChild(button);
+  });
+}
+
 function applyTheme(theme) {
   const themes = {
     dark: {
@@ -8720,7 +8948,7 @@ function applyTheme(theme) {
     }
   };
 
-  const vars = themes[theme] || themes.aurora;
+  const vars = themes[theme] || getColorTheme(theme) || themes.aurora;
   Object.entries(vars).forEach(([key, val]) => {
     document.documentElement.style.setProperty(key, val);
   });
@@ -8728,11 +8956,17 @@ function applyTheme(theme) {
   document.querySelectorAll('.theme-card').forEach(c => {
     c.classList.toggle('active', c.dataset.theme === theme);
   });
+  document.querySelectorAll('.color-theme-option').forEach((option) => {
+    const active = option.dataset.theme === theme;
+    option.classList.toggle('active', active);
+    option.setAttribute('aria-pressed', String(active));
+  });
 
   localStorage.setItem('badiscord_theme', theme);
 }
 
 // Carregar tema salvo
+renderColorThemeOptions();
 const savedTheme = localStorage.getItem('badiscord_theme') || 'aurora';
 applyTheme(savedTheme);
 

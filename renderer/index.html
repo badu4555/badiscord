@@ -2,13 +2,15 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#1e1f22">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="BADISCORD">
   <title>BADISCORD</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/badiscord-192.png">
+  <link rel="apple-touch-icon" href="icons/badiscord-192.png">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="styles.css">
   <script src="https://www.google.com/recaptcha/api.js?render=explicit" async defer></script>
@@ -1797,15 +1799,23 @@
               <span>Claro</span>
             </div>
           </div>
+          <h3 class="profile-section-title">Temas coloridos</h3>
+          <p class="section-desc">Escolha uma paleta gratuita para dar personalidade ao aplicativo.</p>
+          <div class="color-theme-grid" id="colorThemeOptions" aria-label="Temas coloridos"></div>
         </div>
 
         <!-- Personalizações próprias do BADISCORD -->
         <div class="settings-tab-pane" id="pane-nitro" style="display: none;">
           <div class="nitro-banner-card">
             <div class="nitro-badge-pill">INCLUSO PARA TODA A COMUNIDADE</div>
-            <h2>Seu espaço, do seu jeito</h2>
-            <p>Temas, molduras e detalhes de perfil estão disponíveis sem assinatura ou pagamento.</p>
-            <button type="button" class="discord-btn-primary" id="btnOpenFreeDecorations">Explorar personalizações</button>
+            <h2>Personalize. Compartilhe. De graça.</h2>
+            <p>Explore 20 paletas coloridas, animações e ícones originais de perfil. Seus amigos também veem a decoração que você escolher — sem assinatura ou pagamento.</p>
+            <div class="free-customization-highlights">
+              <span>🎨 24 temas</span>
+              <span>✨ Animações</span>
+              <span>👥 Ícones compartilhados</span>
+            </div>
+            <button type="button" class="discord-btn-primary" id="btnOpenFreeDecorations">Personalizar meu perfil</button>
           </div>
         </div>
 
@@ -1828,6 +1838,22 @@
             <button type="button" class="free-customization-card" data-widget="guardian"><span class="customization-preview widget-guardian">⬡</span><strong>Guardião Solar</strong><small>Herói original</small></button>
             <button type="button" class="free-customization-card" data-widget="comet"><span class="customization-preview widget-comet">✧</span><strong>Cometa Azul</strong><small>Herói original</small></button>
             <button type="button" class="free-customization-card" data-widget="prism"><span class="customization-preview widget-prism">✴</span><strong>Sentinela Prisma</strong><small>Herói original</small></button>
+          </div>
+          <h3 class="profile-section-title">Ícone do perfil compartilhado</h3>
+          <p class="section-desc">O ícone escolhido aparece para seus amigos ao lado da sua foto e do seu nome.</p>
+          <div class="profile-icon-grid" id="profileIconOptions" aria-label="Ícones de perfil">
+            <button type="button" class="free-customization-card" data-profile-icon="none"><span class="profile-icon-preview">○</span><strong>Nenhum</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="leaf"><span class="profile-icon-preview">❖</span><strong>Folha</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="comet"><span class="profile-icon-preview">✧</span><strong>Cometa</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="star"><span class="profile-icon-preview">✦</span><strong>Estrela</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="flame"><span class="profile-icon-preview">♨</span><strong>Chama</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="flower"><span class="profile-icon-preview">✿</span><strong>Flor</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="moon"><span class="profile-icon-preview">☾</span><strong>Lua</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="wave"><span class="profile-icon-preview">≈</span><strong>Onda</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="crown"><span class="profile-icon-preview">♛</span><strong>Coroa</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="orbit"><span class="profile-icon-preview">◎</span><strong>Órbita</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="sun"><span class="profile-icon-preview">☼</span><strong>Sol</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-profile-icon="gem"><span class="profile-icon-preview">◇</span><strong>Cristal</strong><small>Grátis</small></button>
           </div>
           <div class="profile-form-actions">
             <button type="button" class="discord-btn-primary" id="btnSaveDecorations">Salvar personalização</button>
