@@ -833,9 +833,9 @@ async function connectToLiveKitRoom(channelName) {
             audioElement.muted = isDeafened || isStreamAudioMuted;
             remoteScreenAudioElements.add(audioElement);
           } else if (publication.trackName === SOUNDBOARD_TRACK_NAME) {
-            audioElement.volume = isUserMuted(participant.identity) || isSoundboardUserMuted(participant.identity)
+            audioElement.volume = soundboardMuted || isUserMuted(participant.identity) || isSoundboardUserMuted(participant.identity)
               ? 0
-              : getSoundboardUserVolume(participant.identity) / 100;
+              : (soundboardVolume / 100) * (getSoundboardUserVolume(participant.identity) / 100);
             remoteSoundboardAudioElements.add(audioElement);
           } else {
             audioElement.volume = isUserMuted(participant.identity) ? 0 : getUserVolume(participant.identity) / 100;
@@ -3727,11 +3727,7 @@ if (btnGameQuickStream) {
     if (selectFps) selectFps.value = savedFps;
 
     if (!window.electronAPI) {
-      if (!navigator.mediaDevices?.getDisplayMedia) {
-        showToast('Este navegador não permite compartilhar a tela. Você ainda pode assistir às lives.', '⚠️');
-        return;
-      }
-      await startStreamWithSourceId('__browser_display__', 'Compartilhamento de tela');
+      await startBrowserDisplayStream();
       return;
     }
 
@@ -5819,6 +5815,13 @@ async function renderExploreServers() {
       };
       btnJoin.disabled = true;
       btnJoin.textContent = 'Entrando...';
+      const previousServerId = activeServerId;
+      const wasInHomeView = inHomeView;
+      servers = servers.filter((server) => server.id !== newSrv.id);
+      servers.push(newSrv);
+      closeCreateServerModal();
+      selectServer(newSrv.id);
+      openTextChannel(newSrv.textChannels[0] || 'geral');
       try {
         const response = await fetch(`/api/servers/${encodeURIComponent(newSrv.id)}/join`, {
           method: 'POST',
@@ -5828,16 +5831,21 @@ async function renderExploreServers() {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || 'Não foi possível entrar neste servidor.');
 
-        servers = servers.filter((server) => server.id !== newSrv.id);
-        servers.push(newSrv);
         saveServers();
-        closeCreateServerModal();
-        selectServer(newSrv.id);
-        openTextChannel(newSrv.textChannels[0] || 'geral');
+        btnJoin.disabled = true;
+        btnJoin.textContent = 'Já Participa ✔';
+        if (activeServerId === newSrv.id) openTextChannel(newSrv.textChannels[0] || 'geral');
         showToast(`Você entrou na comunidade "${pub.name}"! 🎉`, '✅');
       } catch (error) {
+        servers = servers.filter((server) => server.id !== newSrv.id);
+        saveServers();
         btnJoin.disabled = false;
         btnJoin.textContent = 'Entrar';
+        if (activeServerId === newSrv.id) {
+          if (wasInHomeView) openHomeFriendsView();
+          else if (servers.some((server) => server.id === previousServerId)) restoreServerView(previousServerId);
+          else openHomeFriendsView();
+        }
         showToast(error.message || 'Não foi possível entrar neste servidor.', '⚠️');
       }
     });
@@ -6416,7 +6424,7 @@ function setCaptureTab(tab) {
   if (gamePrivacyBanner) {
     gamePrivacyBanner.className = 'game-privacy-banner';
     gamePrivacyBanner.innerHTML = tab === 'games'
-      ? '<span class="privacy-shield-icon">🛡️</span><div class="privacy-text"><strong>Detecção privada:</strong> somente jogos reconhecidos aparecem automaticamente. Navegadores e outras janelas ficam ocultos nesta aba.</div>'
+      ? '<span class="privacy-shield-icon">🛡️</span><div class="privacy-text"><strong>Detecção privada:</strong> jogos reconhecidos aparecem automaticamente. Se seu jogo não for reconhecido, procure-o manualmente em <strong>Outras janelas</strong>; navegadores não aparecem nesta aba.</div>'
       : '<span class="privacy-shield-icon">🛡️</span><div class="privacy-text"><strong>Escolha manual:</strong> selecione uma janela específica, como seu navegador para transmitir um vídeo do YouTube. O monitor inteiro nunca é compartilhado.</div>';
   }
   renderSourcesFiltered();
@@ -6505,7 +6513,7 @@ function renderSourcesFiltered() {
     const emptyDiv = document.createElement('div');
     emptyDiv.className = 'sources-empty';
     emptyDiv.innerHTML = currentCaptureTab === 'games'
-      ? `<p>🎮 Nenhum jogo detectado ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p><small>Abra um jogo e clique em 🔄 <strong>Atualizar</strong>. Para transmitir um navegador ou outro aplicativo, escolha a aba <strong>Outras janelas</strong>.</small>`
+      ? `<p>🎮 Nenhum jogo detectado ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p><small>Abra o jogo e clique em 🔄 <strong>Atualizar</strong>. Se o título não for reconhecido, procure-o em <strong>Outras janelas</strong>. Navegadores só aparecem na escolha manual.</small>`
       : `<p>🪟 Nenhuma outra janela encontrada ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p><small>Use esta aba para escolher manualmente um navegador ou aplicativo específico. A janela só será transmitida depois que você a selecionar.</small>`;
     sourcesGrid.appendChild(emptyDiv);
     return;
@@ -6931,6 +6939,27 @@ if (btnStopStreamDirect) {
   });
 }
 
+async function startBrowserDisplayStream() {
+  const mobilePublisher = isMobileStreamDevice();
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    showToast(
+      mobilePublisher
+        ? 'Este navegador não oferece compartilhamento de tela. Atualize o navegador ou use outro compatível.'
+        : 'Este navegador não oferece compartilhamento de tela. Você ainda pode assistir às lives.',
+      '⚠️'
+    );
+    return;
+  }
+
+  if (mobilePublisher) {
+    showToast('A live mostrará a tela inteira do celular, inclusive notificações. Confirme o compartilhamento na tela do sistema.', '🔒');
+  }
+  await startStreamWithSourceId(
+    '__browser_display__',
+    mobilePublisher ? 'Tela do celular' : 'Compartilhamento de tela'
+  );
+}
+
 btnShareScreen.addEventListener('click', async () => {
   // Se já estiver transmitindo, clicar no botão encerra a transmissão
   if (localScreenTrack) {
@@ -6939,11 +6968,7 @@ btnShareScreen.addEventListener('click', async () => {
   }
 
   if (!window.electronAPI) {
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      showToast('Este navegador não oferece compartilhamento de tela. Use outro navegador ou o app para desktop.', '⚠️');
-      return;
-    }
-    await startStreamWithSourceId('__browser_display__', 'Compartilhamento de tela');
+    await startBrowserDisplayStream();
     return;
   }
 
@@ -6989,14 +7014,14 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     showToast(`Modo otimizado para celular: transmissão em ${targetRes}p ${targetFps} FPS para reduzir travamentos.`, '⚡');
   }
 
+  let capturedStream = null;
   try {
-    let stream;
     let captureProcessAudio = false;
     if (sourceId === '__browser_display__') {
       const width = targetRes === 1440 ? 2560 : (targetRes === 1080 ? 1920 : 1280);
-      stream = await navigator.mediaDevices.getDisplayMedia({
+      capturedStream = await navigator.mediaDevices.getDisplayMedia({
         video: {
-          displaySurface: 'window',
+          ...(!mobilePublisher ? { displaySurface: 'window' } : {}),
           width: { ideal: width },
           height: { ideal: targetRes },
           frameRate: { ideal: targetFps, max: targetFps }
@@ -7005,9 +7030,8 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
         systemAudio: includeAudio ? 'include' : 'exclude',
         windowAudio: includeAudio ? 'system' : 'exclude'
       });
-      const displaySurface = stream.getVideoTracks()[0]?.getSettings().displaySurface;
-      if (!['window', 'browser'].includes(displaySurface)) {
-        stream.getTracks().forEach((track) => track.stop());
+      const displaySurface = capturedStream.getVideoTracks()[0]?.getSettings().displaySurface;
+      if (!mobilePublisher && !['window', 'browser'].includes(displaySurface)) {
         throw new Error('A transmissão foi cancelada para proteger sua privacidade. Selecione somente a janela ou a aba do jogo, não a tela inteira.');
       }
     } else {
@@ -7026,16 +7050,16 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
         }
       };
 
-      stream = await navigator.mediaDevices.getUserMedia({
+      capturedStream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: videoConstraints
       });
     }
 
-    localScreenTrack = stream.getVideoTracks()[0];
+    localScreenTrack = capturedStream.getVideoTracks()[0];
     if (!localScreenTrack) throw new Error('O navegador não retornou uma faixa de vídeo para compartilhar.');
     if (sourceId === '__browser_display__') {
-      localScreenAudioTrack = includeAudio ? (stream.getAudioTracks()[0] || null) : null;
+      localScreenAudioTrack = includeAudio ? (capturedStream.getAudioTracks()[0] || null) : null;
       if (includeAudio && !localScreenAudioTrack) {
         showToast('O navegador ou a fonte selecionada não forneceu áudio. Se disponível, habilite "Compartilhar áudio do sistema" no seletor. O áudio pode incluir outros sons do computador.', '⚠️');
       }
@@ -7131,6 +7155,7 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     if (!mobilePublisher) showToast('Transmissão iniciada!', '📡');
   } catch (err) {
     await stopCurrentStream();
+    capturedStream?.getTracks().forEach((track) => track.stop());
     console.error('Falha ao iniciar captura da tela:', err);
     showToast(err.message || 'Não foi possível iniciar o compartilhamento de tela.', '⚠️');
   }
@@ -7774,6 +7799,7 @@ function getSoundboardAudioContext() {
     if (!AudioContextClass) return null;
     soundboardAudioContext = new AudioContextClass();
     soundboardMasterGain = soundboardAudioContext.createGain();
+    soundboardMasterGain.gain.value = soundboardMuted ? 0 : soundboardVolume / 100;
     soundboardMasterGain.connect(soundboardAudioContext.destination);
     soundboardBroadcastGain = soundboardAudioContext.createGain();
     soundboardBroadcastGain.gain.value = 1;
@@ -7790,12 +7816,6 @@ function connectSoundboardSource(sourceNode) {
 }
 
 function updateSoundboardControls() {
-  const muteButton = document.getElementById('btnSoundboardMute');
-  const muteIcon = document.getElementById('soundboardMuteIcon');
-  const muteLabel = document.getElementById('soundboardMuteLabel');
-  const volumeSlider = document.getElementById('soundboardVolume');
-  const volumeValue = document.getElementById('soundboardVolumeValue');
-
   if (soundboardMasterGain && soundboardAudioContext) {
     const outputVolume = soundboardMuted ? 0 : soundboardVolume / 100;
     soundboardMasterGain.gain.setTargetAtTime(outputVolume, soundboardAudioContext.currentTime, 0.015);
@@ -7804,33 +7824,58 @@ function updateSoundboardControls() {
     audio.volume = 1;
     audio.muted = false;
   });
-  if (muteButton) {
-    muteButton.setAttribute('aria-pressed', String(soundboardMuted));
-    muteButton.title = soundboardMuted ? 'Ativar sons para você' : 'Mutar sons só para você';
-  }
+  remoteSoundboardAudioElements.forEach((audio) => {
+    const identity = audio.dataset.participantIdentity;
+    audio.volume = soundboardMuted || isUserMuted(identity) || isSoundboardUserMuted(identity)
+      ? 0
+      : (soundboardVolume / 100) * (getSoundboardUserVolume(identity) / 100);
+  });
+  ['btnSoundboardMute', 'btnSoundboardQuickMute'].forEach((id) => {
+    const button = document.getElementById(id);
+    if (!button) return;
+    button.setAttribute('aria-pressed', String(soundboardMuted));
+    button.title = soundboardMuted ? 'Ativar sons para você' : 'Mutar sons só para você';
+    if (id === 'btnSoundboardQuickMute') {
+      const icon = document.getElementById('soundboardQuickMuteIcon');
+      if (icon) icon.textContent = soundboardMuted ? '🔇' : '🔊';
+      button.setAttribute('aria-label', soundboardMuted ? 'Ativar efeitos para mim' : 'Mutar efeitos para mim');
+    }
+  });
+  const muteIcon = document.getElementById('soundboardMuteIcon');
+  const muteLabel = document.getElementById('soundboardMuteLabel');
   if (muteIcon) muteIcon.textContent = soundboardMuted ? '🔇' : '🔊';
   if (muteLabel) muteLabel.textContent = soundboardMuted ? 'Ativar só para mim' : 'Mutar só para mim';
-  if (volumeSlider) volumeSlider.value = String(soundboardVolume);
-  if (volumeValue) volumeValue.textContent = `${soundboardVolume}%`;
+  ['soundboardVolume', 'soundboardQuickVolume'].forEach((id) => {
+    const slider = document.getElementById(id);
+    if (slider) slider.value = String(soundboardVolume);
+  });
+  ['soundboardVolumeValue', 'soundboardQuickVolumeValue'].forEach((id) => {
+    const output = document.getElementById(id);
+    if (output) output.textContent = `${soundboardVolume}%`;
+  });
 }
 
 function initializeSoundboardControls() {
-  const muteButton = document.getElementById('btnSoundboardMute');
-  const volumeSlider = document.getElementById('soundboardVolume');
-  if (muteButton) {
-    muteButton.addEventListener('click', () => {
-      soundboardMuted = !soundboardMuted;
-      localStorage.setItem('badiscord_soundboard_muted', String(soundboardMuted));
-      updateSoundboardControls();
-    });
-  }
-  if (volumeSlider) {
-    volumeSlider.addEventListener('input', () => {
-      soundboardVolume = Number(volumeSlider.value);
-      localStorage.setItem('badiscord_soundboard_volume', String(soundboardVolume));
-      updateSoundboardControls();
-    });
-  }
+  ['btnSoundboardMute', 'btnSoundboardQuickMute'].forEach((id) => {
+    const button = document.getElementById(id);
+    if (button) {
+      button.addEventListener('click', () => {
+        soundboardMuted = !soundboardMuted;
+        localStorage.setItem('badiscord_soundboard_muted', String(soundboardMuted));
+        updateSoundboardControls();
+      });
+    }
+  });
+  ['soundboardVolume', 'soundboardQuickVolume'].forEach((id) => {
+    const slider = document.getElementById(id);
+    if (slider) {
+      slider.addEventListener('input', () => {
+        soundboardVolume = Number(slider.value);
+        localStorage.setItem('badiscord_soundboard_volume', String(soundboardVolume));
+        updateSoundboardControls();
+      });
+    }
+  });
   updateSoundboardControls();
 }
 

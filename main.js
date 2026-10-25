@@ -10,27 +10,41 @@ const APP_ORIGIN = app.isPackaged
   ? 'https://badiscord.onrender.com'
   : 'http://localhost:3000';
 const GAME_KEYWORDS = [
-  'roblox', 'minecraft', 'valorant', 'counter-strike', 'cs:go', 'cs2', 'league of legends', 'lol',
-  'gta', 'grand theft auto', 'fortnite', 'apex legends', 'apex', 'genshin', 'cyberpunk',
-  'rocket league', 'call of duty', 'warzone', 'cod', 'overwatch', 'fifa', 'ea sports fc', 'fc 24', 'fc 25',
-  'dead by daylight', 'terraria', 'among us', 'fivem',
-  'baldurs gate', 'elden ring', 'dota', 'honkai', 'pubg', 'rdr2', 'red dead',
-  'destiny', 'rust', 'rainbow six', 'r6', 'fall guys', 'stumble guys', 'brawlhalla',
-  'forza', 'palworld', 'helldivers', 'wuthering waves', 'zenless', 'tarkov',
-  'path of exile', 'poe', 'world of warcraft', 'wow', 'diablo', 'god of war', 'assassin',
-  'the sims', 'sims', 'lethal company', 'phasmophobia', 'euro truck', 'ets2', 'farming simulator',
-  'cuphead', 'hollow knight', 'hades', 'osu!', 'geometry dash', 'brawl stars', 'clash',
-  'retroarch', 'stardew valley', 'sea of thieves', 'smite'
+  'roblox', 'minecraft', 'valorant', 'counter-strike', 'cs:go', 'cs2', 'league of legends',
+  'grand theft auto', 'gta v', 'gta online', 'fortnite', 'apex legends', 'apex', 'genshin', 'cyberpunk',
+  'rocket league', 'call of duty', 'warzone', 'overwatch', 'ea sports fc', 'fc 24', 'fc 25', 'fifa',
+  'dead by daylight', 'terraria', 'among us', 'fivem', 'baldurs gate', 'baldur\'s gate',
+  'elden ring', 'dota', 'honkai', 'pubg', 'rdr2', 'red dead', 'destiny', 'rust', 'rainbow six',
+  'fall guys', 'stumble guys', 'brawlhalla', 'forza', 'palworld', 'helldivers',
+  'wuthering waves', 'zenless', 'tarkov', 'path of exile', 'world of warcraft', 'diablo',
+  'god of war', 'assassin\'s creed', 'the sims', 'sims 4', 'lethal company', 'phasmophobia',
+  'euro truck', 'ets2', 'farming simulator', 'cuphead', 'hollow knight', 'hades', 'osu!',
+  'geometry dash', 'brawl stars', 'clash royale', 'clash of clans', 'retroarch', 'stardew valley',
+  'sea of thieves', 'smite', 'team fortress', 'left 4 dead', 'portal 2', 'half-life',
+  'monster hunter', 'resident evil', 'street fighter', 'tekken', 'mortal kombat',
+  'final fantasy', 'kingdom hearts', 'nier', 'persona', 'dragon age', 'mass effect',
+  'the witcher', 'elden ring', 'dark souls', 'sekiro', 'bloodborne', 'hades ii',
+  'slay the spire', 'balatro', 'terraria', 'factorio', 'satisfactory', 'rimworld',
+  'cities skylines', 'planet coaster', 'powerwash simulator', 'subnautica',
+  'sons of the forest', 'the forest', 'ark survival', 'dayz', '7 days to die',
+  'warframe', 'eve online', 'black desert', 'lost ark', 'new world', 'throne and liberty',
+  'minecraft dungeons', 'sea of thieves', 'trackmania', 'need for speed', 'assetto corsa',
+  'beamng', 'f1 2', 'f1 manager', 'age of empires', 'civilization vi', 'civilization vii',
+  'hearthstone', 'teamfight tactics', 'legends of runeterra', 'marvel rivals',
+  'the finals', 'delta force', 'xdefiant', 'once human', 'f1'
 ];
 const BROWSER_WINDOW_MARKERS = [
-  'chrome', 'microsoft edge', 'edge', 'firefox', 'brave', 'opera',
-  'vivaldi', 'arc browser', 'safari', 'browser'
+  'google chrome', 'chrome', 'microsoft edge', 'msedge', ' - edge', 'firefox', 'brave',
+  'opera', 'vivaldi', 'arc browser', 'safari', 'browser'
 ];
 
 function isGameWindowName(name) {
   const lowerName = String(name || '').trim().toLowerCase();
   if (!lowerName || BROWSER_WINDOW_MARKERS.some((marker) => lowerName.includes(marker))) return false;
-  return GAME_KEYWORDS.some((keyword) => lowerName.includes(keyword));
+  return GAME_KEYWORDS.some((keyword) => {
+    if (keyword.length > 3) return lowerName.includes(keyword);
+    return new RegExp(`(^|[^a-z0-9])${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(lowerName);
+  });
 }
 
 function isTrustedRenderer(event) {
@@ -410,14 +424,14 @@ ipcMain.handle('get-screen-sources', async (event) => {
     try {
       sources = await desktopCapturer.getSources({
         types: ['window'],
-        thumbnailSize: { width: 480, height: 270 },
+        thumbnailSize: { width: 320, height: 180 },
         fetchWindowIcons: true
       });
     } catch (e1) {
       console.warn('Fallback para getSources simplificado:', e1);
       sources = await desktopCapturer.getSources({
         types: ['window'],
-        thumbnailSize: { width: 320, height: 180 }
+        thumbnailSize: { width: 240, height: 135 }
       });
     }
 

@@ -5217,6 +5217,48 @@ button.profile-tag-chip:hover {
   cursor: pointer;
 }
 
+.sb-volume-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.sb-mute-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: #1e1f22;
+  color: #fff;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.sb-mute-button[aria-pressed="true"] {
+  border-color: rgba(237, 66, 69, 0.65);
+  color: #ff8b8e;
+}
+
+.sb-volume-controls input {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--brand-primary);
+  touch-action: pan-x;
+}
+
+.sb-volume-controls output {
+  min-width: 38px;
+  color: #dbdee1;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .sb-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -8221,7 +8263,7 @@ button.profile-tag-chip:hover {
   }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-height: 500px) and (orientation: landscape) and (max-width: 950px) {
   .free-customization-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .user-profile-popover {
     width: min(320px, calc(100vw - 16px));
@@ -8238,7 +8280,7 @@ button.profile-tag-chip:hover {
   display: none;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-height: 500px) and (orientation: landscape) and (max-width: 950px) {
   body {
     height: 100vh;
     height: 100dvh;
@@ -8760,6 +8802,44 @@ button.profile-tag-chip:hover {
     padding: 10px 8px 120px;
   }
 
+  .stream-viewer-wrapper {
+    min-height: min(56vw, 38dvh);
+    flex: 0 1 auto;
+  }
+
+  .stream-player-controls {
+    gap: 8px;
+    padding: 18px 8px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .stream-controls-left,
+  .stream-controls-right {
+    gap: 6px;
+  }
+
+  .stream-volume-container {
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .stream-vol-slider {
+    width: clamp(72px, 24vw, 110px);
+    min-height: 32px;
+  }
+
+  .stream-vol-percent {
+    min-width: 34px;
+    font-size: 11px;
+  }
+
+  .stream-ctrl-btn {
+    min-width: 42px;
+    min-height: 42px;
+    justify-content: center;
+    padding: 8px;
+    touch-action: manipulation;
+  }
+
   .participants-grid {
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
     grid-auto-rows: minmax(150px, 1fr);
@@ -8879,7 +8959,7 @@ button.profile-tag-chip:hover {
   }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-height: 500px) and (orientation: landscape) and (max-width: 950px) {
   :root {
     scrollbar-color: #4e5058 transparent;
     scrollbar-width: thin;

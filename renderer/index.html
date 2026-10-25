@@ -3,8 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#1e1f22">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="BADISCORD">
   <title>BADISCORD</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="styles.css">
   <script src="https://www.google.com/recaptcha/api.js?render=explicit" async defer></script>
   <script src="../node_modules/livekit-client/dist/livekit-client.umd.js"></script>
@@ -507,7 +512,7 @@
           <button id="btnShareCam" class="dock-circle-btn" title="Câmera">
             <span>📹</span>
           </button>
-          <button id="btnShareScreen" class="dock-btn live-btn" title="Transmitir Tela ou Janela de Jogo em 1080p">
+          <button id="btnShareScreen" class="dock-btn live-btn" title="Transmitir tela ou janela do jogo" aria-label="Transmitir tela ou janela do jogo">
             <span>🖥️</span> Transmitir Tela (1080p)
           </button>
           <button id="btnStageActivities" class="dock-circle-btn" title="Atividades / Mini-jogos">
@@ -674,6 +679,13 @@
     <div class="sb-header">
       <span>🔊 Efeitos Sonoros</span>
       <button class="sb-close" id="btnCloseSoundboardQuick">✕</button>
+    </div>
+    <div class="sb-volume-controls">
+      <button type="button" class="sb-mute-button" id="btnSoundboardQuickMute" aria-pressed="false" aria-label="Mutar efeitos para mim">
+        <span id="soundboardQuickMuteIcon" aria-hidden="true">🔊</span>
+      </button>
+      <input type="range" id="soundboardQuickVolume" min="0" max="100" step="1" value="100" aria-label="Volume dos efeitos sonoros">
+      <output id="soundboardQuickVolumeValue" for="soundboardQuickVolume">100%</output>
     </div>
     <div class="sb-grid">
       <button class="sb-btn" data-sound="airhorn">📢 Airhorn</button>
@@ -1582,7 +1594,7 @@
             <div class="hero-icon">🎮</div>
             <div class="hero-text">
               <h3>Transmissão Focada de Janela de Jogo</h3>
-              <p>Transmita especificamente a janela do jogo que você está jogando com áudio e 60 FPS, sem expor sua área de trabalho, navegador ou notificações pessoais.</p>
+              <p>No desktop, compartilhe somente a janela escolhida. No celular, o sistema compartilha a tela inteira após sua confirmação, podendo exibir notificações. A qualidade mobile é limitada para reduzir travamentos.</p>
             </div>
           </div>
 
@@ -1717,7 +1729,7 @@
         <!-- ABA: PAINEL DE EFEITOS SONOROS (SOUNDBOARD) -->
         <div class="settings-tab-pane" id="pane-soundboard" style="display: none;">
           <h2 class="settings-section-title">Painel de Efeitos Sonoros (Soundboard)</h2>
-          <p class="section-desc">Os efeitos são transmitidos separadamente do microfone. Cada participante pode ajustar o volume ou silenciar os efeitos de cada pessoa no perfil dela.</p>
+          <p class="section-desc">Ajuste o volume geral dos efeitos que você ouve, incluindo os recebidos na chamada. Cada participante também pode ter o volume ajustado ou ser silenciado individualmente no perfil.</p>
           <div class="soundboard-controls">
             <button type="button" class="soundboard-mute-button" id="btnSoundboardMute" aria-pressed="false">
               <span id="soundboardMuteIcon" aria-hidden="true">🔊</span>
@@ -1729,7 +1741,7 @@
             </label>
             <output class="soundboard-volume-value" id="soundboardVolumeValue" for="soundboardVolume">100%</output>
           </div>
-          <small class="soundboard-local-volume-note">O volume e o mudo acima controlam apenas como você ouve os efeitos neste dispositivo.</small>
+          <small class="soundboard-local-volume-note">O volume e o mudo acima afetam apenas o que você ouve; não alteram o volume dos outros participantes.</small>
           <div class="soundboard-grid">
             <button class="soundboard-btn" data-sound="airhorn">📢 Airhorn (Corneta)</button>
             <button class="soundboard-btn" data-sound="badumtss">🥁 Ba-Dum-Tss</button>

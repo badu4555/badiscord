@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "BADISCORD",
+  "short_name": "BADISCORD",
+  "description": "Converse, jogue e transmita com sua comunidade.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1e1f22",
+  "theme_color": "#1e1f22",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
