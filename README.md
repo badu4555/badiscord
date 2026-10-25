@@ -7,6 +7,11 @@ Aplicativo para Windows desenvolvido com a mesma arquitetura do **Discord Deskto
 - **Áudio isolado da janela selecionada** no aplicativo desktop Windows, sem incluir o áudio dos demais aplicativos.
 - **Lista de participantes por canal de voz**, atualizada sem precisar entrar no canal.
 - **Controle de volume individual** dos participantes, salvo no dispositivo.
+- **Menu de participantes acessível por toque longo no celular**, com controles locais de volume, silenciar e ocultar vídeo.
+- **Ícone de servidor personalizável** pelo botão de câmera sobre a bolinha do servidor (para proprietários).
+- **Lista de membros online e offline**, com cargos personalizados e seções definidas pelo dono ou administradores.
+- **Chamadas privadas de voz** entre amigos, ações de moderação persistidas no servidor e convite para jogar ou ouvir música.
+- **Atividade atual de jogo ou Spotify** no perfil e na lista de membros; ícones de jogos vêm do aplicativo detectado no desktop.
 - Interface escura clássica no padrão Discord.
 
 ---
@@ -53,6 +58,17 @@ O instalador, o ZIP portátil e os metadados de atualização serão gerados na 
 ## Publicar o backend no Render
 
 O arquivo `render.yaml` configura o serviço Node automaticamente. No Render, crie um Blueprint a partir deste repositório e preencha `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` e `ALLOWED_ORIGINS` como variáveis secretas. O endpoint ficará disponível em `https://badiscord-api.onrender.com` ou no domínio gerado pelo Render.
+
+### Configurar atividade do Spotify
+
+Crie um aplicativo no [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), adicione como Redirect URI exatamente `https://SEU-DOMINIO-DA-API/api/spotify/callback` e configure no backend:
+
+- `SPOTIFY_CLIENT_ID` e `SPOTIFY_CLIENT_SECRET` do aplicativo Spotify.
+- `SPOTIFY_REDIRECT_URI` com a URI de callback cadastrada, sem diferenças de caminho ou protocolo.
+- `PUBLIC_APP_URL` com a origem HTTPS da interface BADISCORD para onde o Spotify retorna após a autorização.
+- `SPOTIFY_TOKEN_ENCRYPTION_KEY` com 32 bytes aleatórios em hexadecimal (64 caracteres). Gere uma chave própria e mantenha-a como segredo; perder ou trocar essa chave exige reconectar as contas Spotify.
+
+O BADISCORD solicita apenas leitura do playback atual e não controla a reprodução. Cada usuário conecta a própria conta pela nota musical na lista de membros. A atividade de música aparece enquanto o Spotify indicar uma faixa em reprodução.
 
 ## Publicar o backend no Railway
 

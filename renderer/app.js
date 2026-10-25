@@ -46,8 +46,16 @@ const channelMessagesCache = new Map();
 const directMessagesCache = new Map();
 let recaptchaSiteKey = '';
 const recaptchaWidgets = {};
+let spotifyActivity = null;
+let spotifyConnected = false;
+let spotifyPollingTimer = null;
 const USER_VOLUMES_STORAGE_KEY = 'badiscord_user_volumes';
+const USER_MUTES_STORAGE_KEY = 'badiscord_muted_users';
+const USER_NICKNAMES_STORAGE_KEY = 'badiscord_user_nicknames';
 let userVolumes = {};
+let mutedUserIdentities = new Set();
+let locallyDisabledVideoIdentities = new Set();
+let userNicknames = {};
 try {
   const savedUserVolumes = JSON.parse(localStorage.getItem(USER_VOLUMES_STORAGE_KEY) || '{}');
   if (savedUserVolumes && typeof savedUserVolumes === 'object' && !Array.isArray(savedUserVolumes)) {
@@ -55,6 +63,50 @@ try {
   }
 } catch (error) {
   console.warn('Não foi possível carregar os volumes individuais:', error);
+}
+try {
+  const savedMutes = JSON.parse(localStorage.getItem(USER_MUTES_STORAGE_KEY) || '[]');
+  if (Array.isArray(savedMutes)) mutedUserIdentities = new Set(savedMutes.filter((id) => typeof id === 'string'));
+} catch (error) {
+  console.warn('Não foi possível carregar os usuários silenciados:', error);
+}
+try {
+  const savedNicknames = JSON.parse(localStorage.getItem(USER_NICKNAMES_STORAGE_KEY) || '{}');
+  if (savedNicknames && typeof savedNicknames === 'object' && !Array.isArray(savedNicknames)) {
+    userNicknames = savedNicknames;
+  }
+} catch (error) {
+  console.warn('Não foi possível carregar os apelidos:', error);
+}
+
+function getUserNickname(identity) {
+  return typeof identity === 'string' ? String(userNicknames[identity] || '').trim() : '';
+}
+
+function applyUserNickname(member) {
+  if (!member || member.id === 'self' || member.id === authenticatedAccount?.id) return member;
+  const nickname = getUserNickname(member.id);
+  return nickname ? { ...member, name: nickname, initial: nickname[0].toUpperCase() } : member;
+}
+
+function isUserMuted(identity) {
+  return Boolean(identity && mutedUserIdentities.has(identity));
+}
+
+function setUserMuted(identity, muted) {
+  if (typeof identity !== 'string' || !identity || identity === 'self' || identity === authenticatedAccount?.id) return;
+  if (muted) mutedUserIdentities.add(identity);
+  else mutedUserIdentities.delete(identity);
+  try {
+    localStorage.setItem(USER_MUTES_STORAGE_KEY, JSON.stringify([...mutedUserIdentities]));
+  } catch (error) {
+    console.warn('Não foi possível salvar os usuários silenciados:', error);
+  }
+  remoteAudioElements.forEach((element) => {
+    if (element.dataset.participantIdentity === identity && !remoteScreenAudioElements.has(element)) {
+      element.volume = muted ? 0 : getUserVolume(identity) / 100;
+    }
+  });
 }
 
 function getUserVolume(identity) {
@@ -74,7 +126,7 @@ function setUserVolume(identity, value) {
 
   remoteAudioElements.forEach((element) => {
     if (element.dataset.participantIdentity === identity && !remoteScreenAudioElements.has(element)) {
-      element.volume = volume / 100;
+      element.volume = isUserMuted(identity) ? 0 : volume / 100;
     }
   });
 }
@@ -267,6 +319,10 @@ function publishPresenceStatus() {
   if (!authenticatedAccount) return Promise.resolve();
   const status = userProfile.presenceStatus || 'online';
   const details = { online: 'Disponível', idle: 'Ausente', dnd: 'Ocupado', invisible: 'Invisível' };
+  const gameActivity = typeof detectedGame !== 'undefined' && detectedGame?.name ? detectedGame : null;
+  const activity = gameActivity
+    ? { type: 'game', text: gameActivity.name, artwork: gameActivity.appIcon || '', url: '' }
+    : (spotifyActivity ? { type: 'music', ...spotifyActivity } : { type: '', text: '', artwork: '', url: '' });
   return fetch('/api/presence', {
     method: 'POST',
     credentials: 'include',
@@ -274,7 +330,13 @@ function publishPresenceStatus() {
     body: JSON.stringify({
       status,
       detail: details[status] || 'Disponível',
-      game: detectedGame?.name || ''
+      game: gameActivity?.name || '',
+      activityType: activity.type,
+      activityText: activity.text,
+      activityArtwork: activity.artwork,
+      activityUrl: activity.url,
+      avatarUrl: userProfile.avatarUrl || '',
+      profileColor: userProfile.bannerColor || '#5865F2'
     })
   }).then(async (response) => {
     const payload = await response.json().catch(() => ({}));
@@ -394,8 +456,13 @@ async function finalizeAuthSession(account) {
   applyUserProfile();
   await loadFriendsFromServer();
   startFriendRequestPolling();
+  startPrivateCallPolling();
+  await refreshSpotifyConnectionStatus();
+  startSpotifyActivityPolling();
   if (await syncLocalServersWithBackend(account.homeServerId || '', true)) {
     startVoiceRosterPolling();
+    loadServerMembers(activeServerId);
+    startServerMembersPolling();
     await loadServerInvites();
     restoreServerView(activeServerId);
     await loadCustomSoundboard();
@@ -415,6 +482,16 @@ function logoutAccount() {
   presenceHeartbeatTimer = null;
   clearInterval(voiceRosterPollingTimer);
   voiceRosterPollingTimer = null;
+  clearInterval(serverMembersPollingTimer);
+  serverMembersPollingTimer = null;
+  clearInterval(privateCallPollingTimer);
+  privateCallPollingTimer = null;
+  clearInterval(spotifyPollingTimer);
+  spotifyPollingTimer = null;
+  serverMembersByServer.clear();
+  serverRolesByServer.clear();
+  spotifyActivity = null;
+  spotifyConnected = false;
   serverVoiceRosters.clear();
   incomingFriendRequestIds = null;
   clearInterval(channelMessagesPollingTimer);
@@ -452,8 +529,15 @@ async function ensureAuthState() {
 
 let livekitRoom = null;
 let livekitAudioTrack = null;
+let localVoiceCanPublish = true;
 let livekitScreenTrack = null;
 let livekitScreenAudioTrack = null;
+let privateCallRoom = null;
+let privateCallAudioTrack = null;
+let privateCallId = '';
+let privateCallEnding = false;
+let privateCallPollingTimer = null;
+let lastIncomingCallId = '';
 let livekitConnectionInFlight = false;
 const remoteAudioElements = new Set();
 let remoteAudioPlaybackNeedsGesture = false;
@@ -524,7 +608,10 @@ async function requestLiveKitToken(roomName, participantName) {
     throw new Error(payload.error || 'Não foi possível obter o token do LiveKit.');
   }
 
-  return payload.token;
+  return {
+    token: payload.token,
+    canPublish: payload.canPublish !== false
+  };
 }
 
 function clearRemoteAudioElements(participantIdentity = '') {
@@ -660,7 +747,7 @@ async function connectToLiveKitRoom(channelName) {
             audioElement.muted = isDeafened || isStreamAudioMuted;
             remoteScreenAudioElements.add(audioElement);
           } else {
-            audioElement.volume = getUserVolume(participant.identity) / 100;
+            audioElement.volume = isUserMuted(participant.identity) ? 0 : getUserVolume(participant.identity) / 100;
           }
           document.body.appendChild(audioElement);
           remoteAudioElements.add(audioElement);
@@ -673,6 +760,10 @@ async function connectToLiveKitRoom(channelName) {
           });
           refreshVoiceParticipantViews();
         } else if (publication.source === window.LivekitClient.Track.Source.Camera) {
+          if (locallyDisabledVideoIdentities.has(participant.identity)) {
+            publication.setSubscribed(false);
+            return;
+          }
           remoteCameraTracks.set(participant.identity, track);
           refreshVoiceParticipantViews();
         }
@@ -711,17 +802,221 @@ async function connectToLiveKitRoom(channelName) {
       await livekitRoom.disconnect();
     }
 
-    const token = await requestLiveKitToken(roomName, participantName);
-    await livekitRoom.prepareConnection(livekitUrl, token);
-    await livekitRoom.connect(livekitUrl, token);
+    const credentials = await requestLiveKitToken(roomName, participantName);
+    localVoiceCanPublish = credentials.canPublish;
+    await livekitRoom.prepareConnection(livekitUrl, credentials.token);
+    await livekitRoom.connect(livekitUrl, credentials.token);
     return livekitRoom;
   } finally {
     livekitConnectionInFlight = false;
   }
 }
 
+async function connectPrivateCall(call) {
+  if (!call?.roomName || !call.id || privateCallId !== call.id) return;
+  if (privateCallRoom?.state === 'connected') return;
+  if (!window.LivekitClient?.Room || !window.LivekitClient?.createLocalAudioTrack) {
+    throw new Error('O cliente de voz não está disponível neste navegador.');
+  }
+  const { token } = await requestLiveKitToken(call.roomName, userProfile.displayName || 'Usuário');
+  const livekitUrl = await fetchLiveKitConfig();
+  const room = new window.LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+  privateCallRoom = room;
+  room.on(window.LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+    if (track.kind !== 'audio') return;
+    const audio = track.attach();
+    audio.autoplay = true;
+    audio.playsInline = true;
+    audio.dataset.participantIdentity = participant.identity;
+    audio.volume = isUserMuted(participant.identity) ? 0 : getUserVolume(participant.identity) / 100;
+    document.body.appendChild(audio);
+    remoteAudioElements.add(audio);
+    playRemoteAudioElement(audio);
+  });
+  room.on(window.LivekitClient.RoomEvent.TrackUnsubscribed, (track) => {
+    track.detach().forEach((audio) => {
+      remoteAudioElements.delete(audio);
+      audio.remove();
+    });
+  });
+  await room.prepareConnection(livekitUrl, token);
+  await room.connect(livekitUrl, token);
+  privateCallAudioTrack = await window.LivekitClient.createLocalAudioTrack({
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    sampleRate: 48000
+  });
+  await room.localParticipant.publishTrack(privateCallAudioTrack, {
+    source: window.LivekitClient.Track.Source.Microphone
+  });
+  if (isMuted) await privateCallAudioTrack.mute();
+  const bar = document.getElementById('privateCallBar');
+  const status = document.getElementById('privateCallStatus');
+  const remoteName = call.isCaller ? call.receiver_name : call.caller_name;
+  if (status) status.textContent = `Em chamada com ${remoteName || 'amigo'}`;
+  if (bar) bar.style.display = 'flex';
+}
+
+async function cleanupPrivateCall() {
+  privateCallEnding = true;
+  if (privateCallAudioTrack) {
+    privateCallAudioTrack.stop();
+    privateCallAudioTrack = null;
+  }
+  if (privateCallRoom) {
+    await privateCallRoom.disconnect();
+    privateCallRoom = null;
+  }
+  const bar = document.getElementById('privateCallBar');
+  if (bar) bar.style.display = 'none';
+  privateCallId = '';
+  privateCallEnding = false;
+}
+
+async function startPrivateCall(member) {
+  if (!member?.id || !friendsList.some((friend) => friend.id === member.id)) {
+    showToast('Adicione esta pessoa como amiga para ligar.', '⚠️');
+    return;
+  }
+  if (privateCallId) {
+    showToast('Você já está em uma chamada ou chamando alguém.', '⚠️');
+    return;
+  }
+  if (!window.LivekitClient?.Room) {
+    showToast('A chamada não está disponível neste navegador.', '⚠️');
+    return;
+  }
+  if (currentChannel && !confirm('Você sairá do canal de voz atual para iniciar uma chamada privada. Continuar?')) return;
+  try {
+    if (currentChannel) await disconnectVoice(false);
+    const response = await fetch('/api/calls', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ friendId: member.id })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível iniciar a chamada.');
+    privateCallId = payload.call.id;
+    const status = document.getElementById('privateCallStatus');
+    if (status) status.textContent = `Chamando ${member.name}…`;
+    const bar = document.getElementById('privateCallBar');
+    if (bar) bar.style.display = 'flex';
+    showToast(`Chamando ${member.name}…`, '📞');
+  } catch (error) {
+    showToast(error.message || 'Não foi possível iniciar a chamada.', '⚠️');
+  }
+}
+
+async function endPrivateCall() {
+  const callId = privateCallId;
+  if (callId) {
+    try {
+      const response = await fetch(`/api/calls/${encodeURIComponent(callId)}/end`, {
+        method: 'POST', credentials: 'include', headers: { Accept: 'application/json' }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok && response.status !== 404) throw new Error(payload.error || 'Não foi possível encerrar a chamada.');
+    } catch (error) {
+      showToast(error.message || 'Não foi possível encerrar a chamada.', '⚠️');
+    }
+  }
+  await cleanupPrivateCall();
+}
+
+async function pollPrivateCalls() {
+  if (!authenticatedAccount) return;
+  try {
+    const response = await fetch('/api/calls', { credentials: 'include', headers: { Accept: 'application/json' } });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível verificar chamadas.');
+    const calls = Array.isArray(payload.calls) ? payload.calls : [];
+    if (privateCallId) {
+      const current = calls.find((call) => call.id === privateCallId);
+      if (!current || ['ended', 'rejected', 'missed'].includes(current.status)) {
+        const wasActive = Boolean(privateCallRoom);
+        await cleanupPrivateCall();
+        if (wasActive) showToast('A chamada foi encerrada.', '📞');
+      } else if (current.status === 'active') {
+        await connectPrivateCall(current);
+      } else {
+        const status = document.getElementById('privateCallStatus');
+        const remoteName = current.isCaller ? current.receiver_name : current.caller_name;
+        if (status) status.textContent = `Chamando ${remoteName || 'amigo'}…`;
+      }
+    }
+    const incoming = calls.find((call) => call.status === 'ringing' && !call.isCaller);
+    const incomingModal = document.getElementById('incomingCallModal');
+    if (incoming && incomingModal && incoming.id !== lastIncomingCallId) {
+      lastIncomingCallId = incoming.id;
+      incomingModal.dataset.callId = incoming.id;
+      incomingModal.dataset.callerName = incoming.caller_name || 'Usuário';
+      const title = document.getElementById('incomingCallTitle');
+      const description = document.getElementById('incomingCallDescription');
+      if (title) title.textContent = `Chamada de ${incoming.caller_name}`;
+      if (description) description.textContent = `${incoming.caller_name} está ligando para você.`;
+      incomingModal.style.display = 'flex';
+    } else if (!incoming && incomingModal?.style.display === 'flex') {
+      incomingModal.style.display = 'none';
+    }
+  } catch (error) {
+    console.warn('Não foi possível verificar chamadas privadas:', error);
+  }
+}
+
+function startPrivateCallPolling() {
+  clearInterval(privateCallPollingTimer);
+  privateCallPollingTimer = setInterval(pollPrivateCalls, 3_000);
+  pollPrivateCalls();
+}
+
+document.getElementById('btnEndPrivateCall')?.addEventListener('click', endPrivateCall);
+document.getElementById('btnDeclineCall')?.addEventListener('click', async () => {
+  const modal = document.getElementById('incomingCallModal');
+  const callId = modal?.dataset.callId;
+  if (!callId) return;
+  try {
+    const response = await fetch(`/api/calls/${encodeURIComponent(callId)}/end`, {
+      method: 'POST', credentials: 'include', headers: { Accept: 'application/json' }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível recusar a chamada.');
+    modal.style.display = 'none';
+    lastIncomingCallId = '';
+  } catch (error) {
+    showToast(error.message || 'Não foi possível recusar a chamada.', '⚠️');
+  }
+});
+document.getElementById('btnAcceptCall')?.addEventListener('click', async () => {
+  const modal = document.getElementById('incomingCallModal');
+  const callId = modal?.dataset.callId;
+  if (!callId) return;
+  if (privateCallId) {
+    showToast('Encerre sua chamada atual antes de atender outra.', '⚠️');
+    return;
+  }
+  if (currentChannel && !confirm('Você sairá do canal de voz atual para atender esta chamada privada. Continuar?')) {
+    document.getElementById('btnDeclineCall')?.click();
+    return;
+  }
+  try {
+    if (currentChannel) await disconnectVoice(false);
+    const response = await fetch(`/api/calls/${encodeURIComponent(callId)}/accept`, {
+      method: 'POST', credentials: 'include', headers: { Accept: 'application/json' }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível atender a chamada.');
+    privateCallId = payload.call.id;
+    modal.style.display = 'none';
+    await connectPrivateCall({ ...payload.call, caller_name: modal.dataset.callerName, isCaller: false });
+  } catch (error) {
+    showToast(error.message || 'Não foi possível atender a chamada.', '⚠️');
+  }
+});
+
 async function publishMicToLiveKit() {
-  if (!livekitRoom || livekitRoom.state !== 'connected' || !window.LivekitClient || !window.LivekitClient.createLocalAudioTrack) {
+  if (!localVoiceCanPublish || !livekitRoom || livekitRoom.state !== 'connected' || !window.LivekitClient || !window.LivekitClient.createLocalAudioTrack) {
     return null;
   }
 
@@ -769,6 +1064,7 @@ async function disconnectLiveKitRoom() {
   if (livekitRoom && livekitRoom.state === 'connected') {
     await livekitRoom.disconnect();
   }
+  localVoiceCanPublish = true;
   remoteScreenTracks.clear();
   stopWatchingLive();
   remoteScreenAudioElements.clear();
@@ -776,10 +1072,11 @@ async function disconnectLiveKitRoom() {
 }
 
 const DEFAULT_SERVERS = [];
+const HIDDEN_SAMPLE_SERVER_IDS = new Set(['srv-1', 'srv-2', 'pub-1', 'pub-2', 'pub-3', 'pub-4']);
 
 function normalizeServers(list) {
   if (!Array.isArray(list)) return DEFAULT_SERVERS;
-  return list.filter((srv) => srv.id !== 'srv-1' && srv.id !== 'srv-2').map((srv, idx) => {
+  return list.filter((srv) => !HIDDEN_SAMPLE_SERVER_IDS.has(srv.id)).map((srv, idx) => {
     const textChans = Array.isArray(srv.textChannels) && srv.textChannels.length > 0
       ? srv.textChannels
       : ['geral', 'regras-da-casa', 'clipes-e-jogos'];
@@ -787,11 +1084,15 @@ function normalizeServers(list) {
       ? srv.voiceChannels
       : (Array.isArray(srv.channels) && srv.channels.length > 0 ? srv.channels : ['Geral 🔊', 'CS2 Competitivo', 'Live 1080p 60FPS']);
     return {
+      ...srv,
       id: srv.id || `srv-${idx + 1}`,
       name: srv.name || `Servidor ${idx + 1}`,
       icon: srv.icon || '🎮',
       textChannels: textChans,
-      voiceChannels: voiceChans
+      voiceChannels: voiceChans,
+      roleId: srv.roleId || '',
+      role: srv.role || 'member',
+      isOwner: srv.isOwner !== false
     };
   });
 }
@@ -1054,6 +1355,8 @@ const btnJumpToVoice = document.getElementById('btnJumpToVoice');
 const voiceConnectedStrip = document.getElementById('voiceConnectedStrip');
 const stripChannelName = document.getElementById('stripChannelName');
 const btnToggleMembers = document.getElementById('btnToggleMembers');
+const btnToggleVoiceMembers = document.getElementById('btnToggleVoiceMembers');
+const btnCloseMembers = document.getElementById('btnCloseMembers');
 const membersSidebar = document.getElementById('membersSidebar');
 const membersScroll = document.getElementById('membersScroll');
 
@@ -1125,7 +1428,14 @@ function switchView(viewName) {
   updateVoiceSelfCard();
 
   if (membersSidebar) {
-    membersSidebar.style.display = (viewName === 'chat') ? 'block' : 'none';
+    const showMembers = (viewName === 'chat' || viewName === 'voice') && !currentDmFriend;
+    membersSidebar.style.display = showMembers ? 'flex' : 'none';
+    if (!showMembers) {
+      membersSidebar.classList.remove('is-open');
+      [btnToggleMembers, btnToggleVoiceMembers].filter(Boolean).forEach((button) => {
+        button.setAttribute('aria-expanded', 'false');
+      });
+    }
   }
 
   if (voiceConnectedStrip) {
@@ -1147,19 +1457,46 @@ function renderGuilds() {
 
   servers.forEach(srv => {
     const icon = document.createElement('div');
-    icon.className = `guild-icon ${!inHomeView && srv.id === activeServerId ? 'active' : ''}`;
-    icon.title = srv.name;
-    icon.textContent = srv.icon || srv.name.slice(0, 2).toUpperCase();
+    icon.className = `guild-icon-wrap ${!inHomeView && srv.id === activeServerId ? 'active' : ''}`;
 
-    icon.addEventListener('click', () => {
+    const serverIcon = document.createElement('button');
+    serverIcon.type = 'button';
+    serverIcon.className = 'guild-icon';
+    serverIcon.setAttribute('aria-label', `Abrir servidor ${srv.name}`);
+    serverIcon.title = srv.name;
+    if (srv.iconUrl) {
+      const image = document.createElement('img');
+      image.src = srv.iconUrl;
+      image.alt = '';
+      serverIcon.appendChild(image);
+    } else {
+      serverIcon.textContent = srv.icon || srv.name.slice(0, 2).toUpperCase();
+    }
+
+    serverIcon.addEventListener('click', () => {
       restoreServerView(srv.id);
     });
 
-    // Clique com botão direito abre o Menu de Contexto do Servidor (Foto 3)
-    icon.addEventListener('contextmenu', (e) => {
+    serverIcon.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       openServerContextMenu(e.clientX, e.clientY, srv);
     });
+
+    icon.appendChild(serverIcon);
+
+    if (srv.isOwner !== false) {
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'guild-icon-edit';
+      editButton.setAttribute('aria-label', `Alterar imagem de ${srv.name}`);
+      editButton.title = 'Alterar imagem do servidor';
+      editButton.textContent = '📷';
+      editButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        window.changeServerIcon?.(srv);
+      });
+      icon.appendChild(editButton);
+    }
 
     guildList.appendChild(icon);
   });
@@ -1171,8 +1508,19 @@ function selectServer(serverId) {
 
   const srv = servers.find(s => s.id === serverId);
   if (srv) {
+    if (authenticatedAccount) loadServerMembers(serverId);
     if (guildTitle) guildTitle.textContent = srv.name;
-    if (guildBadge) guildBadge.textContent = srv.icon || '🍺';
+    if (guildBadge) {
+      guildBadge.replaceChildren();
+      if (srv.iconUrl) {
+        const image = document.createElement('img');
+        image.src = srv.iconUrl;
+        image.alt = '';
+        guildBadge.appendChild(image);
+      } else {
+        guildBadge.textContent = srv.icon || '🍺';
+      }
+    }
     renderChannels(srv);
     if (authenticatedAccount) refreshServerVoiceRoster(serverId).catch((error) => {
       console.warn('Não foi possível atualizar os participantes dos canais de voz:', error);
@@ -1436,7 +1784,7 @@ function getServerOnlineProfiles() {
     ...onlineFriends
   ]);
 
-  return combined.filter((member) => {
+  return combined.map(applyUserNickname).filter((member) => {
     const status = (member.status || 'online');
     return status !== 'offline';
   });
@@ -1456,6 +1804,10 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
     const id = member?.id ? String(member.id) : '';
     if (id) profilesById.set(id, member);
   });
+  (serverMembersByServer.get(serverId) || []).forEach((member) => {
+    const id = member?.id ? String(member.id) : '';
+    if (id) profilesById.set(id, member);
+  });
   (Array.isArray(friendsList) ? friendsList : []).forEach((friend) => {
     const id = friend?.id ? String(friend.id) : '';
     if (id && !profilesById.has(id)) profilesById.set(id, friend);
@@ -1465,7 +1817,7 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
     return (serverVoiceRosters.get(serverId)?.get(channelName) || []).map((participant) => {
       const profile = profilesById.get(participant.id) || {};
       const name = participant.name || profile.name || participant.id || 'Usuário';
-      return {
+      return applyUserNickname({
         id: participant.id,
         name,
         tag: profile.tag || '0001',
@@ -1474,6 +1826,10 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
         color: profile.color || '#5865F2',
         avatarUrl: profile.avatarUrl || '',
         game: profile.game || '',
+        activityType: profile.activityType || (profile.game ? 'game' : ''),
+        activityText: profile.activityText || profile.game || '',
+        activityArtwork: profile.activityArtwork || '',
+        activityUrl: profile.activityUrl || '',
         detail: profile.detail || 'Disponível',
         status: 'online',
         isOwner: false,
@@ -1481,7 +1837,7 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
         isStreaming: false,
         pingMs: null,
         viewerCount: 0
-      };
+      });
     });
   }
 
@@ -1494,6 +1850,10 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
     color: userProfile.bannerColor || '#5865F2',
     avatarUrl: userProfile.avatarUrl || '',
     game: detectedGame?.name || '',
+    activityType: detectedGame?.name ? 'game' : (spotifyActivity ? 'music' : ''),
+    activityText: detectedGame?.name || spotifyActivity?.text || '',
+    activityArtwork: detectedGame?.appIcon || spotifyActivity?.artwork || '',
+    activityUrl: spotifyActivity?.url || '',
     detail: userProfile.aboutMe || 'Disponível',
     status: 'online',
     isOwner: true,
@@ -1513,7 +1873,7 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
       publication.source === window.LivekitClient.Track.Source.ScreenShare
     )) || remoteScreenTracks.has(participant.identity);
     const pingReport = voiceRttByIdentity.get(participant.identity);
-    return {
+    return applyUserNickname({
       id: participant.identity,
       name,
       tag: profile.tag || '0001',
@@ -1522,6 +1882,10 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
       color: profile.color || '#5865F2',
       avatarUrl: profile.avatarUrl || '',
       game: profile.game || '',
+      activityType: profile.activityType || (profile.game ? 'game' : ''),
+      activityText: profile.activityText || profile.game || '',
+      activityArtwork: profile.activityArtwork || '',
+      activityUrl: profile.activityUrl || '',
       detail: profile.detail || 'Disponível',
       status: 'online',
       isOwner: false,
@@ -1530,7 +1894,7 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
       isStreaming,
       pingMs: pingReport && Date.now() - pingReport.receivedAt < 15000 ? pingReport.rttMs : null,
       viewerCount: isStreaming ? livekitRoom.remoteParticipants.size : 0
-    };
+    });
   });
 }
 
@@ -1812,38 +2176,6 @@ function closeVoiceSwitchConfirmation() {
   resolveVoiceSwitchPrompt = null;
 }
 
-async function disconnectVoice(showToastMessage = true) {
-  if (localAudioTrack && typeof localAudioTrack.stop === 'function') {
-    try { localAudioTrack.stop(); } catch (e) {}
-  }
-  localAudioTrack = null;
-
-  if (livekitRoom && livekitRoom.state === 'connected') {
-    await disconnectLiveKitRoom();
-  }
-
-  if (currentChannel) {
-    currentChannel = null;
-  }
-
-  document.querySelectorAll('.channel-item[data-type="voice"]').forEach(item => {
-    item.classList.remove('active');
-  });
-
-  if (voiceConnectionPanel) voiceConnectionPanel.style.display = 'none';
-  if (connectionBadge) connectionBadge.style.display = 'none';
-  if (voiceFloatingBar) voiceFloatingBar.style.display = 'none';
-  if (participantsGrid) participantsGrid.style.display = 'none';
-  if (emptyState) emptyState.style.display = 'flex';
-
-  if (showToastMessage) {
-    showToast('Você saiu do canal de voz.', '🔇');
-  }
-
-  playDisconnectSound();
-  renderVoiceParticipants();
-}
-
 // Conectar ao Canal de Voz
 async function joinVoiceChannel(channelName) {
   if (!hasAuthenticatedSession()) {
@@ -1864,7 +2196,7 @@ async function joinVoiceChannel(channelName) {
       if (!shouldSwitch) return;
     }
 
-    disconnectVoice(false);
+    await disconnectVoice(false);
   }
 
   playConnectSound();
@@ -1899,11 +2231,18 @@ async function joinVoiceChannel(channelName) {
     if (!room || room.state !== 'connected') throw new Error('Não foi possível conectar ao canal de voz.');
     await measurePing();
     const microphoneTrack = await publishMicToLiveKit();
-    if (!microphoneTrack?.mediaStreamTrack) throw new Error('Não foi possível ativar o microfone.');
-    localAudioTrack = microphoneTrack.mediaStreamTrack;
-    await setupAudioLevelMeter(new MediaStream([localAudioTrack]));
+    if (microphoneTrack?.mediaStreamTrack) {
+      localAudioTrack = microphoneTrack.mediaStreamTrack;
+      await setupAudioLevelMeter(new MediaStream([localAudioTrack]));
+    } else if (localVoiceCanPublish) {
+      throw new Error('Não foi possível ativar o microfone.');
+    } else {
+      isMuted = true;
+      updateControlsUI();
+      showToast('Você pode ouvir o canal, mas está silenciado neste servidor.', '🔇');
+    }
     refreshVoiceParticipantViews();
-    showToast(`Conectado a ${channelName}; microfone ${isMuted ? 'mutado' : 'ativo'}.`, '🎧');
+    if (localVoiceCanPublish) showToast(`Conectado a ${channelName}; microfone ${isMuted ? 'mutado' : 'ativo'}.`, '🎧');
   } catch (err) {
     console.warn('Microfone não acessível ou sem permissão:', err);
     isMuted = true;
@@ -3121,7 +3460,12 @@ async function checkRunningGame() {
   if (!window.electronAPI || !window.electronAPI.getDetectedGame) return;
   try {
     const game = await window.electronAPI.getDetectedGame();
+    const previousGameName = detectedGame?.name || '';
     detectedGame = game;
+    if ((game?.name || '') !== previousGameName) {
+      publishPresenceStatus();
+      renderServerMembers();
+    }
 
     const panel = document.getElementById('gameActivityPanel');
     const titleEl = document.getElementById('gameActivityTitle');
@@ -4073,128 +4417,370 @@ if (btnStartDmChat) {
 // LISTA DE MEMBROS DO SERVIDOR COM ATIVIDADES & MODERAÇÃO (Foto 1)
 // ==========================================
 let currentInspectedMember = null;
-let bannedMembers = {}; // { serverId: [ { name, fullTag, until, reason } ] }
+const serverMembersByServer = new Map();
+const serverRolesByServer = new Map();
+const serverMembersLoadInFlight = new Set();
+let memberRoleTarget = null;
+let serverMembersPollingTimer = null;
 
-try {
-  bannedMembers = JSON.parse(localStorage.getItem('badiscord_banned_members') || '{}');
-} catch(e) { bannedMembers = {}; }
-
-function saveBannedMembers() {
-  localStorage.setItem('badiscord_banned_members', JSON.stringify(bannedMembers));
+async function loadServerMembers(serverId = activeServerId) {
+  if (!serverId || !authenticatedAccount) return;
+  if (serverMembersLoadInFlight.has(serverId)) return;
+  serverMembersLoadInFlight.add(serverId);
+  try {
+    const [membersResponse, rolesResponse] = await Promise.all([
+      fetch(`/api/servers/${encodeURIComponent(serverId)}/members`, { credentials: 'include', headers: { Accept: 'application/json' } }),
+      fetch(`/api/servers/${encodeURIComponent(serverId)}/roles`, { credentials: 'include', headers: { Accept: 'application/json' } })
+    ]);
+    const membersPayload = await membersResponse.json().catch(() => ({}));
+    const rolesPayload = await rolesResponse.json().catch(() => ({}));
+    if (!membersResponse.ok) throw new Error(membersPayload.error || 'Não foi possível carregar os membros.');
+    if (!rolesResponse.ok) throw new Error(rolesPayload.error || 'Não foi possível carregar os cargos.');
+    serverMembersByServer.set(serverId, Array.isArray(membersPayload.members) ? membersPayload.members : []);
+    serverRolesByServer.set(serverId, Array.isArray(rolesPayload.roles) ? rolesPayload.roles : []);
+    if (serverId === activeServerId && currentChannel) {
+      const self = serverMembersByServer.get(serverId).find((member) => member.id === authenticatedAccount.id);
+      if (self?.isMuted) {
+        localVoiceCanPublish = false;
+        setMuteState(true, false);
+      } else if (self) {
+        localVoiceCanPublish = true;
+      }
+    }
+    renderServerMembers();
+  } catch (error) {
+    console.warn('Não foi possível atualizar os membros do servidor:', error);
+    if (!serverMembersByServer.has(serverId) && membersScroll) {
+      membersScroll.replaceChildren();
+      const errorText = document.createElement('div');
+      errorText.className = 'members-empty';
+      errorText.textContent = error.message || 'Não foi possível carregar os membros.';
+      membersScroll.appendChild(errorText);
+    }
+  } finally {
+    serverMembersLoadInFlight.delete(serverId);
+  }
 }
 
-function isMemberBanned(srvId, memberName) {
-  const list = bannedMembers[srvId] || [];
-  const now = Date.now();
-  const ban = list.find(b => b.name.toLowerCase() === memberName.toLowerCase());
-  if (!ban) return false;
-  if (ban.until === 'perm') return true;
-  return now < ban.until;
+function startServerMembersPolling() {
+  clearInterval(serverMembersPollingTimer);
+  serverMembersPollingTimer = setInterval(() => loadServerMembers(activeServerId), 15_000);
+}
+
+async function refreshSpotifyConnectionStatus() {
+  const button = document.getElementById('btnSpotifyConnect');
+  try {
+    const response = await fetch('/api/spotify/status', { credentials: 'include', headers: { Accept: 'application/json' } });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível verificar a conexão do Spotify.');
+    spotifyConnected = Boolean(payload.connected);
+    if (button) {
+      button.title = spotifyConnected ? 'Desconectar Spotify' : (payload.configured ? 'Conectar Spotify' : 'Spotify ainda não configurado no servidor');
+      button.setAttribute('aria-label', button.title);
+      button.textContent = spotifyConnected ? '♫✓' : '♫';
+    }
+    const query = new URLSearchParams(window.location.search);
+    const spotifyResult = query.get('spotify');
+    if (spotifyResult) {
+      query.delete('spotify');
+      const nextUrl = `${window.location.pathname}${query.toString() ? `?${query}` : ''}${window.location.hash}`;
+      window.history.replaceState({}, '', nextUrl);
+      showToast(spotifyResult === 'connected' ? 'Spotify conectado.' : 'Não foi possível conectar o Spotify.', spotifyResult === 'connected' ? '✅' : '⚠️');
+    }
+  } catch (error) {
+    console.warn('Não foi possível verificar a conexão do Spotify:', error);
+    if (button) button.title = error.message || 'Erro ao verificar Spotify';
+  }
+}
+
+async function refreshSpotifyActivity() {
+  if (!spotifyConnected || !authenticatedAccount) return;
+  try {
+    const response = await fetch('/api/spotify/now-playing', { credentials: 'include', headers: { Accept: 'application/json' } });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível atualizar a atividade do Spotify.');
+    spotifyActivity = payload.playing
+      ? { text: payload.text, artwork: payload.artwork || '', url: payload.url || '' }
+      : null;
+    await publishPresenceStatus();
+    loadServerMembers(activeServerId);
+  } catch (error) {
+    console.warn('Não foi possível atualizar a atividade do Spotify:', error);
+  }
+}
+
+function startSpotifyActivityPolling() {
+  clearInterval(spotifyPollingTimer);
+  if (!spotifyConnected) return;
+  refreshSpotifyActivity();
+  spotifyPollingTimer = setInterval(refreshSpotifyActivity, 20_000);
+}
+
+document.getElementById('btnSpotifyConnect')?.addEventListener('click', async () => {
+  try {
+    if (spotifyConnected) {
+      const response = await fetch('/api/spotify/connection', {
+        method: 'DELETE', credentials: 'include', headers: { Accept: 'application/json' }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível desconectar o Spotify.');
+      spotifyConnected = false;
+      spotifyActivity = null;
+      clearInterval(spotifyPollingTimer);
+      spotifyPollingTimer = null;
+      await publishPresenceStatus();
+      await refreshSpotifyConnectionStatus();
+      await loadServerMembers(activeServerId);
+      showToast('Spotify desconectado.', '✅');
+      return;
+    }
+    const response = await fetch('/api/spotify/connect', { credentials: 'include', headers: { Accept: 'application/json' } });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível iniciar a conexão com o Spotify.');
+    window.location.assign(payload.url);
+  } catch (error) {
+    showToast(error.message || 'Não foi possível conectar o Spotify.', '⚠️');
+  }
+});
+
+function canManageActiveServerMembers() {
+  const server = servers.find((entry) => entry.id === activeServerId);
+  if (!server) return false;
+  if (server.isOwner || server.role === 'owner' || server.role === 'admin') return true;
+  return (serverRolesByServer.get(activeServerId) || []).some((role) => (
+    role.id === server.roleId && role.canManageMembers
+  ));
 }
 
 function renderServerMembers() {
   if (!membersScroll) return;
-  membersScroll.innerHTML = '';
-
-  const activeSrv = servers.find(s => s.id === activeServerId) || servers[0];
-  const onlineMembers = getServerOnlineProfiles().filter((member) => !isMemberBanned(activeServerId, member.name));
-
-  const isPlayingGame = detectedGame && detectedGame.name;
-  if (isPlayingGame) {
-    const actHeader = document.createElement('div');
-    actHeader.className = 'members-activity-header';
-    actHeader.innerHTML = `<span>Atividade — ${onlineMembers.length}</span> <span style="cursor:pointer;" title="Configurações de Atividade">⚙️</span>`;
-    membersScroll.appendChild(actHeader);
-
-    const actCard = document.createElement('div');
-    actCard.style.cssText = 'background:#1e1f22; margin:4px 8px 12px 8px; padding:8px 10px; border-radius:8px; display:flex; align-items:center; gap:8px; border:1px solid rgba(255,255,255,0.06); cursor:pointer;';
-    actCard.innerHTML = `
-      <div style="font-size:20px;">🎮</div>
-      <div style="display:flex; flex-direction:column; overflow:hidden;">
-        <span style="font-size:12px; font-weight:700; color:#fff; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">${detectedGame.name}</span>
-        <span style="font-size:11px; color:#23a55a; font-weight:600;">Ao vivo agora</span>
-      </div>
-    `;
-    actCard.addEventListener('click', () => {
-      openMemberProfilePopover({
-        name: userProfile.displayName || 'Bads',
-        tag: userProfile.tag || '0001',
-        fullTag: `${userProfile.displayName || 'Bads'}#${userProfile.tag || '0001'}`,
-        avatarUrl: userProfile.avatarUrl,
-        bannerColor: userProfile.bannerColor || '#5865F2',
-        game: detectedGame.name,
-        detail: 'Ao vivo em 1080p 60FPS',
-        isOwner: true
-      });
-    });
-    membersScroll.appendChild(actCard);
+  const members = serverMembersByServer.get(activeServerId);
+  membersScroll.replaceChildren();
+  const onlineCount = (members || []).filter((member) => member.status !== 'offline').length;
+  const totalCount = members?.length || 0;
+  const countLabel = document.getElementById('availableMemberCount');
+  if (countLabel) countLabel.textContent = `${onlineCount}/${totalCount}`;
+  const createRoleButton = document.getElementById('btnCreateMemberRole');
+  if (createRoleButton) {
+    createRoleButton.hidden = !canManageActiveServerMembers();
+  }
+  if (!members) {
+    const loading = document.createElement('div');
+    loading.className = 'members-loading';
+    loading.textContent = 'Carregando membros…';
+    membersScroll.appendChild(loading);
+    loadServerMembers();
+    return;
+  }
+  if (members.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'members-empty';
+    empty.textContent = 'Ainda não há membros neste servidor.';
+    membersScroll.appendChild(empty);
+    return;
   }
 
-  const catOwner = document.createElement('div');
-  catOwner.className = 'members-category';
-  catOwner.textContent = `ONLINE AGORA — ${onlineMembers.length}`;
-  membersScroll.appendChild(catOwner);
-
-  onlineMembers.forEach((member) => {
-    const item = document.createElement('div');
-    item.className = 'member-item';
-
-    const avatar = document.createElement('div');
-    avatar.className = 'member-avatar';
-    if (member.avatarUrl) {
-      avatar.innerHTML = `<img src="${member.avatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
-    } else {
-      avatar.style.backgroundColor = member.color || '#5865F2';
-      avatar.textContent = (member.initial || member.name[0].toUpperCase());
-    }
-
-    const dot = document.createElement('span');
-    dot.className = 'member-status-dot online';
-    avatar.appendChild(dot);
-
-    const info = document.createElement('div');
-    info.className = 'member-info';
-
-    const name = document.createElement('div');
-    name.className = 'member-name';
-    name.innerHTML = `${member.name} <span class="friend-card-tag">#${member.tag || '0001'}</span>`;
-
-    const myCrown = member.isOwner ? document.createElement('span') : null;
-    if (myCrown) {
-      myCrown.className = 'member-crown';
-      myCrown.textContent = ' 👑';
-      myCrown.title = 'Proprietário do Servidor';
-      name.appendChild(myCrown);
-    }
-
-    const status = document.createElement('div');
-    status.className = 'member-activity';
-    if (member.game) {
-      status.innerHTML = `<span class="member-activity-badge">🎮 ${member.game}</span>`;
-    } else {
-      status.textContent = member.detail || 'Disponível';
-    }
-
-    info.appendChild(name);
-    info.appendChild(status);
-    item.appendChild(avatar);
-    item.appendChild(info);
-
-    item.addEventListener('click', () => {
-      openMemberProfilePopover(member);
-    });
-
-    membersScroll.appendChild(item);
+  const groups = new Map();
+  members.forEach((member) => {
+    const groupName = member.groupName || 'Disponíveis';
+    if (!groups.has(groupName)) groups.set(groupName, []);
+    groups.get(groupName).push(member);
   });
+  const canManage = canManageActiveServerMembers();
+  groups.forEach((groupMembers, groupName) => {
+    const online = groupMembers.filter((member) => member.status !== 'offline');
+    const offline = groupMembers.filter((member) => member.status === 'offline');
+    const header = document.createElement('div');
+    header.className = 'member-group-title';
+    header.textContent = `${groupName} — ${online.length}/${groupMembers.length}`;
+    membersScroll.appendChild(header);
 
-  if (onlineMembers.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'member-empty-state';
-    empty.style.cssText = 'padding:12px 10px; color:#949ba4; font-size:12px;';
-    empty.textContent = 'Nenhum usuário online neste servidor agora.';
-    membersScroll.appendChild(empty);
+    [...online, ...offline].forEach((member) => {
+      const item = document.createElement('div');
+      item.className = `member-item${member.status === 'offline' ? ' is-offline' : ''}`;
+      item.dataset.participantIdentity = member.id;
+      item.tabIndex = 0;
+      item.setAttribute('role', 'button');
+
+      const avatar = document.createElement('div');
+      avatar.className = 'member-avatar';
+      avatar.style.backgroundColor = member.color || '#5865F2';
+      if (member.avatarUrl) {
+        const image = document.createElement('img');
+        image.src = member.avatarUrl;
+        image.alt = '';
+        avatar.appendChild(image);
+      } else {
+        avatar.textContent = (member.name || 'U')[0].toUpperCase();
+      }
+      const dot = document.createElement('span');
+      dot.className = `member-status-dot ${member.status === 'offline' ? 'offline' : member.status}`;
+      avatar.appendChild(dot);
+
+      const info = document.createElement('div');
+      info.className = 'member-info';
+      const name = document.createElement('div');
+      name.className = 'member-name';
+      name.append(document.createTextNode(member.name || 'Usuário'));
+      if (member.role && member.role !== 'Membro' && member.role !== 'Dono') {
+        const roleBadge = document.createElement('span');
+        roleBadge.className = 'member-role-badge';
+        roleBadge.style.color = member.roleColor || '#949ba4';
+        roleBadge.textContent = member.role;
+        name.appendChild(roleBadge);
+      }
+      if (member.role === 'Dono') {
+        const crown = document.createElement('span');
+        crown.className = 'member-crown';
+        crown.textContent = ' 👑';
+        crown.title = 'Dono do servidor';
+        name.appendChild(crown);
+      }
+
+      const activity = document.createElement('div');
+      activity.className = 'member-activity member-activity-line';
+      if (member.status === 'offline') {
+        activity.textContent = 'Offline';
+      } else if (member.activityType === 'game' && member.activityText) {
+        appendMemberActivityIcon(activity, member.activityArtwork, '🎮');
+        activity.appendChild(document.createTextNode(`Jogando ${member.activityText}`));
+      } else if (member.activityType === 'music' && member.activityText) {
+        appendMemberActivityIcon(activity, member.activityArtwork, '♫');
+        activity.appendChild(document.createTextNode(`Ouvindo ${member.activityText}`));
+      } else {
+        activity.textContent = member.detail || 'Disponível';
+      }
+      info.append(name, activity);
+      item.append(avatar, info);
+      const profileMember = {
+        ...member,
+        initial: (member.name || 'U')[0].toUpperCase(),
+        isOwner: member.role === 'Dono',
+        isSelf: member.id === authenticatedAccount?.id
+      };
+      item.addEventListener('click', (event) => {
+        if (event.target.closest('.member-manage-button')) return;
+        openMemberProfilePopover(profileMember);
+      });
+      item.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openMemberProfilePopover(profileMember);
+        }
+      });
+      if (canManage && member.id !== authenticatedAccount?.id && member.role !== 'Dono') {
+        const manageButton = document.createElement('button');
+        manageButton.type = 'button';
+        manageButton.className = 'member-manage-button';
+        manageButton.textContent = '⋯';
+        manageButton.title = 'Definir cargo e seção';
+        manageButton.setAttribute('aria-label', `Definir cargo e seção para ${member.name}`);
+        manageButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          openMemberRoleDialog(profileMember);
+        });
+        item.appendChild(manageButton);
+      }
+      membersScroll.appendChild(item);
+    });
+  });
+}
+
+function appendMemberActivityIcon(container, artwork, fallback) {
+  if (artwork) {
+    const image = document.createElement('img');
+    image.className = 'member-activity-icon';
+    image.src = artwork;
+    image.alt = '';
+    image.onerror = () => image.replaceWith(createActivityFallback(fallback));
+    container.appendChild(image);
+  } else {
+    container.appendChild(createActivityFallback(fallback));
   }
 }
+
+function createActivityFallback(icon) {
+  const fallback = document.createElement('span');
+  fallback.className = 'member-activity-icon-fallback';
+  fallback.textContent = icon;
+  return fallback;
+}
+
+function openMemberRoleDialog(member) {
+  const modal = document.getElementById('memberRoleModal');
+  const select = document.getElementById('memberRoleSelect');
+  const groupInput = document.getElementById('memberGroupInput');
+  const title = document.getElementById('memberRoleModalTitle');
+  if (!modal || !select || !groupInput || !member) return;
+  memberRoleTarget = member;
+  if (title) title.textContent = `Cargo e seção — ${member.name}`;
+  select.replaceChildren();
+  const memberOption = document.createElement('option');
+  memberOption.value = '';
+  memberOption.textContent = 'Membro (sem cargo personalizado)';
+  select.appendChild(memberOption);
+  (serverRolesByServer.get(activeServerId) || []).forEach((role) => {
+    const option = document.createElement('option');
+    option.value = role.id;
+    option.textContent = role.name;
+    select.appendChild(option);
+  });
+  select.value = member.roleId || '';
+  groupInput.value = member.groupName || 'Disponíveis';
+  modal.style.display = 'flex';
+}
+
+function closeMemberRoleDialog() {
+  const modal = document.getElementById('memberRoleModal');
+  if (modal) modal.style.display = 'none';
+  memberRoleTarget = null;
+}
+
+document.getElementById('btnCloseMemberRoleModal')?.addEventListener('click', closeMemberRoleDialog);
+document.getElementById('btnCancelMemberRole')?.addEventListener('click', closeMemberRoleDialog);
+document.getElementById('btnSaveMemberRole')?.addEventListener('click', async () => {
+  if (!memberRoleTarget) return;
+  const roleId = document.getElementById('memberRoleSelect')?.value || '';
+  const groupName = document.getElementById('memberGroupInput')?.value.trim() || 'Disponíveis';
+  const member = memberRoleTarget;
+  try {
+    const response = await fetch(`/api/servers/${encodeURIComponent(activeServerId)}/members/${encodeURIComponent(member.id)}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ roleId, groupName })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível atualizar o membro.');
+    closeMemberRoleDialog();
+    await loadServerMembers(activeServerId);
+    showToast(`Cargo e seção de ${member.name} atualizados.`, '✅');
+  } catch (error) {
+    showToast(error.message || 'Não foi possível atualizar o membro.', '⚠️');
+  }
+});
+
+document.getElementById('btnCreateMemberRole')?.addEventListener('click', async () => {
+  const name = prompt('Nome do novo cargo:')?.trim();
+  if (!name) return;
+  const color = prompt('Cor do cargo em hexadecimal:', '#5865F2')?.trim() || '#949ba4';
+  const server = servers.find((entry) => entry.id === activeServerId);
+  const canManageMembers = Boolean(server?.isOwner && confirm('Este cargo poderá gerenciar membros e cargos?'));
+  try {
+    const response = await fetch(`/api/servers/${encodeURIComponent(activeServerId)}/roles`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ name, color, canManageMembers })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível criar o cargo.');
+    await loadServerMembers(activeServerId);
+    showToast(`Cargo "${payload.role.name}" criado.`, '✅');
+  } catch (error) {
+    showToast(error.message || 'Não foi possível criar o cargo.', '⚠️');
+  }
+});
 
 // ==========================================
 // POPOVER DE PERFIL DO USUÁRIO COM MODERAÇÃO (Foto 1)
@@ -4215,6 +4801,9 @@ const userActivityIcon = document.getElementById('userActivityIcon');
 const userActivityTitle = document.getElementById('userActivityTitle');
 const userActivityDetail = document.getElementById('userActivityDetail');
 const btnUserActivityAction = document.getElementById('btnUserActivityAction');
+const btnListenTogether = document.getElementById('btnListenTogether');
+const btnProfileCall = document.getElementById('btnProfileCall');
+const btnProfileMessage = document.getElementById('btnProfileMessage');
 const userPopoverModActions = document.getElementById('userPopoverModActions');
 const btnOpenBanModal = document.getElementById('btnOpenBanModal');
 const btnKickMember = document.getElementById('btnKickMember');
@@ -4237,35 +4826,54 @@ function openMemberProfilePopover(member) {
   }
 
   if (userPopoverAvatar) {
+    userPopoverAvatar.replaceChildren();
     if (member.avatarUrl) {
-      userPopoverAvatar.innerHTML = `<img src="${member.avatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+      const image = document.createElement('img');
+      image.src = member.avatarUrl;
+      image.alt = '';
+      image.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover;';
+      userPopoverAvatar.appendChild(image);
     } else {
       userPopoverAvatar.style.backgroundColor = member.color || member.bannerColor || '#5865F2';
       userPopoverAvatar.textContent = (member.name || 'U')[0].toUpperCase();
     }
   }
 
-  // Atividade (Jogando / Ouvindo Música)
-  const gameName = member.game || (member.isOwner && detectedGame ? detectedGame.name : '');
-  if (gameName) {
+  const activityType = member.activityType || (member.game ? 'game' : '');
+  const activityText = member.activityText || member.game || '';
+  if (activityType && activityText) {
     if (userPopoverActivity) userPopoverActivity.style.display = 'block';
-    if (userActivityType) userActivityType.textContent = 'JOGANDO';
-    if (userActivityTitle) userActivityTitle.textContent = gameName;
-    if (userActivityDetail) userActivityDetail.textContent = member.detail || 'Em partida competitiva • 36:03';
-    if (userActivityIcon) userActivityIcon.textContent = '🎮';
+    const isPlayingGame = activityType === 'game';
+    if (userActivityType) userActivityType.textContent = isPlayingGame ? 'JOGANDO' : 'OUVINDO NO SPOTIFY';
+    if (userActivityTitle) userActivityTitle.textContent = activityText;
+    if (userActivityDetail) userActivityDetail.textContent = isPlayingGame ? 'Atividade atual' : 'Spotify • faixa atual';
+    if (userActivityIcon) {
+      userActivityIcon.replaceChildren();
+      if (member.activityArtwork) {
+        const image = document.createElement('img');
+        image.src = member.activityArtwork;
+        image.alt = '';
+        image.onerror = () => {
+          userActivityIcon.replaceChildren();
+          userActivityIcon.textContent = isPlayingGame ? '🎮' : '♫';
+        };
+        userActivityIcon.appendChild(image);
+      } else {
+        userActivityIcon.textContent = isPlayingGame ? '🎮' : '♫';
+      }
+    }
     if (btnUserActivityAction) {
-      btnUserActivityAction.textContent = '🎮 Pedir para entrar / Assistir Live';
-      btnUserActivityAction.onclick = () => {
-        showToast(`Solicitação enviada para jogar ${gameName} com ${member.name}!`, '🎮');
-      };
+      btnUserActivityAction.style.display = isPlayingGame ? '' : 'none';
+      btnUserActivityAction.textContent = '🎮 Convidar para jogar';
+    }
+    if (btnListenTogether) {
+      btnListenTogether.style.display = isPlayingGame ? 'none' : '';
     }
   } else {
     if (userPopoverActivity) userPopoverActivity.style.display = 'none';
   }
 
-  // Moderação visível apenas para outros membros (não para si mesmo)
-  const isSelf = member.isOwner
-    || member.id === authenticatedAccount?.id
+  const isSelf = member.isSelf || member.id === authenticatedAccount?.id
     || member.name.toLowerCase() === (userProfile.displayName || '').toLowerCase();
   if (userPopoverVolume) {
     const canAdjustVolume = !isSelf && typeof member.id === 'string' && Boolean(member.id);
@@ -4277,14 +4885,59 @@ function openMemberProfilePopover(member) {
     }
   }
   if (userPopoverModActions) {
-    userPopoverModActions.style.display = isSelf ? 'none' : 'flex';
+    userPopoverModActions.style.display = isSelf || !canManageActiveServerMembers() ? 'none' : 'flex';
   }
+  const isFriend = friendsList.some((friend) => friend.id === member.id);
+  if (btnProfileCall) btnProfileCall.style.display = isFriend && !isSelf ? '' : 'none';
+  if (btnProfileMessage) btnProfileMessage.style.display = isFriend && !isSelf ? '' : 'none';
 
   // Posiciona o popover no centro ou à direita
   userProfilePopover.style.top = '120px';
   userProfilePopover.style.right = '260px';
   userProfilePopover.style.display = 'block';
+  positionUserPopover();
 }
+
+function positionUserPopover() {
+  if (!userProfilePopover || userProfilePopover.style.display === 'none') return;
+  const rect = userProfilePopover.getBoundingClientRect();
+  const margin = 8;
+  userProfilePopover.style.right = 'auto';
+  userProfilePopover.style.left = `${Math.max(margin, Math.min(window.innerWidth - rect.width - margin, (window.innerWidth - rect.width) / 2))}px`;
+  userProfilePopover.style.top = `${Math.max(margin, Math.min(window.innerHeight - rect.height - margin, 120))}px`;
+}
+
+async function sendActivityInvite(member, type) {
+  if (!member || !friendsList.some((friend) => friend.id === member.id)) {
+    showToast('Adicione esta pessoa como amiga para enviar um convite.', '⚠️');
+    return;
+  }
+  let text = '';
+  if (type === 'game') {
+    const game = member.activityText || member.game || 'um jogo';
+    text = `🎮 ${userProfile.displayName} convidou você para jogar ${game}.`;
+  } else {
+    if (!member.activityUrl || !/^https:\/\/open\.spotify\.com\//i.test(member.activityUrl)) {
+      showToast('Não há um link do Spotify disponível para esta atividade.', '⚠️');
+      return;
+    }
+    text = `♫ ${userProfile.displayName} convidou você para ouvir: ${member.activityText}\n${member.activityUrl}`;
+  }
+  const friend = friendsList.find((entry) => entry.id === member.id);
+  openDirectMessage(friend);
+  if (chatInputText) chatInputText.value = text;
+  if (chatInputForm) chatInputForm.requestSubmit();
+}
+
+btnUserActivityAction?.addEventListener('click', () => sendActivityInvite(currentInspectedMember, 'game'));
+btnListenTogether?.addEventListener('click', () => sendActivityInvite(currentInspectedMember, 'music'));
+btnProfileMessage?.addEventListener('click', () => {
+  const friend = friendsList.find((entry) => entry.id === currentInspectedMember?.id);
+  if (!friend) return showToast('Adicione esta pessoa como amiga para enviar mensagens.', '⚠️');
+  if (userProfilePopover) userProfilePopover.style.display = 'none';
+  openDirectMessage(friend);
+});
+btnProfileCall?.addEventListener('click', () => startPrivateCall(currentInspectedMember));
 
 if (userPopoverVolumeSlider) {
   userPopoverVolumeSlider.addEventListener('input', () => {
@@ -4303,13 +4956,25 @@ if (btnCloseUserPopover) {
 
 // Envio rápido de DM a partir do popover
 if (btnSendPopoverQuickChat && inputPopoverQuickChat) {
-  const sendQuick = () => {
+  const sendQuick = async () => {
     const text = inputPopoverQuickChat.value.trim();
     if (!text || !currentInspectedMember) return;
-    showToast(`Mensagem enviada para ${currentInspectedMember.name}!`, '💬');
+    const friend = friendsList.find((entry) => entry.id === currentInspectedMember.id);
+    if (!friend) {
+      showToast('Adicione esta pessoa como amiga para enviar mensagens.', '⚠️');
+      return;
+    }
+    const newMessage = createChatMessage({ text });
+    openDirectMessage(friend);
+    const savedMessage = await saveActiveChatMessage(newMessage);
+    if (!savedMessage) return;
+    if (messagesList) {
+      messagesList.appendChild(createMessageElement(savedMessage));
+      scrollChatToBottom();
+    }
     inputPopoverQuickChat.value = '';
     if (userProfilePopover) userProfilePopover.style.display = 'none';
-    openDirectMessage(currentInspectedMember);
+    showToast(`Mensagem enviada para ${friend.name}.`, '💬');
   };
   btnSendPopoverQuickChat.addEventListener('click', sendQuick);
   inputPopoverQuickChat.addEventListener('keydown', (e) => {
@@ -4319,21 +4984,45 @@ if (btnSendPopoverQuickChat && inputPopoverQuickChat) {
 
 // Expulsar e Silenciar
 if (btnKickMember) {
-  btnKickMember.addEventListener('click', () => {
+  btnKickMember.addEventListener('click', async () => {
     if (!currentInspectedMember) return;
     if (confirm(`Expulsar ${currentInspectedMember.fullTag || currentInspectedMember.name} do servidor?`)) {
-      showToast(`${currentInspectedMember.name} foi expulso do servidor.`, '🚪');
-      if (userProfilePopover) userProfilePopover.style.display = 'none';
-      renderServerMembers();
+      try {
+        const response = await fetch(`/api/servers/${encodeURIComponent(activeServerId)}/members/${encodeURIComponent(currentInspectedMember.id)}`, {
+          method: 'DELETE', credentials: 'include', headers: { Accept: 'application/json' }
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Não foi possível expulsar este membro.');
+        if (userProfilePopover) userProfilePopover.style.display = 'none';
+        await loadServerMembers(activeServerId);
+        showToast(`${currentInspectedMember.name} foi expulso do servidor.`, '🚪');
+      } catch (error) {
+        showToast(error.message || 'Não foi possível expulsar este membro.', '⚠️');
+      }
     }
   });
 }
 
 if (btnMuteMember) {
-  btnMuteMember.addEventListener('click', () => {
+  btnMuteMember.addEventListener('click', async () => {
     if (!currentInspectedMember) return;
-    showToast(`${currentInspectedMember.name} foi silenciado no servidor.`, '🔇');
-    if (userProfilePopover) userProfilePopover.style.display = 'none';
+    const muted = !currentInspectedMember.isMuted;
+    try {
+      const response = await fetch(`/api/servers/${encodeURIComponent(activeServerId)}/members/${encodeURIComponent(currentInspectedMember.id)}/mute`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ muted })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível silenciar este membro.');
+      currentInspectedMember.isMuted = muted;
+      btnMuteMember.textContent = muted ? '🔊 Remover silêncio' : '🔇 Silenciar';
+      await loadServerMembers(activeServerId);
+      showToast(muted ? `${currentInspectedMember.name} foi silenciado no servidor.` : `${currentInspectedMember.name} pode falar novamente.`, muted ? '🔇' : '🔊');
+    } catch (error) {
+      showToast(error.message || 'Não foi possível alterar o silêncio.', '⚠️');
+    }
   });
 }
 
@@ -4365,46 +5054,27 @@ if (btnCloseBanModal) btnCloseBanModal.addEventListener('click', closeBanModal);
 if (btnCancelBan) btnCancelBan.addEventListener('click', closeBanModal);
 
 if (btnConfirmBan) {
-  btnConfirmBan.addEventListener('click', () => {
-    if (!currentInspectedMember) return;
-    const selectedDur = document.querySelector('input[name="banDuration"]:checked')?.value || '1h';
-    const reason = inputBanReason?.value.trim() || 'Violação das regras';
-
-    let untilTime;
-    let labelDur = '1 hora';
-    const now = Date.now();
-
-    if (selectedDur === '1h') {
-      untilTime = now + (60 * 60 * 1000);
-      labelDur = '1 hora';
-    } else if (selectedDur === '24h') {
-      untilTime = now + (24 * 60 * 60 * 1000);
-      labelDur = '24 horas';
-    } else if (selectedDur === '7d') {
-      untilTime = now + (7 * 24 * 60 * 60 * 1000);
-      labelDur = '7 dias';
-    } else {
-      untilTime = 'perm';
-      labelDur = 'Permanente';
-    }
-
-    if (!bannedMembers[activeServerId]) {
-      bannedMembers[activeServerId] = [];
-    }
-
-    bannedMembers[activeServerId].push({
-      name: currentInspectedMember.name,
-      fullTag: currentInspectedMember.fullTag || currentInspectedMember.name,
-      until: untilTime,
-      reason: reason
+btnConfirmBan.addEventListener('click', async () => {
+  if (!currentInspectedMember) return;
+  const selectedDur = document.querySelector('input[name="banDuration"]:checked')?.value || '1h';
+  const reason = inputBanReason?.value.trim() || 'Violação das regras';
+  try {
+    const response = await fetch(`/api/servers/${encodeURIComponent(activeServerId)}/members/${encodeURIComponent(currentInspectedMember.id)}/ban`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ duration: selectedDur, reason })
     });
-
-    saveBannedMembers();
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível banir este membro.');
+    const name = currentInspectedMember.name;
     closeBanModal();
-    renderServerMembers();
-
-    showToast(`${currentInspectedMember.name} foi banido com sucesso (${labelDur})! 🔨`, '⛔');
-  });
+    await loadServerMembers(activeServerId);
+    showToast(`${name} foi banido do servidor.`, '⛔');
+  } catch (error) {
+    showToast(error.message || 'Não foi possível banir este membro.', '⚠️');
+  }
+});
 }
 
 // ==========================================
@@ -4747,31 +5417,28 @@ if (btnConfirmServer) {
 }
 
 // Lista de Servidores Públicos da Comunidade
-const PUBLIC_SERVERS = [
-  { id: 'pub-1', name: 'Comunidade BADISCORD 🎮', icon: '🎮', desc: 'Espaço oficial para transmissão 1080p 60FPS e novas amizades.' },
-  { id: 'pub-2', name: 'Espaço dos Devs 💻', icon: '💻', desc: 'Bate-papo de tecnologia, programação e pair programming.' },
-  { id: 'pub-3', name: 'Lounge de Músicas & Clipes 🎵', icon: '🎧', desc: 'Músicas do Spotify, clipes de jogos e resenha.' },
-  { id: 'pub-4', name: 'Competitivo & Scrims 🏆', icon: '🏆', desc: 'Lobbies de CS2, Valorant e campeonatos da galera.' }
-];
+const PUBLIC_SERVERS = [];
 
 async function renderExploreServers() {
   if (!exploreServersList) return;
   exploreServersList.innerHTML = '';
 
   let publicServers = PUBLIC_SERVERS;
+  let serverListLoadFailed = false;
   try {
     const response = await fetch('/api/servers/public', { headers: { Accept: 'application/json' } });
-    if (response.ok) {
-      const payload = await response.json();
-      if (Array.isArray(payload.servers)) {
-        publicServers = payload.servers.map((server) => ({
-          ...server,
-          desc: server.description || PUBLIC_SERVERS.find((item) => item.id === server.id)?.desc || ''
-        }));
-      }
-    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    if (!Array.isArray(payload.servers)) throw new Error('Resposta de servidores públicos inválida.');
+    publicServers = payload.servers
+      .filter((server) => !HIDDEN_SAMPLE_SERVER_IDS.has(server.id))
+      .map((server) => ({
+        ...server,
+        desc: server.description || ''
+      }));
   } catch (error) {
     console.warn('Não foi possível carregar servidores públicos:', error);
+    serverListLoadFailed = true;
   }
 
   publicServers.forEach(pub => {
@@ -4828,6 +5495,14 @@ async function renderExploreServers() {
     card.appendChild(btnJoin);
     exploreServersList.appendChild(card);
   });
+  if (publicServers.length === 0) {
+    const emptyState = document.createElement('div');
+    emptyState.className = 'explore-empty-state';
+    emptyState.textContent = serverListLoadFailed
+      ? 'Não foi possível carregar os servidores públicos. Tente novamente mais tarde.'
+      : 'Nenhum servidor público disponível no momento.';
+    exploreServersList.appendChild(emptyState);
+  }
 }
 
 // ==========================================
@@ -4967,11 +5642,34 @@ window.addEventListener('click', (e) => {
   }
 });
 
-if (btnToggleMembers) {
-  btnToggleMembers.addEventListener('click', () => {
+const toggleMembersSidebar = () => {
+  if (!membersSidebar) return;
+  if (window.matchMedia('(max-width: 700px)').matches) {
+    const isOpen = membersSidebar.classList.toggle('is-open');
+    [btnToggleMembers, btnToggleVoiceMembers].filter(Boolean).forEach((button) => {
+      button.setAttribute('aria-expanded', String(isOpen));
+    });
+    return;
+  }
+  const isShown = membersSidebar.style.display !== 'none';
+  const shouldShow = !isShown;
+  membersSidebar.style.display = shouldShow ? 'flex' : 'none';
+  [btnToggleMembers, btnToggleVoiceMembers].filter(Boolean).forEach((button) => {
+    button.setAttribute('aria-expanded', String(shouldShow));
+  });
+};
+
+[btnToggleMembers, btnToggleVoiceMembers].filter(Boolean).forEach((button) => {
+  button.addEventListener('click', toggleMembersSidebar);
+});
+
+if (btnCloseMembers) {
+  btnCloseMembers.addEventListener('click', () => {
     if (!membersSidebar) return;
-    const isShown = membersSidebar.style.display !== 'none';
-    membersSidebar.style.display = isShown ? 'none' : 'block';
+    membersSidebar.classList.remove('is-open');
+    [btnToggleMembers, btnToggleVoiceMembers].filter(Boolean).forEach((button) => {
+      button.setAttribute('aria-expanded', 'false');
+    });
   });
 }
 
@@ -5019,6 +5717,10 @@ async function setupAudioLevelMeter(stream) {
 
 // Funções de Mudo e Ensurdecer (Deafen)
 function setMuteState(muted, playSound = true) {
+  if (!muted && currentChannel && !localVoiceCanPublish) {
+    showToast('Você está silenciado neste servidor.', '🔇');
+    return;
+  }
   isMuted = muted;
   if (localAudioTrack) {
     localAudioTrack.enabled = !isMuted;
@@ -5028,6 +5730,13 @@ function setMuteState(muted, playSound = true) {
     muteOperation.catch((error) => {
       console.error('Não foi possível atualizar o microfone no LiveKit:', error);
       showToast('Não foi possível alterar o estado do microfone.', '⚠️');
+    });
+  }
+  if (privateCallAudioTrack && privateCallRoom?.state === 'connected') {
+    const muteOperation = isMuted ? privateCallAudioTrack.mute() : privateCallAudioTrack.unmute();
+    muteOperation.catch((error) => {
+      console.error('Não foi possível atualizar o microfone da chamada:', error);
+      showToast('Não foi possível alterar o microfone da chamada.', '⚠️');
     });
   }
   if (playSound) {
@@ -6929,7 +7638,9 @@ async function syncLocalServersWithBackend(preferredServerId = '', selectHomeSer
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || 'Não foi possível sincronizar os servidores.');
     const localServersById = new Map(servers.map((server) => [server.id, server]));
-    const accessibleServers = Array.isArray(payload.servers) ? payload.servers : [];
+    const accessibleServers = Array.isArray(payload.servers)
+      ? payload.servers.filter((server) => !HIDDEN_SAMPLE_SERVER_IDS.has(server.id))
+      : [];
     servers = accessibleServers.map((server) => {
       const localServer = localServersById.get(server.id) || {};
       return {
@@ -7457,24 +8168,14 @@ initializeFreeProfileCustomization();
   function openVoiceUserContextMenu(x, y, userData) {
     vctxTargetUser = userData;
 
-    // Position
-    const menuW = 240;
-    const menuH = 600;
-    const maxX = window.innerWidth - menuW - 8;
-    const maxY = window.innerHeight - menuH - 8;
-    voiceUserContextMenu.style.left = Math.min(x, maxX) + 'px';
-    voiceUserContextMenu.style.top = Math.min(Math.max(y, 8), maxY) + 'px';
+    voiceUserContextMenu.style.left = '8px';
+    voiceUserContextMenu.style.top = '8px';
     voiceUserContextMenu.style.display = 'block';
-
-    // Stream header
-    const streamHeader = document.getElementById('vctxStreamHeader');
-    const streamGame = document.getElementById('vctxStreamGame');
-    if (userData.game) {
-      streamHeader.style.display = 'flex';
-      streamGame.textContent = 'Pedir para transmitir ' + userData.game;
-    } else {
-      streamHeader.style.display = 'none';
-    }
+    const menuRect = voiceUserContextMenu.getBoundingClientRect();
+    const maxX = Math.max(8, window.innerWidth - menuRect.width - 8);
+    const maxY = Math.max(8, window.innerHeight - menuRect.height - 8);
+    voiceUserContextMenu.style.left = `${Math.min(Math.max(x, 8), maxX)}px`;
+    voiceUserContextMenu.style.top = `${Math.min(Math.max(y, 8), maxY)}px`;
 
     // Info
     const infoValue = document.getElementById('vctxInfoValue');
@@ -7497,8 +8198,27 @@ initializeFreeProfileCustomization();
       volumeSlider.dispatchEvent(new Event('input'));
     }
 
-    // Reset checkboxes
-    document.querySelectorAll('.vctx-checkbox').forEach(cb => cb.classList.remove('checked'));
+    const muteCheckbox = document.getElementById('vctxCheckMute');
+    if (muteCheckbox) muteCheckbox.classList.toggle('checked', isUserMuted(userData.id));
+    const videoCheckbox = document.getElementById('vctxCheckVideo');
+    if (videoCheckbox) videoCheckbox.classList.toggle('checked', locallyDisabledVideoIdentities.has(userData.id));
+    const videoItem = voiceUserContextMenu.querySelector('[data-action="disable-video"]');
+    const participant = livekitRoom?.remoteParticipants?.get(userData.id);
+    const cameraPublication = participant && Array.from(participant.videoTrackPublications.values()).find(
+      (publication) => publication.source === window.LivekitClient?.Track?.Source?.Camera
+    );
+    if (videoItem) videoItem.style.display = cameraPublication ? '' : 'none';
+    const isFriend = friendsList.some((friend) => friend.id === userData.id);
+    const messageItem = voiceUserContextMenu.querySelector('[data-action="message"]');
+    if (messageItem) messageItem.style.display = isFriend ? '' : 'none';
+    const callItem = voiceUserContextMenu.querySelector('[data-action="call"]');
+    if (callItem) callItem.style.display = isFriend ? '' : 'none';
+    const unfriendItem = voiceUserContextMenu.querySelector('[data-action="unfriend"]');
+    if (unfriendItem) unfriendItem.style.display = isFriend ? '' : 'none';
+    const blockItem = voiceUserContextMenu.querySelector('[data-action="block"]');
+    if (blockItem) blockItem.style.display = userData.id && userData.id !== 'self' ? '' : 'none';
+    const nicknameItem = voiceUserContextMenu.querySelector('[data-action="nickname"]');
+    if (nicknameItem) nicknameItem.style.display = canAdjustVolume ? '' : 'none';
   }
 
   // Close on outside click
@@ -7516,7 +8236,7 @@ initializeFreeProfileCustomization();
   });
 
   // Handle context menu items
-  voiceUserContextMenu.addEventListener('click', (e) => {
+  voiceUserContextMenu.addEventListener('click', async (e) => {
     const item = e.target.closest('.vctx-item');
     if (!item) return;
 
@@ -7540,78 +8260,98 @@ initializeFreeProfileCustomization();
         if (chatInput) {
           chatInput.value += mentionText + ' ';
           chatInput.focus();
+          showToast('Menção adicionada à mensagem.', '💬');
+        } else {
+          showToast('Abra um canal de texto para mencionar alguém.', '⚠️');
         }
-        showToast('Menção copiada: ' + mentionText, '💬');
         break;
 
       case 'message':
         voiceUserContextMenu.style.display = 'none';
-        if (vctxTargetUser && typeof openDMWithFriend === 'function') {
-          openDMWithFriend(vctxTargetUser);
+        if (vctxTargetUser && vctxTargetUser.id && vctxTargetUser.id !== 'self') {
+          openDirectMessage(vctxTargetUser);
         } else {
-          showToast('Abrindo mensagem direta com ' + userName, '💬');
+          showToast('Não é possível abrir uma conversa com este usuário.', '⚠️');
         }
         break;
 
       case 'call':
         voiceUserContextMenu.style.display = 'none';
-        showToast('Iniciando chamada com ' + userName + '...', '📞');
+        startPrivateCall(vctxTargetUser);
         break;
 
       case 'note':
         voiceUserContextMenu.style.display = 'none';
-        const noteKey = 'badiscord_note_' + (vctxTargetUser ? vctxTargetUser.name : 'unknown');
+        const noteKey = 'badiscord_note_' + (vctxTargetUser?.id || vctxTargetUser?.name || 'unknown');
         const existingNote = localStorage.getItem(noteKey) || '';
         const newNote = prompt('Nota para ' + userName + ' (visível apenas para você):', existingNote);
         if (newNote !== null) {
-          localStorage.setItem(noteKey, newNote);
-          showToast(newNote ? 'Nota salva!' : 'Nota removida!', '📝');
+          try {
+            localStorage.setItem(noteKey, newNote);
+            showToast(newNote ? 'Nota salva!' : 'Nota removida!', '📝');
+          } catch (error) {
+            console.warn('Não foi possível salvar a nota:', error);
+            showToast('Não foi possível salvar a nota.', '⚠️');
+          }
         }
         break;
 
       case 'nickname':
         voiceUserContextMenu.style.display = 'none';
-        const nickKey = 'badiscord_nickname_' + (vctxTargetUser ? vctxTargetUser.name : 'unknown');
-        const existingNick = localStorage.getItem(nickKey) || '';
-        const newNick = prompt('Apelido para ' + userName + ':', existingNick);
+        if (!vctxTargetUser?.id || vctxTargetUser.id === 'self') break;
+        const newNick = prompt('Apelido para ' + userName + ':', getUserNickname(vctxTargetUser.id));
         if (newNick !== null) {
-          localStorage.setItem(nickKey, newNick);
-          showToast(newNick ? 'Apelido definido: ' + newNick : 'Apelido removido!', '✏️');
+          const nickname = newNick.trim().slice(0, 32);
+          if (nickname) userNicknames[vctxTargetUser.id] = nickname;
+          else delete userNicknames[vctxTargetUser.id];
+          try {
+            localStorage.setItem(USER_NICKNAMES_STORAGE_KEY, JSON.stringify(userNicknames));
+          } catch (error) {
+            console.warn('Não foi possível salvar o apelido:', error);
+            showToast('Não foi possível salvar o apelido.', '⚠️');
+            break;
+          }
+          renderServerMembers();
+          renderVoiceParticipants();
+          showToast(nickname ? 'Apelido atualizado.' : 'Apelido removido.', '✏️');
         }
         break;
 
-      case 'server-mute': {
+      case 'mute-user': {
+        if (!vctxTargetUser?.id || vctxTargetUser.id === 'self') break;
         const cb = document.getElementById('vctxCheckMute');
-        if (cb) cb.classList.toggle('checked');
-        const isMuted = cb && cb.classList.contains('checked');
-        showToast(isMuted ? userName + ' foi silenciado no servidor' : userName + ' pode falar novamente', isMuted ? '🔇' : '🔊');
+        const muted = !isUserMuted(vctxTargetUser.id);
+        setUserMuted(vctxTargetUser.id, muted);
+        if (cb) cb.classList.toggle('checked', muted);
+        showToast(muted ? userName + ' foi silenciado para você.' : userName + ' foi dessilenciado.', muted ? '🔇' : '🔊');
         return; // Don't close
       }
 
-      case 'server-deaf': {
-        const cb = document.getElementById('vctxCheckDeaf');
-        if (cb) cb.classList.toggle('checked');
-        const isDeaf = cb && cb.classList.contains('checked');
-        showToast(isDeaf ? 'Efeitos sonoros silenciados para ' + userName : 'Efeitos sonoros ativados para ' + userName, isDeaf ? '🔇' : '🔊');
-        return;
-      }
-
       case 'disable-video': {
+        if (!vctxTargetUser?.id || !livekitRoom) break;
+        const participant = livekitRoom.remoteParticipants.get(vctxTargetUser.id);
+        const cameraPublication = participant && Array.from(participant.videoTrackPublications.values()).find(
+          (publication) => publication.source === window.LivekitClient?.Track?.Source?.Camera
+        );
+        if (!cameraPublication) {
+          showToast('O usuário não tem uma câmera ativa.', '⚠️');
+          break;
+        }
         const cb = document.getElementById('vctxCheckVideo');
-        if (cb) cb.classList.toggle('checked');
-        const noVideo = cb && cb.classList.contains('checked');
-        showToast(noVideo ? 'Vídeo de ' + userName + ' desativado' : 'Vídeo de ' + userName + ' ativado', noVideo ? '📵' : '📹');
+        const hideVideo = !locallyDisabledVideoIdentities.has(vctxTargetUser.id);
+        try {
+          cameraPublication.setSubscribed(!hideVideo);
+          if (hideVideo) locallyDisabledVideoIdentities.add(vctxTargetUser.id);
+          else locallyDisabledVideoIdentities.delete(vctxTargetUser.id);
+        } catch (error) {
+          console.warn('Não foi possível alterar a exibição do vídeo:', error);
+          showToast('Não foi possível alterar a exibição do vídeo.', '⚠️');
+          break;
+        }
+        if (cb) cb.classList.toggle('checked', hideVideo);
+        showToast(hideVideo ? 'Vídeo ocultado para você.' : 'Vídeo habilitado para você.', hideVideo ? '📵' : '📹');
         return;
       }
-
-      case 'verification':
-        voiceUserContextMenu.style.display = 'none';
-        showToast('Código de Verificação: ' + Math.random().toString(36).substring(2, 10).toUpperCase(), '🔐');
-        break;
-
-      case 'apps':
-        showToast('Apps em breve!', '📱');
-        break;
 
       case 'invite-server':
         voiceUserContextMenu.style.display = 'none';
@@ -7621,40 +8361,34 @@ initializeFreeProfileCustomization();
       case 'unfriend':
         voiceUserContextMenu.style.display = 'none';
         if (confirm('Deseja desfazer amizade com ' + userName + '?')) {
-          const idx = friendsList.findIndex(f => f.name === userName);
-          if (idx !== -1) {
-            friendsList.splice(idx, 1);
-            localStorage.setItem('badiscord_friends', JSON.stringify(friendsList));
-            if (typeof renderFriendsList === 'function') renderFriendsList();
-            if (typeof renderMembersSidebar === 'function') renderMembersSidebar();
+          const friend = friendsList.find((entry) => entry.id === vctxTargetUser?.id);
+          if (friend) {
+            removeFriend(friend.id);
+          } else {
+            showToast('Este usuário não está na sua lista de amigos.', '⚠️');
           }
-          showToast('Amizade com ' + userName + ' desfeita', '💔');
         }
-        break;
-
-      case 'ignore':
-        voiceUserContextMenu.style.display = 'none';
-        showToast(userName + ' foi ignorado', '🚫');
         break;
 
       case 'block':
         voiceUserContextMenu.style.display = 'none';
-        if (confirm('Deseja bloquear ' + userName + '?')) {
-          showToast(userName + ' foi bloqueado!', '🚫');
+        if (!vctxTargetUser?.id || vctxTargetUser.id === 'self') break;
+        if (!confirm(`Bloquear ${userName}? Isso também remove a amizade e impede mensagens e chamadas.`)) break;
+        try {
+          const response = await fetch(`/api/users/${encodeURIComponent(vctxTargetUser.id)}/block`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { Accept: 'application/json' }
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.error || 'Não foi possível bloquear este usuário.');
+          await loadFriendsFromServer();
+          showToast(`${userName} foi bloqueado.`, '🚫');
+        } catch (error) {
+          showToast(error.message || 'Não foi possível bloquear este usuário.', '⚠️');
         }
         break;
-
-      case 'roles':
-        showToast('Gerenciamento de cargos em breve!', '🏷️');
-        break;
     }
-  });
-
-  // Stream header click
-  document.getElementById('vctxStreamHeader')?.addEventListener('click', () => {
-    voiceUserContextMenu.style.display = 'none';
-    const gameName = vctxTargetUser?.game || 'tela';
-    showToast('Pedido para transmitir ' + gameName + ' enviado!', '🖥️');
   });
 
   // Volume slider
@@ -7699,27 +8433,68 @@ initializeFreeProfileCustomization();
   document.addEventListener('contextmenu', (e) => {
     const memberItem = e.target.closest('.member-item');
     if (!memberItem) return;
-    // Only show voice context menu if user is in a voice channel
-    if (!currentChannel) return;
     e.preventDefault();
-    const nameEl = memberItem.querySelector('.member-name');
-    const memberName = nameEl ? nameEl.textContent.replace(/\s*👑\s*$/, '').replace(/#\d+$/, '').trim() : 'Membro';
-
-    // Find friend data
-    const friendData = friendsList.find(f => f.name === memberName);
-    const isMe = memberName === (userProfile.displayName || 'Bads');
-
-    openVoiceUserContextMenu(e.clientX, e.clientY, {
-      name: memberName,
-      id: isMe ? 'self' : (friendData?.id || memberItem.dataset.participantIdentity || ''),
-      tag: friendData ? friendData.tag : (isMe ? userProfile.tag : '0000'),
-      fullTag: memberName + '#' + (friendData ? friendData.tag : (isMe ? userProfile.tag : '0000')),
-      avatarUrl: isMe ? userProfile.avatarUrl : null,
-      bannerColor: friendData ? friendData.color : (isMe ? userProfile.bannerColor : '#5865F2'),
-      game: friendData ? friendData.game : (isMe && typeof detectedGame !== 'undefined' && detectedGame ? detectedGame.name : ''),
-      isOwner: isMe
-    });
+    const id = memberItem.dataset.participantIdentity;
+    const member = (serverMembersByServer.get(activeServerId) || []).find((entry) => entry.id === id)
+      || friendsList.find((entry) => entry.id === id);
+    if (member) {
+      openVoiceUserContextMenu(e.clientX, e.clientY, {
+        ...member,
+        isOwner: member.role === 'Dono' || member.id === authenticatedAccount?.id
+      });
+    }
   });
+
+  let touchContextTimer = 0;
+  let touchStartPoint = null;
+  let suppressTouchContextClick = false;
+  let suppressTouchClickTarget = null;
+  let suppressTouchClickTimer = 0;
+  document.addEventListener('pointerdown', (event) => {
+    if (event.pointerType !== 'touch' || !event.isPrimary) return;
+    const target = event.target.closest('.participant-card, .channel-user-item, .member-item');
+    if (!target) return;
+    touchStartPoint = { x: event.clientX, y: event.clientY };
+    touchContextTimer = window.setTimeout(() => {
+      touchContextTimer = 0;
+      suppressTouchContextClick = true;
+      suppressTouchClickTarget = target;
+      window.clearTimeout(suppressTouchClickTimer);
+      suppressTouchClickTimer = window.setTimeout(() => {
+        suppressTouchContextClick = false;
+        suppressTouchClickTarget = null;
+      }, 400);
+      target.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: touchStartPoint.x,
+        clientY: touchStartPoint.y
+      }));
+    }, 500);
+  }, { passive: true });
+  document.addEventListener('pointermove', (event) => {
+    if (!touchContextTimer || event.pointerType !== 'touch' || !touchStartPoint) return;
+    if (Math.hypot(event.clientX - touchStartPoint.x, event.clientY - touchStartPoint.y) > 12) {
+      window.clearTimeout(touchContextTimer);
+      touchContextTimer = 0;
+    }
+  }, { passive: true });
+  const cancelTouchContextTimer = (event) => {
+    if (event.pointerType !== 'touch') return;
+    if (touchContextTimer) window.clearTimeout(touchContextTimer);
+    touchContextTimer = 0;
+    touchStartPoint = null;
+  };
+  document.addEventListener('pointerup', cancelTouchContextTimer, { passive: true });
+  document.addEventListener('pointercancel', cancelTouchContextTimer, { passive: true });
+  document.addEventListener('click', (event) => {
+    if (!suppressTouchContextClick || !suppressTouchClickTarget?.contains(event.target)) return;
+    suppressTouchContextClick = false;
+    suppressTouchClickTarget = null;
+    window.clearTimeout(suppressTouchClickTimer);
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
 })();
 
 
@@ -7810,6 +8585,50 @@ initializeFreeProfileCustomization();
     });
   }
 
+  function createServerIconDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      if (!file.type.startsWith('image/')) {
+        reject(new Error('Selecione um arquivo de imagem.'));
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        reject(new Error('A imagem deve ter no máximo 10 MB.'));
+        return;
+      }
+
+      const image = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      image.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        try {
+          const scale = Math.min(1, 512 / Math.max(image.naturalWidth, image.naturalHeight));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+          const context = canvas.getContext('2d');
+          if (!context) {
+            reject(new Error('Não foi possível processar esta imagem.'));
+            return;
+          }
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          if (dataUrl.length > 5 * 1024 * 1024) {
+            reject(new Error('A imagem otimizada excede o limite permitido pelo servidor.'));
+            return;
+          }
+          resolve(dataUrl);
+        } catch (error) {
+          reject(new Error(error.message || 'Não foi possível processar esta imagem.'));
+        }
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('Não foi possível abrir esta imagem.'));
+      };
+      image.src = objectUrl;
+    });
+  }
+
   function markUnsavedChanges() {
     if (srvSaveBar) srvSaveBar.style.display = 'flex';
   }
@@ -7875,16 +8694,16 @@ initializeFreeProfileCustomization();
     btnChangeServerIcon.addEventListener('click', () => {
       inputServerIconFile.click();
     });
-    inputServerIconFile.addEventListener('change', (e) => {
+    inputServerIconFile.addEventListener('change', async (e) => {
       const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          tempServerState.iconUrl = event.target.result;
-          updateServerPreview();
-          markUnsavedChanges();
-        };
-        reader.readAsDataURL(file);
+      inputServerIconFile.value = '';
+      if (!file) return;
+      try {
+        tempServerState.iconUrl = await createServerIconDataUrl(file);
+        updateServerPreview();
+        markUnsavedChanges();
+      } catch (error) {
+        showToast(error.message || 'Não foi possível carregar a imagem.', '⚠️');
       }
     });
   }
@@ -8072,6 +8891,11 @@ initializeFreeProfileCustomization();
 
   // Expor globalmente para atalhos
   window.openServerSettings = openServerSettings;
+  window.changeServerIcon = (server) => {
+    if (server?.isOwner === false) return;
+    openServerSettings(server);
+    inputServerIconFile?.click();
+  };
 })();
 
 

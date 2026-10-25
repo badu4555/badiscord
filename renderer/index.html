@@ -419,6 +419,7 @@
             <span class="channel-header-icon">🔊</span>
             <h3 id="currentChannelTitle">VAVA</h3>
           </div>
+          <button type="button" class="chat-header-btn mobile-members-toggle" id="btnToggleVoiceMembers" title="Alternar Lista de Membros" aria-label="Alternar Lista de Membros">👥</button>
           <div class="header-right" id="connectionBadge" style="display: none;">
             <span class="status-dot ping-unavailable" id="pingDot"></span>
             <span id="rtcStatusText">Voz Conectada</span>
@@ -658,6 +659,14 @@
 
     <!-- 4. BARRA LATERAL DIREITA: LISTA DE MEMBROS DO SERVIDOR (Foto 1) -->
     <aside class="members-sidebar" id="membersSidebar">
+      <div class="members-panel-header">
+        <span>Disponíveis <strong id="availableMemberCount">0</strong></span>
+        <div class="members-panel-actions">
+          <button type="button" id="btnCreateMemberRole" title="Criar cargo" aria-label="Criar cargo" hidden>＋</button>
+          <button type="button" id="btnSpotifyConnect" title="Conectar Spotify" aria-label="Conectar Spotify">♫</button>
+          <button type="button" id="btnCloseMembers" class="members-close-button" title="Fechar lista de membros" aria-label="Fechar lista de membros">×</button>
+        </div>
+      </div>
       <div class="members-scroll" id="membersScroll"></div>
     </aside>
   </div>
@@ -933,7 +942,14 @@
             <span class="activity-game-detail" id="userActivityDetail">Competitivo • 36:03</span>
           </div>
         </div>
-        <button class="btn-activity-action" id="btnUserActivityAction">🎮 Pedir para entrar / Assistir</button>
+        <div class="profile-activity-actions">
+          <button class="btn-activity-action" id="btnUserActivityAction">🎮 Convidar para jogar</button>
+          <button class="btn-activity-action" id="btnListenTogether">♫ Ouvir música</button>
+        </div>
+      </div>
+      <div class="profile-contact-actions">
+        <button type="button" id="btnProfileCall">📞 Ligar</button>
+        <button type="button" id="btnProfileMessage">💬 Mensagem</button>
       </div>
 
       <!-- Ações de Moderação (Banir 1h/permanente, Expulsar, Silenciar) -->
@@ -955,6 +971,45 @@
         <button id="btnSendPopoverQuickChat">➤</button>
       </div>
     </div>
+  </div>
+
+  <div class="modal-overlay" id="memberRoleModal" style="display: none;">
+    <div class="modal-card modal-small">
+      <header class="modal-header">
+        <h3 id="memberRoleModalTitle">Cargo e seção</h3>
+        <button class="close-modal" id="btnCloseMemberRoleModal">✕</button>
+      </header>
+      <div class="modal-body-pad">
+        <label class="modal-field-label" for="memberRoleSelect">CARGO</label>
+        <select id="memberRoleSelect" class="modal-text-input"></select>
+        <label class="modal-field-label" for="memberGroupInput">SEÇÃO NA LISTA</label>
+        <input type="text" id="memberGroupInput" class="modal-text-input" maxlength="32" placeholder="Disponíveis">
+      </div>
+      <footer class="modal-footer">
+        <button class="cancel-btn" id="btnCancelMemberRole">Cancelar</button>
+        <button class="confirm-btn" id="btnSaveMemberRole">Salvar</button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="incomingCallModal" style="display: none;">
+    <div class="modal-card modal-small">
+      <header class="modal-header">
+        <h3 id="incomingCallTitle">Chamada recebida</h3>
+      </header>
+      <div class="modal-body-pad">
+        <p id="incomingCallDescription" class="modal-desc">Alguém está ligando para você.</p>
+      </div>
+      <footer class="modal-footer">
+        <button class="cancel-btn" id="btnDeclineCall">Recusar</button>
+        <button class="confirm-btn" id="btnAcceptCall">Atender</button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="private-call-bar" id="privateCallBar" style="display: none;">
+    <span id="privateCallStatus">Chamada ativa</span>
+    <button type="button" id="btnEndPrivateCall">Encerrar</button>
   </div>
 
   <!-- Modal de Confirmação de Banimento (1h, 24h, 7d, Permanente) -->
@@ -1217,22 +1272,16 @@
 
   <!-- Menu de Contexto do Usuário no Canal de Voz (Idêntico ao Discord) -->
   <div class="voice-user-context-menu" id="voiceUserContextMenu" style="display: none;">
-    <!-- Botão de stream do jogo -->
-    <div class="vctx-stream-header" id="vctxStreamHeader" style="display: none;">
-      <span class="vctx-stream-icon">🖥️</span>
-      <span id="vctxStreamGame">Pedir para transmitir</span>
-    </div>
-
     <div class="vctx-section">
       <div class="vctx-item" data-action="profile">Perfil</div>
       <div class="vctx-item" data-action="mention">Mencionar</div>
       <div class="vctx-item" data-action="message">Mensagem</div>
-      <div class="vctx-item" data-action="call">Iniciar chamada</div>
+      <div class="vctx-item" data-action="call">Ligar</div>
       <div class="vctx-item" data-action="note">
         <span>Adicionar nota</span>
         <span class="vctx-hint">Visível apenas para você</span>
       </div>
-      <div class="vctx-item" data-action="nickname">Adicionar apelido de amigo</div>
+      <div class="vctx-item" data-action="nickname">Definir apelido local</div>
     </div>
 
     <div class="vctx-divider"></div>
@@ -1258,28 +1307,17 @@
 
     <!-- Opções de moderação do canal de voz -->
     <div class="vctx-section">
-      <div class="vctx-item vctx-toggle" data-action="server-mute">
-        <span>Silenciar</span>
+      <div class="vctx-item vctx-toggle" data-action="mute-user">
+        <span>Silenciar para mim</span>
         <div class="vctx-checkbox" id="vctxCheckMute"></div>
       </div>
-      <div class="vctx-item vctx-toggle" data-action="server-deaf">
-        <span>Silenciar efeitos sonoros</span>
-        <div class="vctx-checkbox" id="vctxCheckDeaf"></div>
-      </div>
       <div class="vctx-item vctx-toggle" data-action="disable-video">
-        <span>Desativar vídeo</span>
+        <span>Ocultar vídeo para mim</span>
         <div class="vctx-checkbox" id="vctxCheckVideo"></div>
       </div>
     </div>
 
-    <div class="vctx-divider"></div>
-
     <div class="vctx-section">
-      <div class="vctx-item" data-action="verification">Ver Código de Verificação</div>
-      <div class="vctx-item vctx-has-sub" data-action="apps">
-        <span>Apps</span>
-        <span class="vctx-arrow">❯</span>
-      </div>
       <div class="vctx-item vctx-has-sub" data-action="invite-server">
         <span>Convidar para o servidor</span>
         <span class="vctx-arrow">❯</span>
@@ -1290,17 +1328,7 @@
 
     <div class="vctx-section">
       <div class="vctx-item" data-action="unfriend">Desfazer amizade</div>
-      <div class="vctx-item" data-action="ignore">Ignorar</div>
-      <div class="vctx-item vctx-danger" data-action="block">Bloquear</div>
-    </div>
-
-    <div class="vctx-divider"></div>
-
-    <div class="vctx-section">
-      <div class="vctx-item vctx-has-sub" data-action="roles">
-        <span>Cargo</span>
-        <span class="vctx-arrow">❯</span>
-      </div>
+      <div class="vctx-item vctx-danger" data-action="block">Bloquear usuário</div>
     </div>
   </div>
 
@@ -1918,7 +1946,7 @@
               <button class="srv-btn-primary" id="btnChangeServerIcon">Altere o ícone do servidor</button>
               <button class="srv-btn-danger-outline" id="btnRemoveServerIcon">Remover o Ícone</button>
             </div>
-            <input type="file" id="inputServerIconFile" accept="image/*" style="display: none;">
+            <input type="file" id="inputServerIconFile" accept="image/png,image/jpeg,image/webp,image/gif" style="display: none;">
           </div>
 
           <div class="srv-divider"></div>

@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const { promisify } = require('util');
 const cors = require('cors');
 const Database = require('better-sqlite3');
-const { AccessToken, RoomServiceClient } = require('livekit-server-sdk');
+const { AccessToken, RoomServiceClient, TrackSource } = require('livekit-server-sdk');
 
 const app = express();
 const scryptAsync = promisify(crypto.scrypt);
@@ -27,6 +27,10 @@ const USERNAME_POLICY = /^[a-z0-9_]{3,24}$/;
 const normalize = (value) => typeof value === 'string' ? value.trim() : '';
 const RECAPTCHA_SITE_KEY = normalize(process.env.RECAPTCHA_SITE_KEY);
 const RECAPTCHA_SECRET_KEY = normalize(process.env.RECAPTCHA_SECRET_KEY);
+const SPOTIFY_CLIENT_ID = normalize(process.env.SPOTIFY_CLIENT_ID);
+const SPOTIFY_CLIENT_SECRET = normalize(process.env.SPOTIFY_CLIENT_SECRET);
+const SPOTIFY_REDIRECT_URI = normalize(process.env.SPOTIFY_REDIRECT_URI);
+const SPOTIFY_TOKEN_ENCRYPTION_KEY = normalize(process.env.SPOTIFY_TOKEN_ENCRYPTION_KEY);
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '*')
   .split(',')
   .map((origin) => origin.trim())
@@ -110,6 +114,12 @@ db.exec(`
     status TEXT NOT NULL CHECK (status IN ('online', 'idle', 'dnd', 'invisible')),
     detail TEXT NOT NULL DEFAULT '',
     game TEXT NOT NULL DEFAULT '',
+    activity_type TEXT NOT NULL DEFAULT '',
+    activity_text TEXT NOT NULL DEFAULT '',
+    activity_artwork TEXT NOT NULL DEFAULT '',
+    activity_url TEXT NOT NULL DEFAULT '',
+    avatar_url TEXT NOT NULL DEFAULT '',
+    profile_color TEXT NOT NULL DEFAULT '#5865F2',
     updated_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS recovery_codes (
@@ -132,6 +142,13 @@ db.exec(`
     created_at TEXT NOT NULL,
     PRIMARY KEY (user_a, user_b)
   );
+  CREATE TABLE IF NOT EXISTS user_blocks (
+    blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (blocker_id, blocked_id),
+    CHECK (blocker_id != blocked_id)
+  );
   CREATE TABLE IF NOT EXISTS servers (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -147,8 +164,56 @@ db.exec(`
     server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role TEXT NOT NULL DEFAULT 'member',
+    role_id TEXT,
+    group_name TEXT NOT NULL DEFAULT 'Disponíveis',
     joined_at TEXT NOT NULL,
     PRIMARY KEY (server_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS server_roles (
+    id TEXT PRIMARY KEY,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#949ba4',
+    position INTEGER NOT NULL DEFAULT 0,
+    can_manage_members INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE (server_id, name)
+  );
+  CREATE TABLE IF NOT EXISTS server_member_bans (
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (server_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS server_member_mutes (
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (server_id, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS private_calls (
+    id TEXT PRIMARY KEY,
+    caller_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    receiver_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    room_name TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'ringing',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS spotify_connections (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS spotify_oauth_states (
+    state TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS server_invites (
     id TEXT PRIMARY KEY,
@@ -199,11 +264,32 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS friend_requests_receiver_idx ON friend_requests(receiver_id, status);
   CREATE INDEX IF NOT EXISTS friend_requests_sender_idx ON friend_requests(sender_id, status);
   CREATE INDEX IF NOT EXISTS server_members_user_id_idx ON server_members(user_id);
+  CREATE INDEX IF NOT EXISTS server_roles_server_position_idx ON server_roles(server_id, position);
+  CREATE INDEX IF NOT EXISTS private_calls_receiver_status_idx ON private_calls(receiver_id, status, updated_at);
   CREATE INDEX IF NOT EXISTS channel_messages_channel_created_idx ON channel_messages(server_id, channel_name, created_at);
   CREATE INDEX IF NOT EXISTS channel_messages_updated_at_idx ON channel_messages(updated_at);
   CREATE INDEX IF NOT EXISTS dm_messages_conversation_created_idx ON dm_messages(user_a, user_b, created_at);
   CREATE INDEX IF NOT EXISTS dm_messages_updated_at_idx ON dm_messages(updated_at);
 `);
+
+const serverMemberColumns = new Set(db.pragma('table_info(server_members)').map((column) => column.name));
+[
+  ['role_id', 'TEXT'],
+  ['group_name', "TEXT NOT NULL DEFAULT 'Disponíveis'"]
+].forEach(([column, definition]) => {
+  if (!serverMemberColumns.has(column)) db.exec(`ALTER TABLE server_members ADD COLUMN ${column} ${definition}`);
+});
+const userPresenceColumns = new Set(db.pragma('table_info(user_presence)').map((column) => column.name));
+[
+  ['activity_type', "TEXT NOT NULL DEFAULT ''"],
+  ['activity_text', "TEXT NOT NULL DEFAULT ''"],
+  ['activity_artwork', "TEXT NOT NULL DEFAULT ''"],
+  ['activity_url', "TEXT NOT NULL DEFAULT ''"],
+  ['avatar_url', "TEXT NOT NULL DEFAULT ''"],
+  ['profile_color', "TEXT NOT NULL DEFAULT '#5865F2'"]
+].forEach(([column, definition]) => {
+  if (!userPresenceColumns.has(column)) db.exec(`ALTER TABLE user_presence ADD COLUMN ${column} ${definition}`);
+});
 
 const serverColumns = new Set(db.pragma('table_info(servers)').map((column) => column.name));
 [
@@ -222,16 +308,14 @@ db.exec('CREATE INDEX IF NOT EXISTS custom_sounds_server_id_idx ON custom_sounds
 
 const sharedServerSeeds = [
   ['pub-1', 'Comunidade BADISCORD 🎮', '🎮'],
-  ['pub-2', 'Espaço dos Devs 💻', '💻'],
-  ['pub-3', 'Lounge de Músicas & Clipes 🎵', '🎧'],
-  ['pub-4', 'Competitivo & Scrims 🏆', '🏆']
+  ['pub-2', 'Espaço dos Devs 💻', '💻']
 ];
 const seedSharedServer = db.prepare(`INSERT OR IGNORE INTO servers (id, name, icon, is_public, created_at)
   VALUES (?, ?, ?, 1, ?)`);
 sharedServerSeeds.forEach(([id, name, icon]) => seedSharedServer.run(id, name, icon, new Date().toISOString()));
 
 db.transaction(() => {
-  for (const serverId of ['srv-1', 'srv-2']) {
+  for (const serverId of ['srv-1', 'srv-2', 'pub-3', 'pub-4']) {
     db.prepare('DELETE FROM custom_sounds WHERE server_id = ?').run(serverId);
     db.prepare('DELETE FROM server_invites WHERE server_id = ?').run(serverId);
     db.prepare('DELETE FROM server_members WHERE server_id = ?').run(serverId);
@@ -512,7 +596,8 @@ app.post('/api/auth/recovery/reset', async (req, res) => {
 const PRESENCE_STALE_AFTER_MS = 45_000;
 
 function formatFriend(user, relationshipStatus) {
-  const presence = db.prepare(`SELECT status, detail, game, updated_at
+  const presence = db.prepare(`SELECT status, detail, game, activity_type, activity_text, activity_artwork, activity_url,
+      avatar_url, profile_color, updated_at
     FROM user_presence WHERE user_id = ?`).get(user.id);
   const isStale = !presence || Date.now() - presence.updated_at > PRESENCE_STALE_AFTER_MS;
   const visibleStatus = isStale || presence.status === 'invisible' ? 'offline' : presence.status;
@@ -523,8 +608,14 @@ function formatFriend(user, relationshipStatus) {
     tag: user.tag,
     fullTag: `${user.username}#${user.tag}`,
     status: visibleStatus,
+    avatarUrl: visibleStatus === 'offline' ? '' : (presence.avatar_url || ''),
+    color: presence?.profile_color || '#5865F2',
     detail: visibleStatus === 'offline' ? 'Offline' : (presence.detail || 'Disponível'),
     game: visibleStatus === 'offline' ? '' : presence.game,
+    activityType: visibleStatus === 'offline' ? '' : presence.activity_type,
+    activityText: visibleStatus === 'offline' ? '' : presence.activity_text,
+    activityArtwork: visibleStatus === 'offline' ? '' : presence.activity_artwork,
+    activityUrl: visibleStatus === 'offline' ? '' : presence.activity_url,
     relationshipStatus
   };
 }
@@ -533,10 +624,71 @@ function canAccessServer(userId, serverId) {
   return Boolean(db.prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, userId));
 }
 
+function isServerBanned(userId, serverId) {
+  const ban = db.prepare('SELECT expires_at FROM server_member_bans WHERE server_id = ? AND user_id = ?')
+    .get(serverId, userId);
+  if (!ban) return false;
+  if (ban.expires_at === null || ban.expires_at > Date.now()) return true;
+  db.prepare('DELETE FROM server_member_bans WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+  return false;
+}
+
+function canManageServerMembers(userId, serverId) {
+  return Boolean(db.prepare(`SELECT 1 FROM servers
+    LEFT JOIN server_members ON server_members.server_id = servers.id AND server_members.user_id = ?
+    LEFT JOIN server_roles ON server_roles.id = server_members.role_id
+    WHERE servers.id = ? AND (servers.owner_id = ? OR server_members.role IN ('owner', 'admin') OR server_roles.can_manage_members = 1)`)
+    .get(userId, serverId, userId));
+}
+
+function getServerVoiceRoomNames(serverId) {
+  const server = db.prepare('SELECT voice_channels_json FROM servers WHERE id = ?').get(serverId);
+  const channels = parseJsonValue(server?.voice_channels_json, []);
+  return Array.isArray(channels)
+    ? channels.map((channel) => `badiscord-${liveKitRoomSlug(serverId, 48)}-${liveKitRoomSlug(channel, 64)}`)
+    : [];
+}
+
+async function updateServerVoiceParticipant(serverId, userId, operation) {
+  if (!isLiveKitConfigured || !livekitRoomService) return;
+  const rooms = await livekitRoomService.listRooms(getServerVoiceRoomNames(serverId));
+  for (const room of rooms) {
+    const participants = await livekitRoomService.listParticipants(room.name);
+    const participant = participants.find((entry) => entry.identity === userId);
+    if (!participant) continue;
+    if (operation === 'remove') {
+      await livekitRoomService.removeParticipant(room.name, userId);
+      continue;
+    }
+    const muted = operation === 'mute';
+    await livekitRoomService.updateParticipant(room.name, userId, {
+      permission: {
+        canPublish: true,
+        canSubscribe: true,
+        canPublishData: true,
+        ...(muted ? {
+          canPublishSources: [
+            TrackSource.CAMERA,
+            TrackSource.SCREEN_SHARE,
+            TrackSource.SCREEN_SHARE_AUDIO
+          ]
+        } : {})
+      }
+    });
+    for (const track of participant.tracks || []) {
+      if (track.type === 0) {
+        await livekitRoomService.mutePublishedTrack(room.name, userId, track.sid, muted);
+      }
+    }
+  }
+}
+
 function canMessageFriendship(userId, friendId) {
   return Boolean(db.prepare(`SELECT 1 FROM friendships
-    WHERE (user_a = ? AND user_b = ?) OR (user_a = ? AND user_b = ?)`)
-    .get(userId, friendId, friendId, userId));
+    WHERE ((user_a = ? AND user_b = ?) OR (user_a = ? AND user_b = ?))
+      AND NOT EXISTS (SELECT 1 FROM user_blocks
+        WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?))`)
+    .get(userId, friendId, friendId, userId, userId, friendId, friendId, userId));
 }
 
 function getDmParticipants(userId, friendId) {
@@ -680,12 +832,14 @@ function formatServer(server, userId) {
     voiceChannels: parseJsonValue(server.voice_channels_json, ['Geral 🔊']),
     isPublic: Boolean(server.is_public),
     isOwner: server.owner_id === userId,
-    role: server.role || 'member'
+    role: server.role || 'member',
+    roleId: server.role_id || '',
+    memberGroup: server.group_name || 'Disponíveis'
   };
 }
 
 function listAccessibleServers(userId) {
-  return db.prepare(`SELECT servers.*, server_members.role
+  return db.prepare(`SELECT servers.*, server_members.role, server_members.role_id, server_members.group_name
     FROM servers JOIN server_members ON server_members.server_id = servers.id
     WHERE server_members.user_id = ? ORDER BY servers.name COLLATE NOCASE`).all(userId)
     .map((server) => formatServer(server, userId));
@@ -716,6 +870,185 @@ function ensurePersonalServer(user) {
 
 app.get('/api/servers', requireAuth, (req, res) => {
   return res.json({ servers: listAccessibleServers(req.user.id) });
+});
+
+app.get('/api/servers/:serverId/members', requireAuth, (req, res) => {
+  const serverId = normalize(req.params.serverId);
+  if (!canAccessServer(req.user.id, serverId)) return res.status(403).json({ error: 'Você não faz parte deste servidor.' });
+  const members = db.prepare(`SELECT users.id, users.display_name AS name, users.username, users.tag,
+      server_members.role AS base_role, server_members.role_id, server_members.group_name,
+      server_members.joined_at, server_roles.name AS role_name, server_roles.color AS role_color,
+      server_member_mutes.user_id AS muted_user_id,
+      user_presence.status, user_presence.detail, user_presence.game, user_presence.activity_type,
+      user_presence.activity_text, user_presence.activity_artwork, user_presence.activity_url,
+      user_presence.avatar_url, user_presence.profile_color, user_presence.updated_at
+    FROM server_members
+    JOIN users ON users.id = server_members.user_id
+    LEFT JOIN server_roles ON server_roles.id = server_members.role_id
+    LEFT JOIN server_member_mutes ON server_member_mutes.server_id = server_members.server_id
+      AND server_member_mutes.user_id = server_members.user_id
+      AND (server_member_mutes.expires_at IS NULL OR server_member_mutes.expires_at > ?)
+    LEFT JOIN user_presence ON user_presence.user_id = users.id
+    WHERE server_members.server_id = ?
+    ORDER BY COALESCE(server_roles.position, 9999), users.display_name COLLATE NOCASE`).all(Date.now(), serverId)
+    .map((member) => {
+      const online = member.status && Date.now() - member.updated_at <= PRESENCE_STALE_AFTER_MS && member.status !== 'invisible';
+      return {
+        id: member.id,
+        name: member.name,
+        username: member.username,
+        tag: member.tag,
+        fullTag: `${member.username}#${member.tag}`,
+        avatarUrl: member.avatar_url || '',
+        color: member.profile_color || '#5865F2',
+        roleId: member.role_id || '',
+        role: member.role_name || (member.base_role === 'owner' ? 'Dono' : 'Membro'),
+        roleColor: member.role_color || '#949ba4',
+        groupName: member.group_name || 'Disponíveis',
+        isMuted: Boolean(member.muted_user_id),
+        joinedAt: member.joined_at,
+        status: online ? member.status : 'offline',
+        detail: online ? member.detail || 'Disponível' : 'Offline',
+        game: online ? member.game || '' : '',
+        activityType: online ? member.activity_type || '' : '',
+        activityText: online ? member.activity_text || '' : '',
+        activityArtwork: online ? member.activity_artwork || '' : '',
+        activityUrl: online ? member.activity_url || '' : ''
+      };
+    });
+  return res.json({ members });
+});
+
+app.get('/api/servers/:serverId/roles', requireAuth, (req, res) => {
+  const serverId = normalize(req.params.serverId);
+  if (!canAccessServer(req.user.id, serverId)) return res.status(403).json({ error: 'Você não faz parte deste servidor.' });
+  const roles = db.prepare(`SELECT id, name, color, position, can_manage_members AS canManageMembers
+    FROM server_roles WHERE server_id = ? ORDER BY position, name COLLATE NOCASE`).all(serverId);
+  return res.json({ roles });
+});
+
+app.post('/api/servers/:serverId/roles', requireAuth, (req, res) => {
+  const serverId = normalize(req.params.serverId);
+  if (!canManageServerMembers(req.user.id, serverId)) return res.status(403).json({ error: 'Somente o dono ou um administrador pode gerenciar cargos.' });
+  const name = normalize(req.body?.name).slice(0, 32);
+  const color = /^#[0-9a-f]{6}$/i.test(req.body?.color) ? req.body.color : '#949ba4';
+  const canManageMembers = Boolean(req.body?.canManageMembers);
+  const server = db.prepare('SELECT owner_id FROM servers WHERE id = ?').get(serverId);
+  const actor = db.prepare('SELECT role FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, req.user.id);
+  if (!server || !name) return res.status(400).json({ error: 'Informe um nome para o cargo.' });
+  if (canManageMembers && server.owner_id !== req.user.id && actor?.role !== 'owner') {
+    return res.status(403).json({ error: 'Somente o dono pode criar cargos de administrador.' });
+  }
+  const id = `role-${crypto.randomUUID()}`;
+  try {
+    const position = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS value FROM server_roles WHERE server_id = ?').get(serverId).value;
+    db.prepare(`INSERT INTO server_roles (id, server_id, name, color, position, can_manage_members, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(id, serverId, name, color, position, canManageMembers ? 1 : 0, Date.now());
+  } catch (error) {
+    if (String(error.message).includes('UNIQUE')) return res.status(409).json({ error: 'Já existe um cargo com esse nome.' });
+    throw error;
+  }
+  return res.status(201).json({ role: db.prepare(`SELECT id, name, color, position, can_manage_members AS canManageMembers
+    FROM server_roles WHERE id = ?`).get(id) });
+});
+
+app.patch('/api/servers/:serverId/members/:userId', requireAuth, (req, res) => {
+  const serverId = normalize(req.params.serverId);
+  const userId = normalize(req.params.userId);
+  if (!canManageServerMembers(req.user.id, serverId)) return res.status(403).json({ error: 'Somente o dono ou um administrador pode alterar os membros.' });
+  const target = db.prepare(`SELECT server_members.role, servers.owner_id
+    FROM server_members JOIN servers ON servers.id = server_members.server_id
+    WHERE server_members.server_id = ? AND server_members.user_id = ?`).get(serverId, userId);
+  if (!target) return res.status(404).json({ error: 'Membro não encontrado.' });
+  if (target.owner_id === userId) return res.status(403).json({ error: 'O cargo do dono não pode ser alterado.' });
+
+  const groupName = normalize(req.body?.groupName || 'Disponíveis').slice(0, 32) || 'Disponíveis';
+  const roleId = normalize(req.body?.roleId);
+  let role = null;
+  if (roleId) {
+    role = db.prepare('SELECT id, can_manage_members FROM server_roles WHERE id = ? AND server_id = ?').get(roleId, serverId);
+    if (!role) return res.status(400).json({ error: 'Cargo inválido para este servidor.' });
+    if (role.can_manage_members && req.user.id !== target.owner_id) return res.status(403).json({ error: 'Somente o dono pode atribuir cargos de administrador.' });
+  }
+  db.prepare('UPDATE server_members SET role_id = ?, group_name = ? WHERE server_id = ? AND user_id = ?')
+    .run(role?.id || null, groupName, serverId, userId);
+  return res.json({ ok: true });
+});
+
+app.delete('/api/servers/:serverId/members/:userId', requireAuth, async (req, res) => {
+  const serverId = normalize(req.params.serverId);
+  const userId = normalize(req.params.userId);
+  if (!canManageServerMembers(req.user.id, serverId)) return res.status(403).json({ error: 'Somente o dono ou um administrador pode expulsar membros.' });
+  const target = db.prepare(`SELECT servers.owner_id FROM servers
+    JOIN server_members ON server_members.server_id = servers.id
+    WHERE servers.id = ? AND server_members.user_id = ?`).get(serverId, userId);
+  if (!target) return res.status(404).json({ error: 'Membro não encontrado.' });
+  if (target.owner_id === userId || req.user.id === userId) return res.status(403).json({ error: 'Não é possível expulsar este membro.' });
+  try {
+    await updateServerVoiceParticipant(serverId, userId, 'remove');
+  } catch (error) {
+    console.error('Não foi possível remover o membro do canal de voz:', error);
+    return res.status(502).json({ error: 'Não foi possível desconectar o membro da voz. Tente novamente.' });
+  }
+  db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+  return res.json({ ok: true });
+});
+
+app.post('/api/servers/:serverId/members/:userId/ban', requireAuth, async (req, res) => {
+  const serverId = normalize(req.params.serverId);
+  const userId = normalize(req.params.userId);
+  if (!canManageServerMembers(req.user.id, serverId)) return res.status(403).json({ error: 'Somente o dono ou um administrador pode banir membros.' });
+  const target = db.prepare(`SELECT servers.owner_id FROM servers
+    JOIN server_members ON server_members.server_id = servers.id
+    WHERE servers.id = ? AND server_members.user_id = ?`).get(serverId, userId);
+  if (!target) return res.status(404).json({ error: 'Membro não encontrado.' });
+  if (target.owner_id === userId || req.user.id === userId) return res.status(403).json({ error: 'Não é possível banir este membro.' });
+  const duration = req.body?.duration;
+  const durationMs = { '1h': 60 * 60 * 1000, '24h': 24 * 60 * 60 * 1000, '7d': 7 * 24 * 60 * 60 * 1000 };
+  if (duration !== 'perm' && !durationMs[duration]) return res.status(400).json({ error: 'Duração do banimento inválida.' });
+  try {
+    await updateServerVoiceParticipant(serverId, userId, 'remove');
+  } catch (error) {
+    console.error('Não foi possível desconectar o membro antes do banimento:', error);
+    return res.status(502).json({ error: 'Não foi possível desconectar o membro da voz. Tente novamente.' });
+  }
+  const expiresAt = duration === 'perm' ? null : Date.now() + durationMs[duration];
+  const reason = normalize(req.body?.reason).slice(0, 200);
+  db.transaction(() => {
+    db.prepare(`INSERT INTO server_member_bans (server_id, user_id, expires_at, reason, created_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(server_id, user_id) DO UPDATE SET expires_at = excluded.expires_at, reason = excluded.reason, created_at = excluded.created_at`)
+      .run(serverId, userId, expiresAt, reason, Date.now());
+    db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+  })();
+  return res.json({ ok: true });
+});
+
+app.post('/api/servers/:serverId/members/:userId/mute', requireAuth, async (req, res) => {
+  const serverId = normalize(req.params.serverId);
+  const userId = normalize(req.params.userId);
+  if (!canManageServerMembers(req.user.id, serverId)) return res.status(403).json({ error: 'Somente o dono ou um administrador pode silenciar membros.' });
+  const target = db.prepare(`SELECT servers.owner_id FROM servers
+    JOIN server_members ON server_members.server_id = servers.id
+    WHERE servers.id = ? AND server_members.user_id = ?`).get(serverId, userId);
+  if (!target) return res.status(404).json({ error: 'Membro não encontrado.' });
+  if (target.owner_id === userId || req.user.id === userId) return res.status(403).json({ error: 'Não é possível silenciar este membro.' });
+  const muted = Boolean(req.body?.muted);
+  try {
+    await updateServerVoiceParticipant(serverId, userId, muted ? 'mute' : 'unmute');
+  } catch (error) {
+    console.error('Não foi possível alterar o áudio do membro:', error);
+    return res.status(502).json({ error: 'Não foi possível alterar o áudio na voz. Tente novamente.' });
+  }
+  if (muted) {
+    db.prepare(`INSERT INTO server_member_mutes (server_id, user_id, expires_at, created_at)
+      VALUES (?, ?, NULL, ?)
+      ON CONFLICT(server_id, user_id) DO UPDATE SET expires_at = NULL, created_at = excluded.created_at`)
+      .run(serverId, userId, Date.now());
+  } else {
+    db.prepare('DELETE FROM server_member_mutes WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+  }
+  return res.json({ ok: true, muted });
 });
 
 app.get('/api/servers/:serverId/voice-participants', requireAuth, async (req, res) => {
@@ -1040,8 +1373,10 @@ app.post('/api/servers/sync', requireAuth, (req, res) => {
       db.prepare(`UPDATE servers SET name = ?, icon = ?, metadata_json = ?, text_channels_json = ?, voice_channels_json = ? WHERE id = ?`)
         .run(name, icon, metadata, JSON.stringify(textChannels), JSON.stringify(voiceChannels), id);
     } else if (existing.is_public) {
-      db.prepare('INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)')
-        .run(id, req.user.id, 'member', now);
+      if (!isServerBanned(req.user.id, id)) {
+        db.prepare('INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at) VALUES (?, ?, ?, ?)')
+          .run(id, req.user.id, 'member', now);
+      }
     }
   });
   clientServers.forEach(syncServer);
@@ -1119,14 +1454,37 @@ app.post('/api/presence', requireAuth, (req, res) => {
   }
   const detail = normalize(req.body?.detail).slice(0, 80);
   const game = normalize(req.body?.game).slice(0, 100);
-  db.prepare(`INSERT INTO user_presence (user_id, status, detail, game, updated_at)
-    VALUES (?, ?, ?, ?, ?)
+  const activityType = ['game', 'music'].includes(req.body?.activityType) ? req.body.activityType : '';
+  const activityText = normalize(req.body?.activityText).slice(0, 160);
+  const activityArtwork = typeof req.body?.activityArtwork === 'string'
+    && /^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(req.body.activityArtwork)
+    && req.body.activityArtwork.length <= 350_000
+    ? req.body.activityArtwork
+    : '';
+  const activityUrl = typeof req.body?.activityUrl === 'string'
+    && /^https:\/\/[^\s]{1,1000}$/i.test(req.body.activityUrl)
+    ? req.body.activityUrl
+    : '';
+  const avatarUrl = typeof req.body?.avatarUrl === 'string'
+    && (req.body.avatarUrl.length <= 500_000
+      && (/^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(req.body.avatarUrl) || /^https:\/\/[^\s]+$/i.test(req.body.avatarUrl)))
+    ? req.body.avatarUrl
+    : '';
+  const profileColor = /^#[0-9a-f]{6}$/i.test(req.body?.profileColor) ? req.body.profileColor : '#5865F2';
+  db.prepare(`INSERT INTO user_presence (user_id, status, detail, game, activity_type, activity_text, activity_artwork, activity_url, avatar_url, profile_color, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       status = excluded.status,
       detail = excluded.detail,
       game = excluded.game,
+      activity_type = excluded.activity_type,
+      activity_text = excluded.activity_text,
+      activity_artwork = excluded.activity_artwork,
+      activity_url = excluded.activity_url,
+      avatar_url = excluded.avatar_url,
+      profile_color = excluded.profile_color,
       updated_at = excluded.updated_at`)
-    .run(req.user.id, status, detail, game, Date.now());
+    .run(req.user.id, status, detail, game, activityType, activityText, activityArtwork, activityUrl, avatarUrl, profileColor, Date.now());
   return res.json({ ok: true });
 });
 
@@ -1166,6 +1524,10 @@ app.post('/api/friends/requests', requireAuth, (req, res) => {
     : db.prepare('SELECT * FROM users WHERE username = ?').get(username);
   if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
   if (target.id === req.user.id) return res.status(400).json({ error: 'Você não pode adicionar a si mesmo.' });
+  if (db.prepare(`SELECT 1 FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)`)
+    .get(req.user.id, target.id, target.id, req.user.id)) {
+    return res.status(403).json({ error: 'Não é possível enviar uma solicitação entre contas bloqueadas.' });
+  }
 
   const existingFriendship = db.prepare(`SELECT 1 FROM friendships WHERE (user_a = ? AND user_b = ?) OR (user_a = ? AND user_b = ?)`)
     .get(req.user.id, target.id, target.id, req.user.id);
@@ -1212,6 +1574,219 @@ app.delete('/api/friends/:id', requireAuth, (req, res) => {
   return result.changes ? res.json({ ok: true }) : res.status(404).json({ error: 'Amizade não encontrada.' });
 });
 
+app.post('/api/users/:id/block', requireAuth, (req, res) => {
+  const targetId = normalize(req.params.id);
+  if (targetId === req.user.id) return res.status(400).json({ error: 'Você não pode bloquear a si mesmo.' });
+  if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(targetId)) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  const now = Date.now();
+  db.transaction(() => {
+    db.prepare('INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)')
+      .run(req.user.id, targetId, now);
+    db.prepare('DELETE FROM friendships WHERE (user_a = ? AND user_b = ?) OR (user_a = ? AND user_b = ?)')
+      .run(req.user.id, targetId, targetId, req.user.id);
+    db.prepare(`DELETE FROM friend_requests
+      WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)`)
+      .run(req.user.id, targetId, targetId, req.user.id);
+  })();
+  return res.json({ ok: true });
+});
+
+app.delete('/api/users/:id/block', requireAuth, (req, res) => {
+  const result = db.prepare('DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?').run(req.user.id, normalize(req.params.id));
+  return result.changes ? res.json({ ok: true }) : res.status(404).json({ error: 'Usuário não estava bloqueado.' });
+});
+
+app.post('/api/calls', requireAuth, (req, res) => {
+  const receiverId = normalize(req.body?.friendId);
+  if (!canMessageFriendship(req.user.id, receiverId)) return res.status(403).json({ error: 'Chamadas privadas estão disponíveis somente entre amigos.' });
+  const existing = db.prepare(`SELECT id FROM private_calls
+    WHERE status IN ('ringing', 'active')
+      AND ((caller_id = ? AND receiver_id = ?) OR (caller_id = ? AND receiver_id = ?))
+      AND updated_at > ?`)
+    .get(req.user.id, receiverId, receiverId, req.user.id, Date.now() - 60 * 60 * 1000);
+  if (existing) return res.status(409).json({ error: 'Já existe uma chamada ativa ou tocando entre vocês.' });
+  const id = crypto.randomUUID();
+  const roomName = `badiscord-call-${id}`;
+  const now = Date.now();
+  db.prepare(`INSERT INTO private_calls (id, caller_id, receiver_id, room_name, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'ringing', ?, ?)`).run(id, req.user.id, receiverId, roomName, now, now);
+  return res.status(201).json({ call: { id, roomName, status: 'ringing' } });
+});
+
+app.get('/api/calls', requireAuth, (req, res) => {
+  db.prepare(`UPDATE private_calls SET status = 'missed', updated_at = ?
+    WHERE status = 'ringing' AND created_at < ?`).run(Date.now(), Date.now() - 60_000);
+  const calls = db.prepare(`SELECT private_calls.id, private_calls.caller_id, private_calls.receiver_id,
+      private_calls.room_name, private_calls.status, private_calls.created_at,
+      caller.display_name AS caller_name, receiver.display_name AS receiver_name
+    FROM private_calls
+    JOIN users AS caller ON caller.id = private_calls.caller_id
+    JOIN users AS receiver ON receiver.id = private_calls.receiver_id
+    WHERE (private_calls.caller_id = ? OR private_calls.receiver_id = ?)
+      AND private_calls.updated_at > ?
+    ORDER BY private_calls.created_at DESC LIMIT 20`)
+    .all(req.user.id, req.user.id, Date.now() - 60_000)
+    .map((call) => ({ ...call, isCaller: call.caller_id === req.user.id }));
+  return res.json({ calls });
+});
+
+app.post('/api/calls/:id/accept', requireAuth, (req, res) => {
+  const call = db.prepare(`SELECT * FROM private_calls
+    WHERE id = ? AND receiver_id = ? AND status = 'ringing'`).get(req.params.id, req.user.id);
+  if (!call) return res.status(404).json({ error: 'A chamada não está mais disponível.' });
+  const now = Date.now();
+  const updated = db.prepare(`UPDATE private_calls SET status = 'active', updated_at = ?
+    WHERE id = ? AND status = 'ringing'`).run(now, call.id);
+  if (!updated.changes) return res.status(409).json({ error: 'A chamada já foi atendida ou encerrada.' });
+  return res.json({ call: { id: call.id, roomName: call.room_name, status: 'active' } });
+});
+
+app.post('/api/calls/:id/end', requireAuth, (req, res) => {
+  const call = db.prepare(`SELECT * FROM private_calls
+    WHERE id = ? AND (caller_id = ? OR receiver_id = ?) AND status IN ('ringing', 'active')`)
+    .get(req.params.id, req.user.id, req.user.id);
+  if (!call) return res.status(404).json({ error: 'A chamada não está ativa.' });
+  db.prepare(`UPDATE private_calls SET status = ?, updated_at = ? WHERE id = ?`)
+    .run(call.status === 'ringing' && call.receiver_id === req.user.id ? 'rejected' : 'ended', Date.now(), call.id);
+  return res.json({ ok: true });
+});
+
+function spotifyIsConfigured() {
+  return Boolean(SPOTIFY_CLIENT_ID && SPOTIFY_CLIENT_SECRET && SPOTIFY_REDIRECT_URI && /^[a-f0-9]{64}$/i.test(SPOTIFY_TOKEN_ENCRYPTION_KEY));
+}
+
+function encryptSpotifyToken(token) {
+  const key = Buffer.from(SPOTIFY_TOKEN_ENCRYPTION_KEY, 'hex');
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64')).join('.');
+}
+
+function decryptSpotifyToken(value) {
+  const [iv, tag, encrypted] = value.split('.').map((part) => Buffer.from(part, 'base64'));
+  const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(SPOTIFY_TOKEN_ENCRYPTION_KEY, 'hex'), iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+}
+
+app.get('/api/spotify/connect', requireAuth, (req, res) => {
+  if (!spotifyIsConfigured()) return res.status(503).json({ error: 'A integração Spotify não está configurada no servidor.' });
+  const state = crypto.randomBytes(32).toString('hex');
+  db.prepare('INSERT INTO spotify_oauth_states (state, user_id, expires_at) VALUES (?, ?, ?)')
+    .run(state, req.user.id, Date.now() + 10 * 60 * 1000);
+  const url = new URL('https://accounts.spotify.com/authorize');
+  url.searchParams.set('client_id', SPOTIFY_CLIENT_ID);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('redirect_uri', SPOTIFY_REDIRECT_URI);
+  url.searchParams.set('scope', 'user-read-currently-playing user-read-playback-state');
+  url.searchParams.set('state', state);
+  return res.json({ url: url.toString() });
+});
+
+app.get('/api/spotify/callback', async (req, res) => {
+  const state = normalize(req.query.state);
+  const authorization = db.prepare('SELECT user_id FROM spotify_oauth_states WHERE state = ? AND expires_at > ?')
+    .get(state, Date.now());
+  db.prepare('DELETE FROM spotify_oauth_states WHERE state = ?').run(state);
+  const redirectToApp = (result) => {
+    const target = new URL('/', PUBLIC_APP_URL || SPOTIFY_REDIRECT_URI || 'http://localhost:3000');
+    target.searchParams.set('spotify', result);
+    return res.redirect(target.toString());
+  };
+  if (!authorization || !req.query.code || !spotifyIsConfigured()) return redirectToApp('error');
+  try {
+    const response = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64')}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: String(req.query.code),
+        redirect_uri: SPOTIFY_REDIRECT_URI
+      })
+    });
+    const tokens = await response.json();
+    if (!response.ok || !tokens.access_token || !tokens.refresh_token) throw new Error('Spotify token exchange failed.');
+    db.prepare(`INSERT INTO spotify_connections (user_id, access_token, refresh_token, expires_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET access_token = excluded.access_token,
+        refresh_token = excluded.refresh_token, expires_at = excluded.expires_at, updated_at = excluded.updated_at`)
+      .run(authorization.user_id, encryptSpotifyToken(tokens.access_token), encryptSpotifyToken(tokens.refresh_token),
+        Date.now() + tokens.expires_in * 1000, Date.now());
+    return redirectToApp('connected');
+  } catch (error) {
+    console.error('Não foi possível conectar o Spotify:', error);
+    return redirectToApp('error');
+  }
+});
+
+app.get('/api/spotify/status', requireAuth, (req, res) => {
+  const connected = Boolean(db.prepare('SELECT 1 FROM spotify_connections WHERE user_id = ?').get(req.user.id));
+  return res.json({ connected, configured: spotifyIsConfigured() });
+});
+
+app.delete('/api/spotify/connection', requireAuth, (req, res) => {
+  db.prepare('DELETE FROM spotify_connections WHERE user_id = ?').run(req.user.id);
+  db.prepare(`UPDATE user_presence SET activity_type = '', activity_text = '', activity_artwork = '', activity_url = '', updated_at = ?
+    WHERE user_id = ? AND activity_type = 'music'`).run(Date.now(), req.user.id);
+  return res.json({ ok: true });
+});
+
+app.get('/api/spotify/now-playing', requireAuth, async (req, res) => {
+  if (!spotifyIsConfigured()) return res.status(503).json({ error: 'A integração Spotify não está configurada no servidor.' });
+  const connection = db.prepare('SELECT * FROM spotify_connections WHERE user_id = ?').get(req.user.id);
+  if (!connection) return res.status(404).json({ error: 'Conecte sua conta do Spotify primeiro.' });
+  try {
+    let accessToken = decryptSpotifyToken(connection.access_token);
+    if (connection.expires_at <= Date.now() + 60_000) {
+      const refreshToken = decryptSpotifyToken(connection.refresh_token);
+      const tokenResponse = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64')}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken })
+      });
+      const refreshed = await tokenResponse.json();
+      if (!tokenResponse.ok || !refreshed.access_token) throw new Error('Spotify access token refresh failed.');
+      accessToken = refreshed.access_token;
+      db.prepare(`UPDATE spotify_connections SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = ?
+        WHERE user_id = ?`)
+        .run(encryptSpotifyToken(accessToken), refreshed.refresh_token ? encryptSpotifyToken(refreshed.refresh_token) : connection.refresh_token,
+          Date.now() + refreshed.expires_in * 1000, Date.now(), req.user.id);
+    }
+    const playbackResponse = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (playbackResponse.status === 204) {
+      db.prepare(`UPDATE user_presence SET activity_type = '', activity_text = '', activity_artwork = '', activity_url = '', updated_at = ?
+        WHERE user_id = ?`).run(Date.now(), req.user.id);
+      return res.json({ playing: false });
+    }
+    const playback = await playbackResponse.json();
+    if (!playbackResponse.ok) throw new Error(playback.error?.message || 'Spotify playback request failed.');
+    const item = playback.item;
+    if (!playback.is_playing || !item) {
+      db.prepare(`UPDATE user_presence SET activity_type = '', activity_text = '', activity_artwork = '', activity_url = '', updated_at = ?
+        WHERE user_id = ?`).run(Date.now(), req.user.id);
+      return res.json({ playing: false });
+    }
+    const activityText = `${normalize(item.name).slice(0, 120)} — ${(item.artists || []).map((artist) => normalize(artist.name)).filter(Boolean).join(', ').slice(0, 120)}`;
+    const artwork = Array.isArray(item.album?.images) ? item.album.images[0]?.url || '' : '';
+    const activityUrl = item.external_urls?.spotify || '';
+    db.prepare(`UPDATE user_presence SET activity_type = 'music', activity_text = ?, activity_artwork = ?, activity_url = ?, updated_at = ?
+      WHERE user_id = ?`).run(activityText, artwork, activityUrl, Date.now(), req.user.id);
+    return res.json({ playing: true, text: activityText, artwork, url: activityUrl });
+  } catch (error) {
+    console.error('Não foi possível consultar o Spotify:', error);
+    return res.status(502).json({ error: 'Não foi possível consultar sua atividade do Spotify.' });
+  }
+});
+
 app.post('/api/server-invites', requireAuth, (req, res) => {
   const receiverId = normalize(req.body?.receiverId);
   const serverId = normalize(req.body?.serverId);
@@ -1242,6 +1817,7 @@ app.post('/api/server-invites/:id/accept', requireAuth, (req, res) => {
     WHERE server_invites.id = ? AND server_invites.receiver_id = ? AND server_invites.status = 'pending'`)
     .get(req.params.id, req.user.id);
   if (!invite) return res.status(404).json({ error: 'Convite não encontrado ou já utilizado.' });
+  if (isServerBanned(req.user.id, invite.server_id)) return res.status(403).json({ error: 'Você está banido deste servidor.' });
 
   const now = new Date().toISOString();
   db.transaction(() => {
@@ -1275,6 +1851,7 @@ app.post('/api/server-invite-links/:token/accept', requireAuth, (req, res) => {
     JOIN servers ON servers.id = server_invite_links.server_id
     WHERE server_invite_links.token = ?`).get(normalize(req.params.token));
   if (!invite) return res.status(404).json({ error: 'Este link de convite é inválido ou o servidor não existe mais.' });
+  if (isServerBanned(req.user.id, invite.id)) return res.status(403).json({ error: 'Você está banido deste servidor.' });
 
   const now = new Date().toISOString();
   db.prepare(`INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at)
@@ -1303,17 +1880,24 @@ app.post('/api/token', requireAuth, async (req, res) => {
   const accessibleVoiceChannels = db.prepare(`SELECT servers.id, servers.voice_channels_json FROM servers
     JOIN server_members ON server_members.server_id = servers.id
     WHERE server_members.user_id = ?`).all(req.user.id);
-  const canJoinRoom = accessibleVoiceChannels.some((server) => {
+  const matchingServer = accessibleVoiceChannels.find((server) => {
     const serverSlug = liveKitRoomSlug(server.id, 48);
     const channels = parseJsonValue(server.voice_channels_json, []);
     return Array.isArray(channels) && channels.some((channel) => (
       roomName === `badiscord-${serverSlug}-${liveKitRoomSlug(channel, 64)}`
     ));
   });
+  const call = db.prepare(`SELECT id FROM private_calls
+    WHERE room_name = ? AND status = 'active' AND (caller_id = ? OR receiver_id = ?)`)
+    .get(roomName, req.user.id, req.user.id);
+  const canJoinRoom = Boolean(matchingServer || call);
   if (!canJoinRoom) return res.status(403).json({ error: 'Você não tem acesso a este canal de voz.' });
   if (!isLiveKitConfigured) {
     return res.status(503).json({ error: 'As chamadas de voz não estão configuradas. Configure as credenciais do LiveKit no servidor.' });
   }
+  const isServerMuted = matchingServer && Boolean(db.prepare(`SELECT 1 FROM server_member_mutes
+    WHERE server_id = ? AND user_id = ? AND (expires_at IS NULL OR expires_at > ?)`)
+    .get(matchingServer.id, req.user.id, Date.now()));
 
   try {
     const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
@@ -1326,12 +1910,19 @@ app.post('/api/token', requireAuth, async (req, res) => {
       roomJoin: true,
       room: roomName,
       canPublish: true,
+      ...(isServerMuted ? {
+        canPublishSources: [
+          TrackSource.CAMERA,
+          TrackSource.SCREEN_SHARE,
+          TrackSource.SCREEN_SHARE_AUDIO
+        ]
+      } : {}),
       canSubscribe: true,
       canPublishData: true
     });
 
     const token = await at.toJwt();
-    res.json({ token, livekitUrl: LIVEKIT_WS_URL });
+    res.json({ token, livekitUrl: LIVEKIT_WS_URL, canPublish: !isServerMuted });
   } catch (err) {
     console.error('Erro ao gerar token:', err);
     res.status(500).json({ error: 'Erro ao gerar token' });
