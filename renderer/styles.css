@@ -8209,6 +8209,10 @@ button.profile-tag-chip:hover {
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
+.auth-download-link + .auth-download-link {
+  margin-top: 8px;
+}
+
 .auth-download-link:hover {
   background: rgba(88, 101, 242, 0.16);
   border-color: #5865f2;
