@@ -9656,6 +9656,45 @@ button.profile-tag-chip:hover {
     min-width: 44px;
     min-height: 44px;
   }
+
+  .channels-sidebar {
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+  }
+
+  .channel-user-item {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .channel-user-item .live-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    height: auto;
+    flex: 0 0 100%;
+  }
+
+  .channel-user-item .live-preview-thumbnail {
+    display: none;
+  }
+
+  .channel-user-item .live-indicator-badge {
+    position: static;
+    padding: 4px 6px;
+  }
+
+  .channel-user-item .live-watch-button {
+    position: static;
+    min-height: 36px;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .voice-actions-dock .dock-action-btn {
+    height: 44px;
+    min-height: 44px;
+  }
 }
 
 @media (max-width: 700px) and (min-height: 800px) {
