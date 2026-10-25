@@ -3670,13 +3670,6 @@ if (btnCloseSoundboardQuick) {
   });
 }
 
-document.querySelectorAll('.sb-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const sound = btn.dataset.sound;
-    if (sound) playSoundEffect(sound);
-  });
-});
-
 if (btnStageMic) {
   btnStageMic.addEventListener('click', () => {
     btnToggleMic.click();
@@ -7823,7 +7816,15 @@ function applyProfileCustomization() {
   ].filter(Boolean);
   targets.forEach((target) => {
     target.classList.remove('profile-decoration-none', 'profile-decoration-neon', 'profile-decoration-galaxy', 'profile-decoration-fire');
-    target.classList.remove('profile-widget-none', 'profile-widget-pulse', 'profile-widget-orbit', 'profile-widget-spark');
+    target.classList.remove(
+      'profile-widget-none',
+      'profile-widget-pulse',
+      'profile-widget-orbit',
+      'profile-widget-spark',
+      'profile-widget-guardian',
+      'profile-widget-comet',
+      'profile-widget-prism'
+    );
     target.classList.add(`profile-decoration-${decoration}`, `profile-widget-${widget}`);
   });
 }
@@ -7910,12 +7911,30 @@ let soundboardPublishErrorShown = false;
 let customSoundboardSounds = [];
 let customSoundboardServerId = '';
 const activeCustomSoundPlayers = new Set();
+const defaultSoundboardSounds = [
+  { id: 'airhorn', label: '📢 Airhorn (Corneta)' },
+  { id: 'badumtss', label: '🥁 Ba-Dum-Tss' },
+  { id: 'applause', label: '👏 Aplausos' },
+  { id: 'bell', label: '🔔 Sino' },
+  { id: 'quack', label: '🦆 Quack' },
+  { id: 'siren', label: '🚨 Sirene' },
+  { id: 'gameover', label: '🎮 8-Bit Over' },
+  { id: 'laser', label: '⚡ Laser' },
+  { id: 'correct', label: '✨ Vitória GG' }
+];
+let hiddenDefaultSoundIds = new Set();
 
 try {
   const savedVolume = Number.parseInt(localStorage.getItem('badiscord_soundboard_volume'), 10);
   if (Number.isFinite(savedVolume)) soundboardVolume = Math.max(0, Math.min(100, savedVolume));
   soundboardMuted = localStorage.getItem('badiscord_soundboard_muted') === 'true';
-} catch (error) {}
+  const savedHiddenSounds = JSON.parse(localStorage.getItem('badiscord_soundboard_hidden_defaults') || '[]');
+  if (Array.isArray(savedHiddenSounds)) {
+    hiddenDefaultSoundIds = new Set(savedHiddenSounds.filter((id) => defaultSoundboardSounds.some((sound) => sound.id === id)));
+  }
+} catch (error) {
+  console.warn('Não foi possível carregar as preferências dos sons padrão:', error);
+}
 
 function getSoundboardAudioContext() {
   if (!soundboardAudioContext) {
@@ -8075,6 +8094,49 @@ async function playSoundEffect(type) {
       connectSoundboardSource(gain);
       osc.start(now);
       osc.stop(now + 0.15);
+    } else if (type === 'siren') {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(620, now);
+      osc.frequency.linearRampToValueAtTime(1040, now + 0.28);
+      osc.frequency.linearRampToValueAtTime(620, now + 0.56);
+      gain.gain.setValueAtTime(0.22, now);
+      gain.gain.setValueAtTime(0.22, now + 0.5);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.58);
+      osc.connect(gain);
+      connectSoundboardSource(gain);
+      osc.start(now);
+      osc.stop(now + 0.58);
+    } else if (type === 'badumtss') {
+      [[180, 0, 0.12], [92, 0.16, 0.25], [440, 0.43, 0.2]].forEach(([frequency, offset, duration]) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(frequency, now + offset);
+        gain.gain.setValueAtTime(0.28, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + duration);
+        osc.connect(gain);
+        connectSoundboardSource(gain);
+        osc.start(now + offset);
+        osc.stop(now + offset + duration);
+      });
+    } else if (type === 'applause') {
+      const length = Math.floor(ctx.sampleRate * 0.6);
+      const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+      const channel = buffer.getChannelData(0);
+      for (let i = 0; i < length; i += 1) {
+        channel[i] = (Math.random() * 2 - 1) * (1 - i / length);
+      }
+      const source = ctx.createBufferSource();
+      const gain = ctx.createGain();
+      source.buffer = buffer;
+      gain.gain.setValueAtTime(0.16, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      source.connect(gain);
+      connectSoundboardSource(gain);
+      source.start(now);
+      source.stop(now + 0.6);
     } else {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -8093,9 +8155,69 @@ async function playSoundEffect(type) {
   }
 }
 
-document.querySelectorAll('.soundboard-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    playSoundEffect(btn.dataset.sound);
+function renderDefaultSoundboard() {
+  const settingsGrid = document.getElementById('defaultSoundboardGrid');
+  const quickGrid = document.getElementById('defaultSoundboardQuickGrid');
+  const options = document.getElementById('soundboardDefaultOptions');
+  settingsGrid?.replaceChildren();
+  quickGrid?.replaceChildren();
+  options?.replaceChildren();
+
+  defaultSoundboardSounds.forEach((sound) => {
+    const visible = !hiddenDefaultSoundIds.has(sound.id);
+    if (settingsGrid) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'soundboard-btn';
+      button.dataset.sound = sound.id;
+      button.textContent = sound.label;
+      button.hidden = !visible;
+      settingsGrid.appendChild(button);
+    }
+    if (quickGrid) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'sb-btn';
+      button.dataset.sound = sound.id;
+      button.textContent = sound.label;
+      button.hidden = !visible;
+      quickGrid.appendChild(button);
+    }
+    if (options) {
+      const label = document.createElement('label');
+      label.className = 'soundboard-default-option';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.sound = sound.id;
+      checkbox.checked = visible;
+      const name = document.createElement('span');
+      name.textContent = sound.label;
+      label.append(checkbox, name);
+      options.appendChild(label);
+    }
+  });
+}
+
+renderDefaultSoundboard();
+
+document.getElementById('soundboardDefaultOptions')?.addEventListener('change', (event) => {
+  const checkbox = event.target.closest('input[data-sound]');
+  if (!checkbox) return;
+  if (checkbox.checked) hiddenDefaultSoundIds.delete(checkbox.dataset.sound);
+  else hiddenDefaultSoundIds.add(checkbox.dataset.sound);
+  try {
+    localStorage.setItem('badiscord_soundboard_hidden_defaults', JSON.stringify([...hiddenDefaultSoundIds]));
+    renderDefaultSoundboard();
+  } catch (error) {
+    console.error('Não foi possível salvar as preferências dos sons padrão:', error);
+    showToast('Não foi possível salvar a seleção de sons neste dispositivo.', '⚠️');
+  }
+});
+
+['defaultSoundboardGrid', 'defaultSoundboardQuickGrid'].forEach((id) => {
+  document.getElementById(id)?.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-sound]');
+    if (button) playSoundEffect(button.dataset.sound);
   });
 });
 
@@ -8443,7 +8565,16 @@ function applyTheme(theme) {
       '--brand-primary': '#56d7b5',
       '--brand-hover': '#36b995',
       '--brand-soft': 'rgba(86, 215, 181, 0.16)',
-      '--status-green': '#71dba5'
+      '--status-green': '#71dba5',
+      '--members-panel-bg': '#2b2d31',
+      '--members-text': '#dbdee1',
+      '--members-muted': '#949ba4',
+      '--members-header': '#b5bac1',
+      '--members-hover': 'rgba(255, 255, 255, 0.05)',
+      '--members-border': 'rgba(255, 255, 255, 0.06)',
+      '--members-avatar-bg': '#5865f2',
+      '--members-status-border': '#2b2d31',
+      '--members-icon-bg': '#3f4147'
     },
     midnight: {
       '--bg-primary': '#000000',
@@ -8456,7 +8587,16 @@ function applyTheme(theme) {
       '--brand-primary': '#56d7b5',
       '--brand-hover': '#36b995',
       '--brand-soft': 'rgba(86, 215, 181, 0.16)',
-      '--status-green': '#71dba5'
+      '--status-green': '#71dba5',
+      '--members-panel-bg': '#0e0e10',
+      '--members-text': '#e5e5e7',
+      '--members-muted': '#8b8b92',
+      '--members-header': '#c4c4c8',
+      '--members-hover': 'rgba(255, 255, 255, 0.07)',
+      '--members-border': 'rgba(255, 255, 255, 0.08)',
+      '--members-avatar-bg': '#262626',
+      '--members-status-border': '#0e0e10',
+      '--members-icon-bg': '#242428'
     },
     aurora: {
       '--bg-primary': '#1c3030',
@@ -8469,7 +8609,16 @@ function applyTheme(theme) {
       '--brand-primary': '#56d7b5',
       '--brand-hover': '#36b995',
       '--brand-soft': 'rgba(86, 215, 181, 0.16)',
-      '--status-green': '#71dba5'
+      '--status-green': '#71dba5',
+      '--members-panel-bg': '#162728',
+      '--members-text': '#d3e7df',
+      '--members-muted': '#91aaa1',
+      '--members-header': '#bdd6ce',
+      '--members-hover': 'rgba(170, 247, 224, 0.08)',
+      '--members-border': 'rgba(170, 247, 224, 0.1)',
+      '--members-avatar-bg': '#27665d',
+      '--members-status-border': '#162728',
+      '--members-icon-bg': '#203a38'
     },
     light: {
       '--bg-primary': '#ffffff',
@@ -8482,7 +8631,16 @@ function applyTheme(theme) {
       '--brand-primary': '#16876f',
       '--brand-hover': '#0f6d59',
       '--brand-soft': 'rgba(22, 135, 111, 0.13)',
-      '--status-green': '#16834d'
+      '--status-green': '#16834d',
+      '--members-panel-bg': '#f2f3f5',
+      '--members-text': '#2e3338',
+      '--members-muted': '#5c6370',
+      '--members-header': '#404650',
+      '--members-hover': 'rgba(0, 0, 0, 0.06)',
+      '--members-border': 'rgba(0, 0, 0, 0.1)',
+      '--members-avatar-bg': '#16876f',
+      '--members-status-border': '#f2f3f5',
+      '--members-icon-bg': '#e3e5e8'
     }
   };
 

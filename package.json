@@ -1,7 +1,7 @@
 {
   "name": "badiscord",
   "productName": "BADISCORD",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Aplicativo Desktop de Voz e Streaming até 2K",
   "main": "main.js",
   "scripts": {

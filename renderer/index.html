@@ -687,14 +687,7 @@
       <input type="range" id="soundboardQuickVolume" min="0" max="100" step="1" value="100" aria-label="Volume dos efeitos sonoros">
       <output id="soundboardQuickVolumeValue" for="soundboardQuickVolume">100%</output>
     </div>
-    <div class="sb-grid">
-      <button class="sb-btn" data-sound="airhorn">📢 Airhorn</button>
-      <button class="sb-btn" data-sound="quack">🦆 Quack</button>
-      <button class="sb-btn" data-sound="bell">🔔 Sino</button>
-      <button class="sb-btn" data-sound="gameover">💀 Game Over</button>
-      <button class="sb-btn" data-sound="laser">⚡ Laser</button>
-      <button class="sb-btn" data-sound="correct">✨ Vitória GG</button>
-    </div>
+    <div class="sb-grid" id="defaultSoundboardQuickGrid"></div>
     <div class="sb-grid" id="customSoundboardQuickGrid" style="display: none;"></div>
   </div>
 
@@ -1741,17 +1734,10 @@
             <output class="soundboard-volume-value" id="soundboardVolumeValue" for="soundboardVolume">100%</output>
           </div>
           <small class="soundboard-local-volume-note">O volume e o mudo acima afetam apenas o que você ouve; não alteram o volume dos outros participantes.</small>
-          <div class="soundboard-grid">
-            <button class="soundboard-btn" data-sound="airhorn">📢 Airhorn (Corneta)</button>
-            <button class="soundboard-btn" data-sound="badumtss">🥁 Ba-Dum-Tss</button>
-            <button class="soundboard-btn" data-sound="applause">👏 Aplausos</button>
-            <button class="soundboard-btn" data-sound="bell">🔔 Sino</button>
-            <button class="soundboard-btn" data-sound="quack">🦆 Quack</button>
-            <button class="soundboard-btn" data-sound="siren">🚨 Sirene</button>
-            <button class="soundboard-btn" data-sound="gameover">🎮 8-Bit Over</button>
-            <button class="soundboard-btn" data-sound="laser">🔫 Laser</button>
+          <div class="soundboard-custom-heading">
+            <h3 class="soundboard-custom-title">Adicionar efeito de áudio</h3>
+            <span>O efeito enviado fica disponível nesta lista e no painel rápido do servidor.</span>
           </div>
-          <h3 class="soundboard-custom-title">Áudios deste servidor</h3>
           <div class="soundboard-upload">
             <label class="soundboard-upload-field">
               <span>Nome do efeito</span>
@@ -1764,7 +1750,14 @@
             <button type="button" class="soundboard-upload-button" id="btnSoundboardUpload">Adicionar áudio</button>
             <span class="soundboard-upload-status" id="soundboardUploadStatus" role="status" aria-live="polite"></span>
           </div>
+          <h3 class="soundboard-custom-title">Áudios deste servidor</h3>
           <div class="soundboard-grid" id="customSoundboardGrid"></div>
+          <h3 class="soundboard-custom-title">Sons padrão</h3>
+          <details class="soundboard-default-manager">
+            <summary>Escolher quais sons padrão aparecem</summary>
+            <div class="soundboard-default-options" id="soundboardDefaultOptions"></div>
+          </details>
+          <div class="soundboard-grid" id="defaultSoundboardGrid"></div>
         </div>
 
         <!-- ABA: APARÊNCIA -->
@@ -1803,7 +1796,7 @@
 
         <div class="settings-tab-pane" id="pane-decorations" style="display: none;">
           <h2 class="settings-section-title">Decorações de perfil</h2>
-          <p class="section-desc">Escolha uma decoração e um widget. Tudo nesta aba é gratuito.</p>
+          <p class="section-desc">Escolha uma decoração e um widget animado. Inclui estilos de heróis originais, todos gratuitos.</p>
           <h3 class="profile-section-title">Decoração do avatar</h3>
           <div class="free-customization-grid" id="profileDecorationOptions">
             <button type="button" class="free-customization-card" data-decoration="none"><span class="customization-preview decoration-none">○</span><strong>Nenhuma</strong><small>Grátis</small></button>
@@ -1817,6 +1810,9 @@
             <button type="button" class="free-customization-card" data-widget="pulse"><span class="customization-preview widget-pulse">◉</span><strong>Pulso</strong><small>Grátis</small></button>
             <button type="button" class="free-customization-card" data-widget="orbit"><span class="customization-preview widget-orbit">◎</span><strong>Órbita</strong><small>Grátis</small></button>
             <button type="button" class="free-customization-card" data-widget="spark"><span class="customization-preview widget-spark">✦</span><strong>Faísca</strong><small>Grátis</small></button>
+            <button type="button" class="free-customization-card" data-widget="guardian"><span class="customization-preview widget-guardian">⬡</span><strong>Guardião Solar</strong><small>Herói original</small></button>
+            <button type="button" class="free-customization-card" data-widget="comet"><span class="customization-preview widget-comet">✧</span><strong>Cometa Azul</strong><small>Herói original</small></button>
+            <button type="button" class="free-customization-card" data-widget="prism"><span class="customization-preview widget-prism">✴</span><strong>Sentinela Prisma</strong><small>Herói original</small></button>
           </div>
           <div class="profile-form-actions">
             <button type="button" class="discord-btn-primary" id="btnSaveDecorations">Salvar personalização</button>
