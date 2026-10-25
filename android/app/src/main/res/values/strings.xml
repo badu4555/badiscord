@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">BADISCORD</string>
+    <string name="screen_share_notification">BADISCORD está transmitindo sua tela</string>
+    <string name="stop_screen_share">Parar transmissão</string>
+</resources>

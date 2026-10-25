@@ -1100,7 +1100,7 @@ app.get('/api/servers/:serverId/voice-participants', requireAuth, async (req, re
         participants.map((participant) => ({
           id: participant.identity,
           name: participant.name || 'Usuário'
-        }))
+        })).filter((participant) => !participant.id.endsWith('-mobile-screen'))
       ];
     }));
     const channelsByRoom = new Map(channelEntries);
@@ -1913,6 +1913,7 @@ app.get('/api/token', (req, res) => {
 
 app.post('/api/token', requireAuth, async (req, res) => {
   const roomName = normalize(req.body?.roomName);
+  const isMobileScreenShare = req.body?.screenShareSession === true;
 
   if (!roomName || roomName.length > 120) {
     return res.status(400).json({ error: 'Nome do canal de voz inválido.' });
@@ -1939,31 +1940,48 @@ app.post('/api/token', requireAuth, async (req, res) => {
   const isServerMuted = matchingServer && Boolean(db.prepare(`SELECT 1 FROM server_member_mutes
     WHERE server_id = ? AND user_id = ? AND (expires_at IS NULL OR expires_at > ?)`)
     .get(matchingServer.id, req.user.id, Date.now()));
+  if (isMobileScreenShare && isServerMuted) {
+    return res.status(403).json({ error: 'Você não pode transmitir neste servidor.' });
+  }
 
   try {
     const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
-      identity: req.user.id,
-      name: req.user.display_name,
+      identity: isMobileScreenShare ? `${req.user.id}-mobile-screen` : req.user.id,
+      name: isMobileScreenShare ? `${req.user.display_name} (Tela móvel)` : req.user.display_name,
       ttl: '24h'
     });
 
-    at.addGrant({
-      roomJoin: true,
-      room: roomName,
-      canPublish: true,
-      ...(isServerMuted ? {
-        canPublishSources: [
-          TrackSource.CAMERA,
-          TrackSource.SCREEN_SHARE,
-          TrackSource.SCREEN_SHARE_AUDIO
-        ]
-      } : {}),
-      canSubscribe: true,
-      canPublishData: true
-    });
+    at.addGrant(isMobileScreenShare
+      ? {
+          roomJoin: true,
+          room: roomName,
+          canPublish: true,
+          canPublishSources: [TrackSource.SCREEN_SHARE],
+          canSubscribe: false,
+          canPublishData: false
+        }
+      : {
+          roomJoin: true,
+          room: roomName,
+          canPublish: true,
+          ...(isServerMuted ? {
+            canPublishSources: [
+              TrackSource.CAMERA,
+              TrackSource.SCREEN_SHARE,
+              TrackSource.SCREEN_SHARE_AUDIO
+            ]
+          } : {}),
+          canSubscribe: true,
+          canPublishData: true
+        });
 
     const token = await at.toJwt();
-    res.json({ token, livekitUrl: LIVEKIT_WS_URL, canPublish: !isServerMuted });
+    res.json({
+      token,
+      livekitUrl: LIVEKIT_WS_URL,
+      canPublish: !isServerMuted,
+      ...(isMobileScreenShare ? { participantIdentity: `${req.user.id}-mobile-screen` } : {})
+    });
   } catch (err) {
     console.error('Erro ao gerar token:', err);
     res.status(500).json({ error: 'Erro ao gerar token' });

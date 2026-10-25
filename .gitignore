@@ -7,3 +7,6 @@ dist/
 server/data/*.db*
 native/process-audio-capture.exe
 native/process-audio-capture.obj
+android/.gradle/
+android/local.properties
+android/**/build/

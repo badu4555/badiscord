@@ -167,8 +167,8 @@
   <div class="app-layout">
     <!-- Barra de Servidores (Extrema Esquerda) -->
     <nav class="guild-sidebar">
-      <div class="guild-icon dm-icon" id="btnHomeDM" title="Mensagens Diretas / Início">
-        <svg width="26" height="20" viewBox="0 0 28 20" fill="currentColor">
+      <div class="guild-icon dm-icon home-mark" id="btnHomeDM" title="Início e conversas" aria-label="Início e conversas">
+        <svg width="26" height="20" viewBox="0 0 28 20" fill="currentColor" aria-hidden="true">
           <path d="M23.0212 1.67671C21.3107 0.879656 19.5079 0.318797 17.6584 0C17.4062 0.461742 17.1149 1.06995 16.9108 1.56417C14.9392 1.26554 12.9814 1.26554 11.0371 1.56417C10.833 1.06995 10.5303 0.461742 10.2781 0C8.42858 0.318797 6.62582 0.880948 4.91404 1.6793C1.48002 6.89297 0.548906 11.9682 1.01428 16.9691C3.29215 18.6811 5.49502 19.7186 7.6627 20C8.20455 19.2483 8.68652 18.4475 9.09849 17.6042C8.30756 17.3006 7.55018 16.9092 6.83758 16.4429C7.03061 16.2995 7.21855 16.1497 7.40058 15.9961C11.6841 17.9944 16.3359 17.9944 20.5735 15.9961C20.7568 16.1497 20.9434 16.2995 21.1378 16.4429C20.4225 16.9118 19.6625 17.3032 18.869 17.6068C19.2836 18.4488 19.7682 19.2509 20.3074 20C22.4777 19.7199 24.6832 18.6824 26.961 16.9691C27.5097 11.1969 26.0125 6.16668 23.0212 1.67671ZM9.68041 13.9147C8.37568 13.9147 7.30455 12.6961 7.30455 11.2064C7.30455 9.71671 8.34969 8.49808 9.68041 8.49808C11.0238 8.49808 12.0835 9.72834 12.0562 11.2064C12.0562 12.6961 11.0121 13.9147 9.68041 13.9147ZM18.3146 13.9147C17.0099 13.9147 15.9388 12.6961 15.9388 11.2064C15.9388 9.71671 16.9839 8.49808 18.3146 8.49808C19.658 8.49808 20.7177 9.72834 20.6904 11.2064C20.6904 12.6961 19.658 13.9147 18.3146 13.9147Z"/>
         </svg>
       </div>
@@ -193,9 +193,9 @@
         <!-- Menu Suspenso do Servidor (Idêntico à Foto 1) -->
         <div class="server-dropdown-menu" id="serverDropdownMenu" style="display: none;">
           <div class="dropdown-item boost-item" id="menuItemBoost">
-            <span class="dropdown-item-icon">🚀</span>
-            <span class="dropdown-item-text">Impulso de servidor</span>
-            <span class="dropdown-badge-nitro">NÍVEL 3</span>
+            <span class="dropdown-item-icon">✦</span>
+            <span class="dropdown-item-text">Personalizações gratuitas</span>
+            <span class="dropdown-badge-nitro">INCLUSO</span>
           </div>
           <div class="dropdown-divider"></div>
           <div class="dropdown-item" id="menuItemInvite">
@@ -249,7 +249,7 @@
           </div>
           <div class="dm-menu-item" id="dmMenuNitro">
             <span class="dm-menu-icon">⚡</span>
-            <span>Nitro</span>
+            <span>Personalização</span>
           </div>
           <div class="dm-menu-item" id="dmMenuShop">
             <span class="dm-menu-icon">🛍️</span>
@@ -927,7 +927,7 @@
         </div>
         <div class="user-popover-badges" id="userPopoverBadges">
           <span class="popover-badge" title="Proprietário">👑</span>
-          <span class="popover-badge" title="Nitro">⚡</span>
+          <span class="popover-badge" title="Personalização BADISCORD">⚡</span>
         </div>
       </div>
 
@@ -1192,15 +1192,15 @@
       </div>
     </div>
 
-    <!-- Banner Nitro / Loja -->
+    <!-- Atalhos para personalizações gratuitas -->
     <div class="presence-nitro-promo">
       <div class="promo-header">
-        <span>Faça seu perfil bombar</span>
+        <span>Deixe seu perfil com a sua cara</span>
         <button class="btn-close-promo" id="btnClosePresencePromo">✕</button>
       </div>
       <div class="promo-btns-row">
         <button class="btn-promo-nitro" id="btnPromoNitro">
-          <span>🚀</span> Obter o Nitro
+          <span>✦</span> Personalizar perfil
         </button>
         <button class="btn-promo-shop" id="btnPromoShop">
           <span>🛍️</span> Loja
@@ -1385,12 +1385,11 @@
         <div class="settings-nav-item" data-tab="notifications">Notificações</div>
         <div class="settings-nav-item" data-tab="decorations">Decorações de perfil</div>
 
-        <div class="settings-nav-header">COBRANÇA</div>
-        <div class="settings-nav-item" data-tab="nitro">Nitro</div>
-        <div class="settings-nav-item" data-tab="boost">Impulso de servidor</div>
-        <div class="settings-nav-item" data-tab="subscriptions">Loja</div>
-        <div class="settings-nav-item" data-tab="gift-inventory">Inventário de presentes</div>
-        <div class="settings-nav-item" data-tab="billing">Cobrança</div>
+        <div class="settings-nav-header">RECURSOS DA COMUNIDADE</div>
+        <div class="settings-nav-item" data-tab="nitro">Temas e perfil</div>
+        <div class="settings-nav-item" data-tab="boost">Identidade do servidor</div>
+        <div class="settings-nav-item" data-tab="subscriptions">Loja comunitária</div>
+        <div class="settings-nav-item" data-tab="gift-inventory">Itens disponíveis</div>
 
         <div class="settings-nav-header">EXPERIÊNCIA</div>
         <div class="settings-nav-item active" data-tab="voice">
@@ -1773,9 +1772,13 @@
           <h2 class="settings-section-title">Aparência</h2>
           <label class="setting-field-label">TEMA DO APLICATIVO</label>
           <div class="theme-cards-grid">
-            <div class="theme-card active" data-theme="dark">
+            <div class="theme-card" data-theme="dark">
               <div class="theme-preview dark-preview"></div>
-              <span>Escuro (Padrão)</span>
+              <span>Carvão</span>
+            </div>
+            <div class="theme-card active" data-theme="aurora">
+              <div class="theme-preview aurora-preview"></div>
+              <span>Aurora (Padrão)</span>
             </div>
             <div class="theme-card" data-theme="midnight">
               <div class="theme-preview midnight-preview"></div>
@@ -1788,13 +1791,13 @@
           </div>
         </div>
 
-        <!-- ABA: NITRO -->
+        <!-- Personalizações próprias do BADISCORD -->
         <div class="settings-tab-pane" id="pane-nitro" style="display: none;">
           <div class="nitro-banner-card">
-            <div class="nitro-badge-pill">BADISCORD NITRO</div>
-            <h2>Personalize seu perfil gratuitamente</h2>
-            <p>Decorações, widgets animados, temas e faixas de perfil gratuitos para todos.</p>
-            <button type="button" class="discord-btn-primary" id="btnOpenFreeDecorations">Abrir decorações gratuitas</button>
+            <div class="nitro-badge-pill">INCLUSO PARA TODA A COMUNIDADE</div>
+            <h2>Seu espaço, do seu jeito</h2>
+            <p>Temas, molduras e detalhes de perfil estão disponíveis sem assinatura ou pagamento.</p>
+            <button type="button" class="discord-btn-primary" id="btnOpenFreeDecorations">Explorar personalizações</button>
           </div>
         </div>
 
@@ -2081,8 +2084,8 @@
           <!-- Badge Desbloqueado com Sucesso -->
           <div class="srv-boost-unlocked-badge">
             <span class="srv-boost-icon">✨</span>
-            <span class="srv-boost-unlocked-text"><strong>Desbloqueado com impulso</strong> — Nível 3 Ativo</span>
-            <span class="srv-unlocked-check">✓ Ativo</span>
+            <span class="srv-boost-unlocked-text"><strong>Personalização do servidor</strong> — disponível para a comunidade</span>
+            <span class="srv-unlocked-check">✓ Incluída</span>
           </div>
 
           <!-- Campo: Escolha um nome da Tag -->

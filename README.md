@@ -1,6 +1,6 @@
-# VoiceLive PC (Desktop App para Windows)
+# BADISCORD
 
-Aplicativo para Windows desenvolvido com a mesma arquitetura do **Discord Desktop** (Electron + WebRTC + Node.js), incluindo:
+Aplicativo independente para comunidades, com clientes Web/Electron e backend Node.js. Recursos atuais:
 - **Canais de Voz** com cancelamento de eco, supressão de ruído e áudio Opus em 48 kHz.
 - **Detecção de Fala em Tempo Real** (borda verde iluminada no avatar quando você fala).
 - **Transmissão de tela em 720p, 1080p e 2K (1440p)** com seleção de FPS.
@@ -12,7 +12,7 @@ Aplicativo para Windows desenvolvido com a mesma arquitetura do **Discord Deskto
 - **Lista de membros online e offline**, com cargos personalizados e seções definidas pelo dono ou administradores.
 - **Chamadas privadas de voz** entre amigos, ações de moderação persistidas no servidor e convite para jogar ou ouvir música.
 - **Atividade atual de jogo ou Spotify** no perfil e na lista de membros; ícones de jogos vêm do aplicativo detectado no desktop.
-- Interface escura clássica no padrão Discord.
+- Temas visuais próprios, incluindo a paleta Aurora; personalizações de perfil disponíveis sem assinatura.
 
 ---
 
@@ -54,6 +54,19 @@ npm ci
 npm run build:release
 ```
 O instalador, o ZIP portátil e os metadados de atualização serão gerados na pasta `dist/`. As versões publicadas são compiladas automaticamente pelo GitHub Actions ao enviar uma tag `vX.Y.Z` que corresponda à versão no `package.json`; os pacotes e metadados são anexados a uma GitHub Release para permitir as atualizações automáticas.
+
+## Aplicativo Android
+
+O projeto Android fica em `android/` e usa um WebView restrito ao domínio oficial do BADISCORD. Para transmitir, o aplicativo solicita a permissão de captura de tela do Android e publica o vídeo por um participante LiveKit separado, sem substituir a conexão de voz do WebView. A transmissão permanece ativa em segundo plano por meio de um serviço foreground e pode ser encerrada pelo botão na notificação.
+
+Em um computador com JDK 17 ou superior, Android SDK (API 35) e Gradle 8.9, gere o APK de depuração com:
+
+```powershell
+cd C:\Users\Luis_\badiscord\android
+gradle --no-daemon :app:assembleDebug
+```
+
+O APK ficará em `android\app\build\outputs\apk\debug\app-debug.apk`. O workflow `Android APK` também compila esse APK e o disponibiliza como artefato de execução. A primeira instalação precisa ser validada em um dispositivo Android real: aceite a permissão de captura na tela do sistema e confirme que a transmissão aparece para outro participante do canal.
 
 ## Publicar o backend no Render
 

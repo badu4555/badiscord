@@ -12,6 +12,8 @@ let currentChannel = null;
 let localAudioTrack = null;
 let localScreenTrack = null;
 let localScreenAudioTrack = null;
+let isNativeMobileStreamer = false;
+let isNativeMobileSharePending = false;
 let isLocalStreamer = false;
 let isMuted = false;
 let isDeafened = false;
@@ -550,6 +552,7 @@ async function finalizeAuthSession(account) {
 }
 
 function logoutAccount() {
+  stopNativeMobileShare();
   fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
   authenticatedAccount = null;
   messageCacheAccountId = '';
@@ -592,6 +595,7 @@ async function ensureAuthState() {
     await finalizeAuthSession(payload.user);
     return true;
   } catch (error) {
+    stopNativeMobileShare();
     authenticatedAccount = null;
     clearInterval(friendsPollingTimer);
     friendsPollingTimer = null;
@@ -614,6 +618,22 @@ let livekitScreenAudioTrack = null;
 let localStreamResolution = null;
 let localStreamFps = null;
 const SOUNDBOARD_TRACK_NAME = 'badiscord-soundboard';
+const MOBILE_SCREEN_SHARE_SUFFIX = '-mobile-screen';
+
+function getMobileScreenShareIdentity(identity) {
+  return `${identity}${MOBILE_SCREEN_SHARE_SUFFIX}`;
+}
+
+function isMobileScreenShareIdentity(identity) {
+  return typeof identity === 'string' && identity.endsWith(MOBILE_SCREEN_SHARE_SUFFIX);
+}
+
+function getVoiceViewerCount(room = livekitRoom) {
+  if (!room) return 0;
+  return Array.from(room.remoteParticipants.values())
+    .filter((participant) => !isMobileScreenShareIdentity(participant.identity))
+    .length;
+}
 let soundboardLiveKitTrack = null;
 let soundboardPublishInFlight = null;
 let privateCallRoom = null;
@@ -681,11 +701,11 @@ async function fetchLiveKitConfig() {
   return getStoredLiveKitUrl();
 }
 
-async function requestLiveKitToken(roomName, participantName) {
+async function requestLiveKitToken(roomName, participantName, screenShareSession = false) {
   const response = await fetch(API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ roomName, participantName })
+    body: JSON.stringify({ roomName, participantName, ...(screenShareSession ? { screenShareSession: true } : {}) })
   });
 
   const payload = await response.json().catch(() => ({}));
@@ -695,7 +715,8 @@ async function requestLiveKitToken(roomName, participantName) {
 
   return {
     token: payload.token,
-    canPublish: payload.canPublish !== false
+    canPublish: payload.canPublish !== false,
+    participantIdentity: payload.participantIdentity || ''
   };
 }
 
@@ -815,6 +836,12 @@ async function connectToLiveKitRoom(channelName) {
         if (publication.source === window.LivekitClient.Track.Source.ScreenShare) {
           remoteScreenTracks.delete(participant.identity);
           if (watchingLiveParticipantId === participant.identity) stopWatchingLive();
+          if (
+            isNativeMobileStreamer &&
+            participant.identity === getMobileScreenShareIdentity(livekitRoom?.localParticipant?.identity)
+          ) {
+            window.onAndroidScreenShareStateChanged?.(false);
+          }
         } else if (publication.source === window.LivekitClient.Track.Source.Camera) {
           remoteCameraTracks.delete(participant.identity);
         }
@@ -870,6 +897,12 @@ async function connectToLiveKitRoom(channelName) {
         if (publication.source === window.LivekitClient.Track.Source.ScreenShare) {
           remoteScreenTracks.delete(participant.identity);
           if (watchingLiveParticipantId === participant.identity) stopWatchingLive();
+          if (
+            isNativeMobileStreamer &&
+            participant.identity === getMobileScreenShareIdentity(livekitRoom?.localParticipant?.identity)
+          ) {
+            window.onAndroidScreenShareStateChanged?.(false);
+          }
         } else if (publication.source === window.LivekitClient.Track.Source.Camera) {
           remoteCameraTracks.delete(participant.identity);
         }
@@ -2033,20 +2066,26 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
     status: 'online',
     isOwner: true,
     isSpeaking: isLocalSpeaking,
-    isStreaming: isLocalStreamer,
+    isStreaming: isLocalStreamer || remoteScreenTracks.has(getMobileScreenShareIdentity(livekitRoom?.localParticipant?.identity || authenticatedAccount?.id || '')),
+    screenShareParticipantId: isNativeMobileStreamer || remoteScreenTracks.has(getMobileScreenShareIdentity(livekitRoom?.localParticipant?.identity || authenticatedAccount?.id || ''))
+      ? getMobileScreenShareIdentity(livekitRoom?.localParticipant?.identity || authenticatedAccount?.id || '')
+      : '',
     pingMs: currentVoiceRttMs,
-    viewerCount: isLocalStreamer && isCurrentVoiceRoom ? livekitRoom.remoteParticipants.size : 0
+    viewerCount: isLocalStreamer && isCurrentVoiceRoom ? getVoiceViewerCount() : 0
   };
 
-  const participants = [livekitRoom.localParticipant, ...livekitRoom.remoteParticipants.values()];
+  const participants = [livekitRoom.localParticipant, ...livekitRoom.remoteParticipants.values()]
+    .filter((participant) => participant === livekitRoom.localParticipant || !isMobileScreenShareIdentity(participant.identity));
   return participants.filter(Boolean).map((participant) => {
     if (participant === livekitRoom.localParticipant) return localMember;
 
     const profile = profilesById.get(participant.identity) || {};
     const name = participant.name || profile.name || participant.identity || 'Usuário';
+    const mobileScreenShareIdentity = getMobileScreenShareIdentity(participant.identity);
+    const hasMobileScreenShare = remoteScreenTracks.has(mobileScreenShareIdentity);
     const isStreaming = Array.from(participant.videoTrackPublications.values()).some((publication) => (
       publication.source === window.LivekitClient.Track.Source.ScreenShare
-    )) || remoteScreenTracks.has(participant.identity);
+    )) || remoteScreenTracks.has(participant.identity) || hasMobileScreenShare;
     const pingReport = voiceRttByIdentity.get(participant.identity);
     return applyUserNickname({
       id: participant.identity,
@@ -2068,8 +2107,9 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
       isSpeaking: Boolean(participant.isSpeaking),
       isMuted: participant.isMicrophoneEnabled === false,
       isStreaming,
+      screenShareParticipantId: hasMobileScreenShare ? mobileScreenShareIdentity : participant.identity,
       pingMs: pingReport && Date.now() - pingReport.receivedAt < 15000 ? pingReport.rttMs : null,
-      viewerCount: isStreaming ? livekitRoom.remoteParticipants.size : 0
+      viewerCount: isStreaming ? getVoiceViewerCount() : 0
     });
   });
 }
@@ -2091,7 +2131,7 @@ function renderLiveIndicator(member) {
     watchButton.setAttribute('aria-label', `Assistir à transmissão de ${member.name}`);
     watchButton.addEventListener('click', (event) => {
       event.stopPropagation();
-      watchLiveStream(member.id);
+      watchLiveStream(member.screenShareParticipantId || member.id);
     });
     indicator.appendChild(watchButton);
   }
@@ -2122,7 +2162,7 @@ function watchLiveStream(participantId) {
     const loopbackBadge = document.getElementById('streamLoopbackBadge');
     if (loopbackBadge) loopbackBadge.style.display = 'none';
     const viewerCount = document.getElementById('liveViewerCount');
-    if (viewerCount) viewerCount.textContent = `👁 ${livekitRoom.remoteParticipants.size}`;
+    if (viewerCount) viewerCount.textContent = `👁 ${getVoiceViewerCount()}`;
     if (btnStopStreamDirect) btnStopStreamDirect.style.display = 'none';
     if (participantsGrid) participantsGrid.style.display = 'none';
     watchingLiveParticipantId = participantId;
@@ -2163,7 +2203,7 @@ function stopWatchingLive() {
 function refreshVoiceParticipantViews() {
   if (livekitRoom?.state === 'connected' && (isLocalStreamer || watchingLiveParticipantId)) {
     const viewerCount = document.getElementById('liveViewerCount');
-    if (viewerCount) viewerCount.textContent = `👁 ${livekitRoom.remoteParticipants.size}`;
+    if (viewerCount) viewerCount.textContent = `👁 ${getVoiceViewerCount()}`;
   }
   if (!currentChannel) return;
   updateSidebarChannelUsers(currentChannel);
@@ -3452,8 +3492,7 @@ const menuItemLeave = document.getElementById('menuItemLeave');
 if (menuItemBoost) {
   menuItemBoost.addEventListener('click', () => {
     closeServerDropdown();
-    playSoundEffect('correct');
-    showToast('🚀 Servidor Impulsionado! Nível 3 Ativo (1080p 60FPS liberado)', '🚀');
+    openSettingsTab('decorations');
   });
 }
 
@@ -3666,11 +3705,11 @@ async function checkRunningGame() {
     const iconBox = document.getElementById('gameActivityIconBox');
     const btnQuick = document.getElementById('btnGameQuickStream');
 
-    if (localScreenTrack) {
+    if (localScreenTrack || isNativeMobileStreamer) {
       if (panel) panel.classList.add('is-live');
-      const configuredResolution = localStreamResolution || localStorage.getItem('badiscord_stream_res') || '1080';
+      const configuredResolution = isNativeMobileStreamer ? '1080' : (localStreamResolution || localStorage.getItem('badiscord_stream_res') || '1080');
       const resolutionLabel = configuredResolution === '1440' ? '2K (1440p)' : `${configuredResolution}p`;
-      const configuredFps = localStreamFps || localStorage.getItem('badiscord_stream_fps') || '60';
+      const configuredFps = isNativeMobileStreamer ? '30' : (localStreamFps || localStorage.getItem('badiscord_stream_fps') || '60');
       if (statusEl) statusEl.textContent = `AO VIVO em ${resolutionLabel} ${configuredFps}FPS`;
       if (btnQuick) {
         btnQuick.innerHTML = '⏹️';
@@ -3716,7 +3755,7 @@ setTimeout(checkRunningGame, 600);
 
 if (btnGameQuickStream) {
   btnGameQuickStream.addEventListener('click', async () => {
-    if (localScreenTrack) {
+    if (localScreenTrack || isNativeMobileStreamer) {
       stopCurrentStream();
       return;
     }
@@ -6215,6 +6254,7 @@ async function disconnectVoice(playSound = true) {
     playDisconnectSound();
   }
 
+  if (isNativeMobileStreamer || isNativeMobileSharePending) await stopCurrentStream();
   await disconnectLiveKitRoom();
 
   if (localAudioTrack) {
@@ -6791,7 +6831,15 @@ function updateStreamVolume(val, showHud = false) {
 }
 
 // Parar Transmissão Atual com Limpeza Completa
+function stopNativeMobileShare() {
+  if (!isNativeMobileStreamer && !isNativeMobileSharePending) return;
+  isNativeMobileStreamer = false;
+  isNativeMobileSharePending = false;
+  window.AndroidScreenShare?.stopScreenShare();
+}
+
 async function stopCurrentStream() {
+  stopNativeMobileShare();
   if (localScreenTrack) localScreenTrack.onended = null;
   const screenShareSource = window.LivekitClient?.Track?.Source?.ScreenShare;
   const screenShareAudioSource = window.LivekitClient?.Track?.Source?.ScreenShareAudio;
@@ -6887,6 +6935,37 @@ async function stopCurrentStream() {
   checkRunningGame();
 }
 
+window.onAndroidScreenShareStateChanged = (active, message = '') => {
+  if (!active) {
+    const wasActive = isNativeMobileStreamer;
+    isNativeMobileStreamer = false;
+    isNativeMobileSharePending = false;
+    if (wasActive) void stopCurrentStream();
+    if (message) showToast(message, '⚠️');
+    return;
+  }
+
+  isNativeMobileStreamer = true;
+  isNativeMobileSharePending = false;
+  isLocalStreamer = true;
+  localStreamResolution = '1080';
+  localStreamFps = '30';
+  if (btnShareScreen) {
+    btnShareScreen.classList.add('live-active');
+    btnShareScreen.innerHTML = '<span>⏹️</span> Parar Transmissão';
+  }
+  if (btnStopStreamDirect) btnStopStreamDirect.style.display = 'inline-flex';
+  if (btnGameQuickStream) {
+    btnGameQuickStream.innerHTML = '⏹️';
+    btnGameQuickStream.title = 'Parar Transmissão';
+  }
+  const panel = document.getElementById('gameActivityPanel');
+  if (panel) panel.classList.add('is-live');
+  if (gameActivityStatus) gameActivityStatus.textContent = 'AO VIVO • Tela do celular';
+  if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'none';
+  refreshVoiceParticipantViews();
+};
+
 // Slider de Volume da Live
 if (streamVolumeSlider) {
   streamVolumeSlider.addEventListener('input', (e) => {
@@ -6941,6 +7020,51 @@ if (btnStopStreamDirect) {
 
 async function startBrowserDisplayStream() {
   const mobilePublisher = isMobileStreamDevice();
+  if (mobilePublisher && window.AndroidScreenShare) {
+    if (isNativeMobileSharePending || isNativeMobileStreamer) return;
+    if (!hasAuthenticatedSession()) {
+      showToast('Faça login antes de iniciar uma transmissão.', '⚠️');
+      return;
+    }
+    if (!currentChannel) {
+      showToast('Entre em um canal de voz antes de iniciar uma transmissão.', '⚠️');
+      return;
+    }
+
+    isNativeMobileSharePending = true;
+    try {
+      showToast('A live compartilhará a tela inteira do celular após sua confirmação no Android.', '🔒');
+      const roomName = getLiveKitRoomName(currentChannel);
+      const [livekitUrl, credentials] = await Promise.all([
+        fetchLiveKitConfig(),
+        requestLiveKitToken(roomName, userProfile.displayName || 'Usuário', true)
+      ]);
+      if (!isNativeMobileSharePending) return;
+      if (
+        !hasAuthenticatedSession() ||
+        !currentChannel ||
+        getLiveKitRoomName(currentChannel) !== roomName
+      ) {
+        isNativeMobileSharePending = false;
+        return;
+      }
+      if (!credentials.participantIdentity) {
+        throw new Error('O servidor não retornou a identidade de transmissão mobile.');
+      }
+      const started = window.AndroidScreenShare.startScreenShare(
+        livekitUrl,
+        credentials.token,
+        credentials.participantIdentity,
+        'Tela do celular'
+      );
+      if (!started) throw new Error('O Android não conseguiu iniciar a captura da tela.');
+    } catch (error) {
+      isNativeMobileSharePending = false;
+      console.error('Não foi possível iniciar a transmissão nativa do Android:', error);
+      showToast(error.message || 'Não foi possível iniciar a transmissão no Android.', '⚠️');
+    }
+    return;
+  }
   if (!navigator.mediaDevices?.getDisplayMedia) {
     showToast(
       mobilePublisher
@@ -6962,7 +7086,7 @@ async function startBrowserDisplayStream() {
 
 btnShareScreen.addEventListener('click', async () => {
   // Se já estiver transmitindo, clicar no botão encerra a transmissão
-  if (localScreenTrack) {
+  if (localScreenTrack || isNativeMobileStreamer) {
     stopCurrentStream();
     return;
   }
@@ -7104,7 +7228,7 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     isLocalStreamer = true;
     refreshVoiceParticipantViews();
     const liveViewerCount = document.getElementById('liveViewerCount');
-    if (liveViewerCount) liveViewerCount.textContent = `👁 ${room.remoteParticipants.size}`;
+    if (liveViewerCount) liveViewerCount.textContent = `👁 ${getVoiceViewerCount(room)}`;
 
     // PREVENÇÃO DE ECO / LOOPBACK:
     // O elemento de vídeo local recebe APENAS a faixa de vídeo.
@@ -7677,7 +7801,7 @@ function switchSettingsTab(tabName) {
     soundboard: 'Painel de Efeitos Sonoros',
     appearance: 'Aparência',
     notifications: 'Notificações',
-    nitro: 'BADISCORD Nitro',
+    nitro: 'Personalização BADISCORD',
     subscriptions: 'Loja gratuita',
     advanced: 'Avançado'
   };
@@ -8315,7 +8439,11 @@ function applyTheme(theme) {
       '--bg-modifier-hover': 'rgba(255, 255, 255, 0.07)',
       '--header-primary': '#f2f3f5',
       '--text-normal': '#dbdee1',
-      '--text-muted': '#949ba4'
+      '--text-muted': '#949ba4',
+      '--brand-primary': '#56d7b5',
+      '--brand-hover': '#36b995',
+      '--brand-soft': 'rgba(86, 215, 181, 0.16)',
+      '--status-green': '#71dba5'
     },
     midnight: {
       '--bg-primary': '#000000',
@@ -8324,7 +8452,24 @@ function applyTheme(theme) {
       '--bg-modifier-hover': 'rgba(255, 255, 255, 0.07)',
       '--header-primary': '#f2f3f5',
       '--text-normal': '#dbdee1',
-      '--text-muted': '#949ba4'
+      '--text-muted': '#949ba4',
+      '--brand-primary': '#56d7b5',
+      '--brand-hover': '#36b995',
+      '--brand-soft': 'rgba(86, 215, 181, 0.16)',
+      '--status-green': '#71dba5'
+    },
+    aurora: {
+      '--bg-primary': '#1c3030',
+      '--bg-secondary': '#162728',
+      '--bg-tertiary': '#101a1b',
+      '--bg-modifier-hover': 'rgba(170, 247, 224, 0.08)',
+      '--header-primary': '#f0faf6',
+      '--text-normal': '#d3e7df',
+      '--text-muted': '#91aaa1',
+      '--brand-primary': '#56d7b5',
+      '--brand-hover': '#36b995',
+      '--brand-soft': 'rgba(86, 215, 181, 0.16)',
+      '--status-green': '#71dba5'
     },
     light: {
       '--bg-primary': '#ffffff',
@@ -8333,11 +8478,15 @@ function applyTheme(theme) {
       '--bg-modifier-hover': 'rgba(0, 0, 0, 0.06)',
       '--header-primary': '#060607',
       '--text-normal': '#2e3338',
-      '--text-muted': '#5c6370'
+      '--text-muted': '#5c6370',
+      '--brand-primary': '#16876f',
+      '--brand-hover': '#0f6d59',
+      '--brand-soft': 'rgba(22, 135, 111, 0.13)',
+      '--status-green': '#16834d'
     }
   };
 
-  const vars = themes[theme] || themes.dark;
+  const vars = themes[theme] || themes.aurora;
   Object.entries(vars).forEach(([key, val]) => {
     document.documentElement.style.setProperty(key, val);
   });
@@ -8350,7 +8499,7 @@ function applyTheme(theme) {
 }
 
 // Carregar tema salvo
-const savedTheme = localStorage.getItem('badiscord_theme') || 'dark';
+const savedTheme = localStorage.getItem('badiscord_theme') || 'aurora';
 applyTheme(savedTheme);
 
 document.querySelectorAll('.theme-card').forEach(card => {
@@ -8548,7 +8697,7 @@ initializeFreeProfileCustomization();
     showToast(userProfile.customStatus ? 'Status personalizado atualizado.' : 'Status personalizado removido.', '✏️');
   });
 
-  // Nitro promo
+  // Free profile customization
   document.getElementById('btnPromoNitro')?.addEventListener('click', () => {
     userPresenceMenu.style.display = 'none';
     if (typeof openSettings === 'function') openSettings();

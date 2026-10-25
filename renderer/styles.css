@@ -1,14 +1,15 @@
 :root {
-  --bg-tertiary: #1e1f22;
-  --bg-secondary: #2b2d31;
-  --bg-primary: #313338;
-  --bg-modifier-hover: rgba(255, 255, 255, 0.07);
-  --text-normal: #dbdee1;
-  --text-muted: #949ba4;
-  --header-primary: #f2f3f5;
-  --brand-primary: #5865F2;
-  --brand-hover: #4752c4;
-  --status-green: #23a55a;
+  --bg-tertiary: #101a1b;
+  --bg-secondary: #162728;
+  --bg-primary: #1c3030;
+  --bg-modifier-hover: rgba(170, 247, 224, 0.08);
+  --text-normal: #d3e7df;
+  --text-muted: #91aaa1;
+  --header-primary: #f0faf6;
+  --brand-primary: #56d7b5;
+  --brand-hover: #36b995;
+  --brand-soft: rgba(86, 215, 181, 0.16);
+  --status-green: #71dba5;
   --status-red: #da373c;
   --status-red-hover: #a12828;
   color-scheme: dark;
@@ -70,9 +71,9 @@ body {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 20% 20%, rgba(88, 101, 242, 0.32), transparent 30%),
-    radial-gradient(circle at 80% 20%, rgba(114, 137, 218, 0.22), transparent 30%),
-    linear-gradient(135deg, rgba(17, 18, 20, 0.88), rgba(26, 28, 32, 0.92));
+    radial-gradient(circle at 20% 20%, rgba(86, 215, 181, 0.24), transparent 30%),
+    radial-gradient(circle at 80% 20%, rgba(54, 185, 149, 0.18), transparent 30%),
+    linear-gradient(135deg, rgba(12, 24, 23, 0.92), rgba(20, 34, 33, 0.94));
 }
 
 .auth-modal-card {
@@ -98,14 +99,14 @@ body {
   width: 52px;
   height: 52px;
   border-radius: 18px;
-  background: linear-gradient(135deg, #5865f2, #7b8cff);
+  background: linear-gradient(135deg, #56d7b5, #248b73);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 26px;
   font-weight: 900;
   color: white;
-  box-shadow: 0 12px 28px rgba(88, 101, 242, 0.4);
+  box-shadow: 0 12px 28px rgba(86, 215, 181, 0.28);
 }
 
 .auth-brand-text {
@@ -185,20 +186,20 @@ body {
 }
 
 .auth-input:focus {
-  border-color: rgba(88, 101, 242, 0.8);
-  box-shadow: 0 0 0 2px rgba(88, 101, 242, 0.2);
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 2px var(--brand-soft);
 }
 
 .auth-link-forgot,
 .auth-link-primary {
-  color: #8fa0ff;
+  color: var(--brand-primary);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .auth-link-primary {
-  color: #a3b0ff;
+  color: var(--brand-primary);
 }
 
 .auth-submit-btn {
@@ -206,7 +207,7 @@ body {
   width: 100%;
   border: none;
   border-radius: 12px;
-  background: linear-gradient(135deg, #5865f2, #4752c4);
+  background: linear-gradient(135deg, var(--brand-primary), var(--brand-hover));
   padding: 13px 16px;
   color: #fff;
   font-size: 15px;
@@ -2958,7 +2959,7 @@ button.profile-tag-chip:hover {
 
 .theme-card.active {
   border-color: var(--brand-primary);
-  background-color: rgba(88, 101, 242, 0.15);
+  background-color: var(--brand-soft);
 }
 
 .theme-preview {
@@ -2969,7 +2970,11 @@ button.profile-tag-chip:hover {
 }
 
 .dark-preview {
-  background-color: #313338;
+  background-color: #2b2d31;
+}
+
+.aurora-preview {
+  background: linear-gradient(135deg, #101a1b 0 38%, #1c3030 38% 70%, #56d7b5 70%);
 }
 
 .midnight-preview {
@@ -2982,11 +2987,11 @@ button.profile-tag-chip:hover {
 
 /* Nitro Banner */
 .nitro-banner-card {
-  background: linear-gradient(135deg, #4f46e5, #9333ea, #ec4899);
+  background: linear-gradient(125deg, #143d39, #176b5a 58%, #57b78c);
   border-radius: 12px;
   padding: 36px 32px;
   color: #fff;
-  box-shadow: 0 8px 24px rgba(147, 51, 234, 0.3);
+  box-shadow: 0 14px 34px rgba(11, 82, 65, 0.28);
 }
 
 .nitro-badge-pill {
@@ -9086,4 +9091,101 @@ button.profile-tag-chip:hover {
 
 .voice-channel-settings-menu button.danger:hover {
   background: #da373c;
+}
+
+:root {
+  --brand-primary: #56d7b5;
+  --brand-hover: #36b995;
+  --brand-soft: rgba(86, 215, 181, 0.16);
+  --status-green: #71dba5;
+}
+
+.auth-bg-art {
+  background:
+    radial-gradient(ellipse at 18% 18%, rgba(71, 190, 156, 0.26), transparent 38%),
+    radial-gradient(ellipse at 82% 84%, rgba(225, 157, 85, 0.14), transparent 34%),
+    linear-gradient(145deg, #101a1b, #1c3030);
+}
+
+.auth-brand-mark {
+  background: linear-gradient(145deg, #56d7b5, #187b69);
+  border-radius: 16px 16px 16px 5px;
+  box-shadow: 0 12px 28px rgba(44, 174, 142, 0.28);
+}
+
+.home-mark svg {
+  display: none;
+}
+
+.home-mark::after {
+  content: "B";
+  font-size: 24px;
+  font-weight: 850;
+  letter-spacing: -0.08em;
+}
+
+.guild-sidebar {
+  border-right: 1px solid rgba(176, 226, 207, 0.08);
+}
+
+.guild-icon {
+  border-radius: 15px;
+}
+
+.guild-icon-wrap.active .guild-icon,
+.guild-icon:hover {
+  border-radius: 15px 15px 5px 15px;
+}
+
+.channel-item {
+  border-radius: 9px;
+}
+
+.channel-item.active {
+  background: var(--brand-soft);
+}
+
+.auth-submit-btn,
+.discord-btn-primary,
+.btn-primary {
+  background-color: var(--brand-primary);
+}
+
+.auth-submit-btn:hover,
+.discord-btn-primary:hover,
+.btn-primary:hover {
+  background-color: var(--brand-hover);
+}
+
+@media (max-width: 700px), (max-height: 500px) and (orientation: landscape) and (max-width: 950px) {
+  .auth-overlay {
+    backdrop-filter: none;
+  }
+
+  .app-layout {
+    padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  .guild-icon,
+  .guild-icon-wrap {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
