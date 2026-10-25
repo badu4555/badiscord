@@ -28,7 +28,8 @@ const DEFAULT_PROFILE = {
   avatarUrl: '',
   bannerColor: '#5865F2',
   aboutMe: 'Usando o BADISCORD!',
-  presenceStatus: 'online'
+  presenceStatus: 'online',
+  profileTags: []
 };
 
 let userProfile = DEFAULT_PROFILE;
@@ -39,6 +40,13 @@ try {
 if (!userProfile.tag) {
   userProfile.tag = '0001';
 }
+userProfile.profileTags = Array.isArray(userProfile.profileTags)
+  ? userProfile.profileTags
+    .filter((tag) => tag && ['server', 'friend', 'community'].includes(tag.type) && typeof tag.label === 'string')
+    .slice(0, 5)
+    .map((tag) => ({ type: tag.type, label: tag.label.trim().slice(0, 24) }))
+    .filter((tag) => tag.label)
+  : [];
 
 let authenticatedAccount = null;
 let messageCacheAccountId = '';
@@ -52,8 +60,12 @@ let spotifyPollingTimer = null;
 const USER_VOLUMES_STORAGE_KEY = 'badiscord_user_volumes';
 const USER_MUTES_STORAGE_KEY = 'badiscord_muted_users';
 const USER_NICKNAMES_STORAGE_KEY = 'badiscord_user_nicknames';
+const SOUNDBOARD_USER_VOLUMES_STORAGE_KEY = 'badiscord_soundboard_user_volumes';
+const SOUNDBOARD_USER_MUTES_STORAGE_KEY = 'badiscord_soundboard_muted_users';
 let userVolumes = {};
 let mutedUserIdentities = new Set();
+let soundboardUserVolumes = {};
+let mutedSoundboardUserIdentities = new Set();
 let locallyDisabledVideoIdentities = new Set();
 let userNicknames = {};
 try {
@@ -69,6 +81,22 @@ try {
   if (Array.isArray(savedMutes)) mutedUserIdentities = new Set(savedMutes.filter((id) => typeof id === 'string'));
 } catch (error) {
   console.warn('Não foi possível carregar os usuários silenciados:', error);
+}
+try {
+  const savedVolumes = JSON.parse(localStorage.getItem(SOUNDBOARD_USER_VOLUMES_STORAGE_KEY) || '{}');
+  if (savedVolumes && typeof savedVolumes === 'object' && !Array.isArray(savedVolumes)) {
+    soundboardUserVolumes = savedVolumes;
+  }
+} catch (error) {
+  console.warn('Não foi possível carregar os volumes individuais do soundboard:', error);
+}
+try {
+  const savedMutes = JSON.parse(localStorage.getItem(SOUNDBOARD_USER_MUTES_STORAGE_KEY) || '[]');
+  if (Array.isArray(savedMutes)) {
+    mutedSoundboardUserIdentities = new Set(savedMutes.filter((id) => typeof id === 'string'));
+  }
+} catch (error) {
+  console.warn('Não foi possível carregar os silêncios individuais do soundboard:', error);
 }
 try {
   const savedNicknames = JSON.parse(localStorage.getItem(USER_NICKNAMES_STORAGE_KEY) || '{}');
@@ -103,10 +131,15 @@ function setUserMuted(identity, muted) {
     console.warn('Não foi possível salvar os usuários silenciados:', error);
   }
   remoteAudioElements.forEach((element) => {
-    if (element.dataset.participantIdentity === identity && !remoteScreenAudioElements.has(element)) {
+    if (
+      element.dataset.participantIdentity === identity &&
+      !remoteScreenAudioElements.has(element) &&
+      !remoteSoundboardAudioElements.has(element)
+    ) {
       element.volume = muted ? 0 : getUserVolume(identity) / 100;
     }
   });
+  updateSoundboardUserAudio(identity);
 }
 
 function getUserVolume(identity) {
@@ -125,10 +158,55 @@ function setUserVolume(identity, value) {
   }
 
   remoteAudioElements.forEach((element) => {
-    if (element.dataset.participantIdentity === identity && !remoteScreenAudioElements.has(element)) {
+    if (
+      element.dataset.participantIdentity === identity &&
+      !remoteScreenAudioElements.has(element) &&
+      !remoteSoundboardAudioElements.has(element)
+    ) {
       element.volume = isUserMuted(identity) ? 0 : volume / 100;
     }
   });
+}
+
+function isSoundboardUserMuted(identity) {
+  return Boolean(identity && mutedSoundboardUserIdentities.has(identity));
+}
+
+function getSoundboardUserVolume(identity) {
+  const volume = Number(soundboardUserVolumes[identity]);
+  return Number.isFinite(volume) ? Math.max(0, Math.min(100, volume)) : 100;
+}
+
+function updateSoundboardUserAudio(identity) {
+  remoteSoundboardAudioElements.forEach((element) => {
+    if (element.dataset.participantIdentity !== identity) return;
+    element.volume = isUserMuted(identity) || isSoundboardUserMuted(identity)
+      ? 0
+      : getSoundboardUserVolume(identity) / 100;
+  });
+}
+
+function setSoundboardUserMuted(identity, muted) {
+  if (typeof identity !== 'string' || !identity || identity === 'self' || identity === authenticatedAccount?.id) return;
+  if (muted) mutedSoundboardUserIdentities.add(identity);
+  else mutedSoundboardUserIdentities.delete(identity);
+  try {
+    localStorage.setItem(SOUNDBOARD_USER_MUTES_STORAGE_KEY, JSON.stringify([...mutedSoundboardUserIdentities]));
+  } catch (error) {
+    console.warn('Não foi possível salvar os silêncios individuais do soundboard:', error);
+  }
+  updateSoundboardUserAudio(identity);
+}
+
+function setSoundboardUserVolume(identity, value) {
+  if (typeof identity !== 'string' || !identity || identity === 'self' || identity === authenticatedAccount?.id) return;
+  soundboardUserVolumes[identity] = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+  try {
+    localStorage.setItem(SOUNDBOARD_USER_VOLUMES_STORAGE_KEY, JSON.stringify(soundboardUserVolumes));
+  } catch (error) {
+    console.warn('Não foi possível salvar o volume individual do soundboard:', error);
+  }
+  updateSoundboardUserAudio(identity);
 }
 
 async function initializeRecaptcha() {
@@ -306,6 +384,7 @@ function syncPresenceRoster(account) {
     detail: userProfile.presenceStatus === 'idle' ? 'Ausente' : (userProfile.presenceStatus === 'dnd' ? 'Ocupado' : 'Disponível'),
     color: userProfile.bannerColor || '#5865F2',
     avatarUrl: userProfile.avatarUrl || '',
+    profileTags: userProfile.profileTags,
     game: detectedGame && detectedGame.name ? detectedGame.name : '',
     initial: (memberName || 'B')[0].toUpperCase(),
     updatedAt: Date.now()
@@ -336,7 +415,8 @@ function publishPresenceStatus() {
       activityArtwork: activity.artwork,
       activityUrl: activity.url,
       avatarUrl: userProfile.avatarUrl || '',
-      profileColor: userProfile.bannerColor || '#5865F2'
+      profileColor: userProfile.bannerColor || '#5865F2',
+      profileTags: userProfile.profileTags
     })
   }).then(async (response) => {
     const payload = await response.json().catch(() => ({}));
@@ -532,6 +612,9 @@ let livekitAudioTrack = null;
 let localVoiceCanPublish = true;
 let livekitScreenTrack = null;
 let livekitScreenAudioTrack = null;
+const SOUNDBOARD_TRACK_NAME = 'badiscord-soundboard';
+let soundboardLiveKitTrack = null;
+let soundboardPublishInFlight = null;
 let privateCallRoom = null;
 let privateCallAudioTrack = null;
 let privateCallId = '';
@@ -545,6 +628,7 @@ let remoteAudioPlaybackWarningShown = false;
 const remoteScreenTracks = new Map();
 const remoteCameraTracks = new Map();
 const remoteScreenAudioElements = new Set();
+const remoteSoundboardAudioElements = new Set();
 let watchingLiveParticipantId = '';
 let currentVoiceRttMs = null;
 let pingMeasurementInProgress = false;
@@ -620,6 +704,7 @@ function clearRemoteAudioElements(participantIdentity = '') {
     element.remove();
     remoteAudioElements.delete(element);
     remoteScreenAudioElements.delete(element);
+    remoteSoundboardAudioElements.delete(element);
   });
 }
 
@@ -681,6 +766,7 @@ async function connectToLiveKitRoom(channelName) {
         console.log('LiveKit connection state:', state);
         if (state === 'disconnected') {
           clearRemoteAudioElements();
+          soundboardLiveKitTrack = null;
           currentVoiceRttMs = null;
           voiceRttByIdentity.clear();
           updatePingUI(null);
@@ -746,6 +832,11 @@ async function connectToLiveKitRoom(channelName) {
             audioElement.volume = streamPlayerVolume / 100;
             audioElement.muted = isDeafened || isStreamAudioMuted;
             remoteScreenAudioElements.add(audioElement);
+          } else if (publication.trackName === SOUNDBOARD_TRACK_NAME) {
+            audioElement.volume = isUserMuted(participant.identity) || isSoundboardUserMuted(participant.identity)
+              ? 0
+              : getSoundboardUserVolume(participant.identity) / 100;
+            remoteSoundboardAudioElements.add(audioElement);
           } else {
             audioElement.volume = isUserMuted(participant.identity) ? 0 : getUserVolume(participant.identity) / 100;
           }
@@ -773,6 +864,7 @@ async function connectToLiveKitRoom(channelName) {
         track.detach().forEach((audioElement) => {
           remoteAudioElements.delete(audioElement);
           remoteScreenAudioElements.delete(audioElement);
+          remoteSoundboardAudioElements.delete(audioElement);
           audioElement.remove();
         });
         if (publication.source === window.LivekitClient.Track.Source.ScreenShare) {
@@ -1045,7 +1137,82 @@ async function publishMicToLiveKit() {
   }
 }
 
+async function publishSoundboardTrack() {
+  if (
+    !localVoiceCanPublish ||
+    !livekitRoom ||
+    livekitRoom.state !== 'connected' ||
+    !window.LivekitClient?.Track?.Source?.Unknown
+  ) return false;
+  if (soundboardLiveKitTrack) return true;
+  if (soundboardPublishInFlight) return soundboardPublishInFlight;
+
+  soundboardPublishInFlight = (async () => {
+    try {
+      const ctx = getSoundboardAudioContext();
+      if (!ctx || !soundboardBroadcastGain) {
+        throw new Error('O áudio do soundboard não está disponível neste dispositivo.');
+      }
+      const currentMediaTrack = soundboardBroadcastDestination?.stream.getAudioTracks()[0];
+      if (!soundboardBroadcastDestination || currentMediaTrack?.readyState !== 'live') {
+        if (soundboardBroadcastDestination) {
+          soundboardBroadcastGain.disconnect(soundboardBroadcastDestination);
+          soundboardBroadcastDestination.stream.getTracks().forEach((track) => track.stop());
+        }
+        soundboardBroadcastDestination = ctx.createMediaStreamDestination();
+        soundboardBroadcastGain.connect(soundboardBroadcastDestination);
+      }
+
+      const mediaTrack = soundboardBroadcastDestination.stream.getAudioTracks()[0];
+      if (!mediaTrack || mediaTrack.readyState !== 'live') {
+        throw new Error('Não foi possível criar a faixa de áudio do soundboard.');
+      }
+      const publication = await livekitRoom.localParticipant.publishTrack(mediaTrack, {
+        name: SOUNDBOARD_TRACK_NAME,
+        source: window.LivekitClient.Track.Source.Unknown,
+        dtx: true
+      });
+      soundboardLiveKitTrack = publication.track || mediaTrack;
+      soundboardPublishErrorShown = false;
+      return true;
+    } catch (error) {
+      console.error('Não foi possível transmitir os efeitos sonoros:', error);
+      if (soundboardBroadcastDestination) {
+        soundboardBroadcastGain?.disconnect(soundboardBroadcastDestination);
+        soundboardBroadcastDestination.stream.getTracks().forEach((track) => track.stop());
+        soundboardBroadcastDestination = null;
+      }
+      if (!soundboardPublishErrorShown) {
+        showToast('Os efeitos serão reproduzidos só para você: não foi possível publicá-los na chamada.', '⚠️');
+        soundboardPublishErrorShown = true;
+      }
+      return false;
+    } finally {
+      soundboardPublishInFlight = null;
+    }
+  })();
+
+  return soundboardPublishInFlight;
+}
+
 async function disconnectLiveKitRoom() {
+  if (soundboardPublishInFlight) await soundboardPublishInFlight;
+  if (soundboardLiveKitTrack && livekitRoom?.state === 'connected') {
+    try {
+      await livekitRoom.localParticipant.unpublishTrack(soundboardLiveKitTrack);
+    } catch (error) {
+      console.warn('Não foi possível encerrar a faixa do soundboard:', error);
+    }
+  }
+  soundboardLiveKitTrack = null;
+  soundboardPublishInFlight = null;
+  soundboardPublishErrorShown = false;
+  if (soundboardBroadcastDestination) {
+    soundboardBroadcastGain?.disconnect(soundboardBroadcastDestination);
+    soundboardBroadcastDestination.stream.getTracks().forEach((track) => track.stop());
+    soundboardBroadcastDestination = null;
+  }
+
   if (livekitAudioTrack && typeof livekitAudioTrack.stop === 'function') {
     livekitAudioTrack.stop();
     livekitAudioTrack = null;
@@ -1741,6 +1908,7 @@ function getServerOnlineProfiles() {
     initial: (userProfile.displayName || 'B')[0].toUpperCase(),
     color: userProfile.bannerColor || '#5865F2',
     avatarUrl: userProfile.avatarUrl || '',
+    profileTags: userProfile.profileTags,
     game: detectedGame && detectedGame.name ? detectedGame.name : '',
     detail: userProfile.aboutMe || 'Disponível',
     status: currentChannel ? 'online' : (userProfile.presenceStatus === 'invisible' ? 'offline' : (userProfile.presenceStatus || 'online')),
@@ -1750,8 +1918,10 @@ function getServerOnlineProfiles() {
   const rosterMembers = (Array.isArray(getStoredPresenceMembers()) ? getStoredPresenceMembers() : []).map((member) => ({
     id: member.id || member.fullTag || member.name,
     name: member.name || 'Bads',
+    username: member.username || '',
     tag: member.tag || '0001',
     fullTag: member.fullTag || `${member.name || 'Bads'}#${member.tag || '0001'}`,
+    profileTags: Array.isArray(member.profileTags) ? member.profileTags : [],
     initial: member.initial || (member.name || 'B')[0].toUpperCase(),
     color: member.color || '#5865F2',
     avatarUrl: member.avatarUrl || '',
@@ -1767,6 +1937,7 @@ function getServerOnlineProfiles() {
   }).map((friend) => ({
     id: friend.id,
     name: friend.name,
+    username: friend.username || '',
     tag: friend.tag || '0001',
     fullTag: friend.fullTag || `${friend.name}#${friend.tag || '0001'}`,
     initial: friend.initial || friend.name[0].toUpperCase(),
@@ -1820,6 +1991,7 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
       return applyUserNickname({
         id: participant.id,
         name,
+        username: profile.username || '',
         tag: profile.tag || '0001',
         fullTag: profile.fullTag || `${name}#${profile.tag || '0001'}`,
         initial: profile.initial || name[0].toUpperCase(),
@@ -1876,6 +2048,7 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
     return applyUserNickname({
       id: participant.identity,
       name,
+      username: profile.username || '',
       tag: profile.tag || '0001',
       fullTag: profile.fullTag || `${name}#${profile.tag || '0001'}`,
       initial: profile.initial || name[0].toUpperCase(),
@@ -2029,8 +2202,8 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
     if (liveIndicator) userItem.appendChild(liveIndicator);
     userItem.appendChild(micIcon);
     targetList.appendChild(userItem);
-    userItem.addEventListener('click', () => {
-      openMemberProfilePopover(member);
+    userItem.addEventListener('click', (event) => {
+      openMemberProfilePopover(member, event);
     });
   });
 }
@@ -2108,8 +2281,8 @@ function renderVoiceParticipants() {
     card.appendChild(tag);
     card.appendChild(micIcon);
     participantsGrid.appendChild(card);
-    card.addEventListener('click', () => {
-      openMemberProfilePopover(member);
+    card.addEventListener('click', (event) => {
+      openMemberProfilePopover(member, event);
     });
   });
 }
@@ -2241,6 +2414,7 @@ async function joinVoiceChannel(channelName) {
       updateControlsUI();
       showToast('Você pode ouvir o canal, mas está silenciado neste servidor.', '🔇');
     }
+    if (localVoiceCanPublish) await publishSoundboardTrack();
     refreshVoiceParticipantViews();
     if (localVoiceCanPublish) showToast(`Conectado a ${channelName}; microfone ${isMuted ? 'mutado' : 'ativo'}.`, '🎧');
   } catch (err) {
@@ -2736,7 +2910,7 @@ function createMessageElement(msg) {
     avatar.textContent = (msg.author || 'U')[0].toUpperCase();
   }
 
-  avatar.addEventListener('click', () => {
+  avatar.addEventListener('click', (event) => {
     openMemberProfilePopover({
       name: msg.author,
       tag: '0001',
@@ -2746,7 +2920,7 @@ function createMessageElement(msg) {
       game: detectedGame ? detectedGame.name : '',
       detail: 'Online no canal',
       role: msg.role || 'Membro'
-    });
+    }, event);
   });
 
   const content = document.createElement('div');
@@ -2759,7 +2933,7 @@ function createMessageElement(msg) {
   author.className = 'message-author';
   author.textContent = msg.author;
   author.style.cursor = 'pointer';
-  author.addEventListener('click', () => {
+  author.addEventListener('click', (event) => {
     openMemberProfilePopover({
       name: msg.author,
       tag: '0001',
@@ -2769,7 +2943,7 @@ function createMessageElement(msg) {
       game: detectedGame ? detectedGame.name : '',
       detail: 'Online no canal',
       role: msg.role || 'Membro'
-    });
+    }, event);
   });
 
   header.appendChild(author);
@@ -3508,7 +3682,7 @@ async function checkRunningGame() {
       if (statusEl) statusEl.textContent = 'Abra um jogo para transmitir';
       if (btnQuick) {
         btnQuick.innerHTML = '🖥️';
-        btnQuick.title = 'Escolher janela ou monitor para transmitir';
+        btnQuick.title = 'Escolher janela do jogo para transmitir';
       }
       if (iconBox) iconBox.innerHTML = '🎮';
     }
@@ -3544,7 +3718,6 @@ if (btnGameQuickStream) {
 
     currentCaptureTab = 'windows';
     if (tabWindows) tabWindows.classList.add('active');
-    if (tabScreens) tabScreens.classList.remove('active');
     if (inputSearchSources) inputSearchSources.value = '';
     sourceSearchQuery = '';
 
@@ -3886,6 +4059,13 @@ function renderFriendsList(filter = '') {
     avatar.className = 'friend-card-avatar';
     avatar.style.backgroundColor = friend.color;
     avatar.textContent = friend.initial;
+    if (friend.avatarUrl) {
+      const image = document.createElement('img');
+      image.src = friend.avatarUrl;
+      image.alt = '';
+      image.addEventListener('error', () => image.remove(), { once: true });
+      avatar.appendChild(image);
+    }
 
     const dot = document.createElement('div');
     dot.className = 'friend-card-avatar-dot';
@@ -3941,8 +4121,8 @@ function renderFriendsList(filter = '') {
     card.appendChild(left);
     card.appendChild(actions);
 
-    card.addEventListener('click', () => {
-      openMemberProfilePopover({ ...friend, isOwner: false });
+    card.addEventListener('click', (event) => {
+      openMemberProfilePopover({ ...friend, isOwner: false }, event);
     });
 
     friendsCardsList.appendChild(card);
@@ -4061,54 +4241,68 @@ function renderActiveNowCards() {
   if (!activeNowList) return;
   activeNowList.innerHTML = '';
 
-  const activeMembers = getServerOnlineProfiles().filter((member) => member.game && member.game !== 'Ausente' && member.game !== '');
+  const onlineFriends = (Array.isArray(friendsList) ? friendsList : [])
+    .filter((friend) => friend.status && friend.status !== 'offline');
 
-  if (activeMembers.length === 0) {
+  if (onlineFriends.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'active-now-empty';
     empty.innerHTML = `
-      <span class="active-now-empty-icon">😴</span>
-      <span>É quieto por enquanto... Quando seus amigos iniciarem uma atividade, ela aparecerá aqui!</span>
+      <span class="active-now-empty-icon">👥</span>
+      <span>Nenhum amigo está online no momento. Quando alguém ficar online, aparecerá aqui.</span>
     `;
     activeNowList.appendChild(empty);
     return;
   }
 
-  activeMembers.forEach((member) => {
+  onlineFriends.forEach((friend) => {
     const card = document.createElement('div');
     card.className = 'active-now-card';
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `Ver perfil de ${friend.name}`);
 
     const header = document.createElement('div');
     header.className = 'active-now-header';
 
     const avatar = document.createElement('div');
     avatar.className = 'active-now-avatar';
-    avatar.style.backgroundColor = member.color || '#5865F2';
-    avatar.textContent = member.initial || member.name[0].toUpperCase();
+    avatar.style.backgroundColor = friend.color || '#5865F2';
+    if (friend.avatarUrl) {
+      const image = document.createElement('img');
+      image.src = friend.avatarUrl;
+      image.alt = '';
+      avatar.appendChild(image);
+    } else {
+      avatar.textContent = friend.initial || friend.name[0].toUpperCase();
+    }
 
     const userMeta = document.createElement('div');
     userMeta.className = 'active-now-usermeta';
 
     const userName = document.createElement('strong');
-    userName.textContent = member.name;
+    userName.textContent = friend.name;
 
     const userGame = document.createElement('span');
-    userGame.textContent = member.game;
+    const activityType = friend.activityType || (friend.game ? 'game' : '');
+    const activityText = friend.activityText || friend.game || '';
+    userGame.textContent = activityText
+      ? `${activityType === 'music' ? 'Ouvindo' : 'Jogando'} ${activityText}`
+      : 'Online';
 
     userMeta.appendChild(userName);
     userMeta.appendChild(userGame);
 
     header.appendChild(avatar);
     header.appendChild(userMeta);
-
-    const desc = document.createElement('div');
-    desc.className = 'active-now-desc';
-    desc.textContent = member.detail || 'Disponível';
-
     card.appendChild(header);
-    card.appendChild(desc);
 
-    card.addEventListener('click', () => openMemberProfilePopover({ ...member, isOwner: false }));
+    card.addEventListener('click', (event) => openMemberProfilePopover({ ...friend, isOwner: false }, event));
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      openMemberProfilePopover({ ...friend, isOwner: false }, event);
+    });
 
     activeNowList.appendChild(card);
   });
@@ -4605,13 +4799,13 @@ function renderServerMembers() {
       const avatar = document.createElement('div');
       avatar.className = 'member-avatar';
       avatar.style.backgroundColor = member.color || '#5865F2';
+      avatar.textContent = (member.name || 'U')[0].toUpperCase();
       if (member.avatarUrl) {
         const image = document.createElement('img');
         image.src = member.avatarUrl;
         image.alt = '';
+        image.addEventListener('error', () => image.remove(), { once: true });
         avatar.appendChild(image);
-      } else {
-        avatar.textContent = (member.name || 'U')[0].toUpperCase();
       }
       const dot = document.createElement('span');
       dot.className = `member-status-dot ${member.status === 'offline' ? 'offline' : member.status}`;
@@ -4660,12 +4854,12 @@ function renderServerMembers() {
       };
       item.addEventListener('click', (event) => {
         if (event.target.closest('.member-manage-button')) return;
-        openMemberProfilePopover(profileMember);
+        openMemberProfilePopover(profileMember, event);
       });
       item.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
-          openMemberProfilePopover(profileMember);
+          openMemberProfilePopover(profileMember, event);
         }
       });
       if (canManage && member.id !== authenticatedAccount?.id && member.role !== 'Dono') {
@@ -4791,10 +4985,15 @@ const userPopoverBanner = document.getElementById('userPopoverBanner');
 const userPopoverAvatar = document.getElementById('userPopoverAvatar');
 const userPopoverName = document.getElementById('userPopoverName');
 const userPopoverTag = document.getElementById('userPopoverTag');
+const userPopoverProfileTags = document.getElementById('userPopoverProfileTags');
 const userPopoverAbout = document.getElementById('userPopoverAbout');
 const userPopoverVolume = document.getElementById('userPopoverVolume');
 const userPopoverVolumeSlider = document.getElementById('userPopoverVolumeSlider');
 const userPopoverVolumeValue = document.getElementById('userPopoverVolumeValue');
+const userPopoverSoundboardVolume = document.getElementById('userPopoverSoundboardVolume');
+const userPopoverSoundboardVolumeSlider = document.getElementById('userPopoverSoundboardVolumeSlider');
+const userPopoverSoundboardVolumeValue = document.getElementById('userPopoverSoundboardVolumeValue');
+const btnMuteUserSoundboard = document.getElementById('btnMuteUserSoundboard');
 const userPopoverActivity = document.getElementById('userPopoverActivity');
 const userActivityType = document.getElementById('userActivityType');
 const userActivityIcon = document.getElementById('userActivityIcon');
@@ -4802,6 +5001,7 @@ const userActivityTitle = document.getElementById('userActivityTitle');
 const userActivityDetail = document.getElementById('userActivityDetail');
 const btnUserActivityAction = document.getElementById('btnUserActivityAction');
 const btnListenTogether = document.getElementById('btnListenTogether');
+const btnProfileAddFriend = document.getElementById('btnProfileAddFriend');
 const btnProfileCall = document.getElementById('btnProfileCall');
 const btnProfileMessage = document.getElementById('btnProfileMessage');
 const userPopoverModActions = document.getElementById('userPopoverModActions');
@@ -4811,12 +5011,43 @@ const btnMuteMember = document.getElementById('btnMuteMember');
 const inputPopoverQuickChat = document.getElementById('inputPopoverQuickChat');
 const btnSendPopoverQuickChat = document.getElementById('btnSendPopoverQuickChat');
 
-function openMemberProfilePopover(member) {
+function getProfileFriendRequestHandle(member) {
+  const memberId = String(member?.id || '');
+  const knownMember = (serverMembersByServer.get(activeServerId) || [])
+    .find((entry) => String(entry.id) === memberId);
+  const knownFriend = friendsList.find((entry) => String(entry.id) === memberId);
+  const username = member?.username || knownMember?.username || knownFriend?.username;
+  const tag = member?.tag || knownMember?.tag || knownFriend?.tag;
+  const handle = username && tag
+    ? `${username}#${tag}`
+    : (member?.fullTag || '');
+  return /^[a-zA-Z0-9_]{3,24}#[a-zA-Z0-9]{4}$/.test(handle) ? handle : '';
+}
+
+function updateProfileFriendAction(member) {
+  if (!btnProfileAddFriend) return;
+  const isSelf = member?.isSelf || String(member?.id || '') === String(authenticatedAccount?.id || '');
+  const isFriend = friendsList.some((friend) => String(friend.id) === String(member?.id || ''));
+  const pendingRequest = friendRequests.find((request) => String(request.id) === String(member?.id || ''));
+  const handle = getProfileFriendRequestHandle(member);
+  const shouldShow = !isSelf && !isFriend && Boolean(handle);
+  if (btnProfileCall) btnProfileCall.style.display = isFriend && !isSelf ? '' : 'none';
+  if (btnProfileMessage) btnProfileMessage.style.display = isFriend && !isSelf ? '' : 'none';
+  btnProfileAddFriend.style.display = shouldShow ? '' : 'none';
+  btnProfileAddFriend.disabled = pendingRequest?.type === 'outgoing';
+  btnProfileAddFriend.textContent = pendingRequest?.type === 'incoming'
+    ? 'Aceitar solicitação'
+    : (pendingRequest?.type === 'outgoing' ? 'Pedido enviado' : '➕ Adicionar amigo');
+}
+
+function openMemberProfilePopover(member, triggerEvent) {
   if (!userProfilePopover) return;
+  triggerEvent?.stopPropagation();
   currentInspectedMember = member;
 
   if (userPopoverName) userPopoverName.textContent = member.name;
   if (userPopoverTag) userPopoverTag.textContent = `#${member.tag || '0001'}`;
+  renderProfileTags(userPopoverProfileTags, member.profileTags);
   if (userPopoverAbout) userPopoverAbout.textContent = member.detail || member.aboutMe || 'Usando o BADISCORD!';
 
   if (userPopoverBanner) {
@@ -4874,7 +5105,7 @@ function openMemberProfilePopover(member) {
   }
 
   const isSelf = member.isSelf || member.id === authenticatedAccount?.id
-    || member.name.toLowerCase() === (userProfile.displayName || '').toLowerCase();
+    || String(member.name || '').toLowerCase() === (userProfile.displayName || '').toLowerCase();
   if (userPopoverVolume) {
     const canAdjustVolume = !isSelf && typeof member.id === 'string' && Boolean(member.id);
     userPopoverVolume.style.display = canAdjustVolume ? 'block' : 'none';
@@ -4884,28 +5115,75 @@ function openMemberProfilePopover(member) {
       if (userPopoverVolumeValue) userPopoverVolumeValue.value = `${userPopoverVolumeSlider.value}%`;
     }
   }
+  const canAdjustSoundboard = !isSelf && typeof member.id === 'string' && Boolean(member.id);
+  if (userPopoverSoundboardVolume) {
+    userPopoverSoundboardVolume.style.display = canAdjustSoundboard ? 'block' : 'none';
+  }
+  if (canAdjustSoundboard && userPopoverSoundboardVolumeSlider) {
+    userPopoverSoundboardVolumeSlider.dataset.participantIdentity = member.id;
+    userPopoverSoundboardVolumeSlider.value = String(getSoundboardUserVolume(member.id));
+    if (userPopoverSoundboardVolumeValue) {
+      userPopoverSoundboardVolumeValue.value = `${userPopoverSoundboardVolumeSlider.value}%`;
+    }
+  }
+  if (canAdjustSoundboard && btnMuteUserSoundboard) {
+    const muted = isSoundboardUserMuted(member.id);
+    btnMuteUserSoundboard.setAttribute('aria-pressed', String(muted));
+    btnMuteUserSoundboard.textContent = muted ? '🔊 Ativar efeitos sonoros' : '🔇 Mutar efeitos sonoros';
+  }
   if (userPopoverModActions) {
     userPopoverModActions.style.display = isSelf || !canManageActiveServerMembers() ? 'none' : 'flex';
   }
-  const isFriend = friendsList.some((friend) => friend.id === member.id);
-  if (btnProfileCall) btnProfileCall.style.display = isFriend && !isSelf ? '' : 'none';
-  if (btnProfileMessage) btnProfileMessage.style.display = isFriend && !isSelf ? '' : 'none';
+  updateProfileFriendAction(member);
 
-  // Posiciona o popover no centro ou à direita
-  userProfilePopover.style.top = '120px';
-  userProfilePopover.style.right = '260px';
+  let anchorX;
+  let anchorY;
+  if (Number.isFinite(triggerEvent?.clientX) && Number.isFinite(triggerEvent?.clientY)
+    && (triggerEvent.clientX || triggerEvent.clientY)) {
+    anchorX = triggerEvent.clientX;
+    anchorY = triggerEvent.clientY;
+  } else if (triggerEvent?.currentTarget?.getBoundingClientRect) {
+    const triggerRect = triggerEvent.currentTarget.getBoundingClientRect();
+    anchorX = triggerRect.left + triggerRect.width / 2;
+    anchorY = triggerRect.top + triggerRect.height / 2;
+  }
+  userProfilePopover.style.right = 'auto';
+  userProfilePopover.style.left = '8px';
+  userProfilePopover.style.top = '8px';
   userProfilePopover.style.display = 'block';
-  positionUserPopover();
+  positionUserPopover(anchorX, anchorY);
 }
 
-function positionUserPopover() {
+function positionUserPopover(anchorX = window.innerWidth / 2, anchorY = 120) {
   if (!userProfilePopover || userProfilePopover.style.display === 'none') return;
   const rect = userProfilePopover.getBoundingClientRect();
   const margin = 8;
+  const gap = 12;
+  let left = anchorX + gap;
+  let top = anchorY + gap;
+  if (left + rect.width > window.innerWidth - margin) left = anchorX - rect.width - gap;
+  if (top + rect.height > window.innerHeight - margin) top = anchorY - rect.height - gap;
   userProfilePopover.style.right = 'auto';
-  userProfilePopover.style.left = `${Math.max(margin, Math.min(window.innerWidth - rect.width - margin, (window.innerWidth - rect.width) / 2))}px`;
-  userProfilePopover.style.top = `${Math.max(margin, Math.min(window.innerHeight - rect.height - margin, 120))}px`;
+  userProfilePopover.style.left = `${Math.max(margin, Math.min(window.innerWidth - rect.width - margin, left))}px`;
+  userProfilePopover.style.top = `${Math.max(margin, Math.min(window.innerHeight - rect.height - margin, top))}px`;
 }
+
+btnProfileAddFriend?.addEventListener('click', async () => {
+  const member = currentInspectedMember;
+  if (!member) return;
+  const request = friendRequests.find((entry) => String(entry.id) === String(member.id || ''));
+  if (request?.type === 'incoming') {
+    if (await acceptFriendRequest(request.requestId)) updateProfileFriendAction(member);
+    return;
+  }
+  const handle = getProfileFriendRequestHandle(member);
+  if (!handle) {
+    showToast('Não foi possível identificar o nome de usuário para enviar o pedido.', '⚠️');
+    return;
+  }
+  const sent = await sendFriendRequest(handle);
+  if (sent) updateProfileFriendAction(member);
+});
 
 async function sendActivityInvite(member, type) {
   if (!member || !friendsList.some((friend) => friend.id === member.id)) {
@@ -4947,6 +5225,26 @@ if (userPopoverVolumeSlider) {
     if (userPopoverVolumeValue) userPopoverVolumeValue.value = `${volume}%`;
   });
 }
+
+if (userPopoverSoundboardVolumeSlider) {
+  userPopoverSoundboardVolumeSlider.addEventListener('input', () => {
+    const volume = Number(userPopoverSoundboardVolumeSlider.value);
+    const identity = userPopoverSoundboardVolumeSlider.dataset.participantIdentity;
+    setSoundboardUserVolume(identity, volume);
+    if (userPopoverSoundboardVolumeValue) {
+      userPopoverSoundboardVolumeValue.value = `${volume}%`;
+    }
+  });
+}
+
+btnMuteUserSoundboard?.addEventListener('click', () => {
+  const identity = userPopoverSoundboardVolumeSlider?.dataset.participantIdentity;
+  if (!identity) return;
+  const muted = !isSoundboardUserMuted(identity);
+  setSoundboardUserMuted(identity, muted);
+  btnMuteUserSoundboard.setAttribute('aria-pressed', String(muted));
+  btnMuteUserSoundboard.textContent = muted ? '🔊 Ativar efeitos sonoros' : '🔇 Mutar efeitos sonoros';
+});
 
 if (btnCloseUserPopover) {
   btnCloseUserPopover.addEventListener('click', () => {
@@ -6045,7 +6343,6 @@ function updatePingUI(ms) {
 // ==========================================
 // MODAL DE TRANSMISSÃO DE JOGOS & JANELAS (ESTILO DISCORD)
 // ==========================================
-const tabScreens = document.getElementById('tabScreens');
 const tabWindows = document.getElementById('tabWindows');
 const btnRefreshSources = document.getElementById('btnRefreshSources');
 const inputSearchSources = document.getElementById('inputSearchSources');
@@ -6056,36 +6353,18 @@ const chkStreamAudio = document.getElementById('chkStreamAudio');
 let cachedSources = [];
 let currentCaptureTab = 'windows'; // Padrão: Janelas & Jogos focados
 let sourceSearchQuery = '';
-
-if (tabScreens) {
-  tabScreens.addEventListener('click', () => {
-    currentCaptureTab = 'screens';
-    tabScreens.classList.add('active');
-    tabWindows.classList.remove('active');
-    if (gamePrivacyBanner) {
-      gamePrivacyBanner.className = 'game-privacy-banner banner-warning';
-      gamePrivacyBanner.innerHTML = `
-        <span class="privacy-shield-icon">⚠️</span>
-        <div class="privacy-text">
-          <strong>Modo Tela Completa:</strong> Todo o seu monitor será transmitido. Outros programas e notificações do Windows poderão ficar visíveis para os espectadores.
-        </div>
-      `;
-    }
-    renderSourcesFiltered();
-  });
-}
+let sourceLoadError = '';
 
 if (tabWindows) {
   tabWindows.addEventListener('click', () => {
     currentCaptureTab = 'windows';
     tabWindows.classList.add('active');
-    tabScreens.classList.remove('active');
     if (gamePrivacyBanner) {
       gamePrivacyBanner.className = 'game-privacy-banner';
       gamePrivacyBanner.innerHTML = `
         <span class="privacy-shield-icon">🛡️</span>
         <div class="privacy-text">
-          <strong>Modo Janela Focada:</strong> Apenas a janela do jogo selecionado é enviada para os amigos na chamada. Se você minimizar o jogo, seu desktop continua 100% privado e protegido.
+          <strong>Somente janela:</strong> Apenas a janela selecionada é transmitida; o monitor inteiro nunca é compartilhado.
         </div>
       `;
     }
@@ -6112,9 +6391,11 @@ async function fetchAndRenderSources() {
   if (!window.electronAPI) return;
   try {
     cachedSources = (await window.electronAPI.getScreenSources()) || [];
+    sourceLoadError = '';
   } catch (err) {
     console.error('Erro ao buscar janelas e telas:', err);
     cachedSources = [];
+    sourceLoadError = err.message || 'Não foi possível buscar as janelas e telas.';
   }
   renderSourcesFiltered();
 }
@@ -6134,16 +6415,22 @@ function renderSourcesFiltered() {
   sourcesGrid.innerHTML = '';
   resetSelectedTarget();
 
-  const isScreensTab = currentCaptureTab === 'screens';
+  if (sourceLoadError) {
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'sources-empty sources-error';
+    const message = document.createElement('p');
+    message.textContent = `Falha ao carregar janelas e telas: ${sourceLoadError}`;
+    const retry = document.createElement('small');
+    retry.textContent = 'Clique em Atualizar para tentar novamente.';
+    errorDiv.append(message, retry);
+    sourcesGrid.appendChild(errorDiv);
+    return;
+  }
+
   let filtered = cachedSources.filter(source => {
-    const isScreen = source.isScreen;
-    if (isScreensTab) {
-      if (!isScreen) return false;
-    } else {
-      if (isScreen) return false;
-      const isSelfWindow = (source.name || '').trim().toLowerCase() === 'badiscord';
-      if (isSelfWindow) return false;
-    }
+    if (source.isScreen) return false;
+    const isSelfWindow = (source.name || '').trim().toLowerCase() === 'badiscord';
+    if (isSelfWindow) return false;
 
     if (sourceSearchQuery) {
       const name = (source.name || '').toLowerCase();
@@ -6153,27 +6440,19 @@ function renderSourcesFiltered() {
   });
 
   // Ordenar jogos detectados no topo da lista
-  if (!isScreensTab) {
-    filtered.sort((a, b) => {
-      if (a.isGame && !b.isGame) return -1;
-      if (!a.isGame && b.isGame) return 1;
-      return a.name.localeCompare(b.name);
-    });
-  }
+  filtered.sort((a, b) => {
+    if (a.isGame && !b.isGame) return -1;
+    if (!a.isGame && b.isGame) return 1;
+    return a.name.localeCompare(b.name);
+  });
 
   if (filtered.length === 0) {
     const emptyDiv = document.createElement('div');
     emptyDiv.className = 'sources-empty';
-    if (isScreensTab) {
-      emptyDiv.innerHTML = '<p>🖥️ Nenhum monitor detectado.</p>';
-    } else {
-      emptyDiv.innerHTML = `
-        <p>🎮 Nenhuma janela de jogo encontrada ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p>
-        <small>1. Abra o jogo desejado e clique em 🔄 <strong>Atualizar</strong> no canto superior.<br>
-        2. Se o jogo for executado com privilégios de Administrador, execute também o BADISCORD como Administrador para capturar sem restrições.<br>
-        3. Caso o jogo utilize tela cheia exclusiva, você também pode alternar para a aba <strong>Telas Inteiras</strong>.</small>
-      `;
-    }
+    emptyDiv.innerHTML = `
+      <p>🎮 Nenhuma janela de jogo encontrada ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p>
+      <small>Abra o jogo e clique em 🔄 <strong>Atualizar</strong>. Se ele estiver em tela cheia exclusiva e não aparecer, altere o modo de exibição para <strong>Janela sem bordas</strong> ou <strong>Janela</strong>; assim, somente a janela do jogo poderá ser capturada.</small>
+    `;
     sourcesGrid.appendChild(emptyDiv);
     return;
   }
@@ -6197,10 +6476,7 @@ function renderSourcesFiltered() {
     // Badge de Tipo (Jogo, Janela ou Monitor)
     const badge = document.createElement('span');
     badge.className = 'source-badge';
-    if (source.isScreen) {
-      badge.classList.add('source-badge-screen');
-      badge.textContent = '🖥️ Monitor';
-    } else if (source.isGame) {
+    if (source.isGame) {
       badge.classList.add('source-badge-game');
       badge.textContent = '🎮 Jogo';
     } else {
@@ -6223,7 +6499,7 @@ function renderSourcesFiltered() {
     } else {
       const placeholderIcon = document.createElement('span');
       placeholderIcon.style.fontSize = '14px';
-      placeholderIcon.textContent = source.isGame ? '🎮' : (source.isScreen ? '🖥️' : '🪟');
+      placeholderIcon.textContent = source.isGame ? '🎮' : '🪟';
       meta.appendChild(placeholderIcon);
     }
 
@@ -6673,7 +6949,6 @@ btnShareScreen.addEventListener('click', async () => {
   // Garantir que a aba Janelas & Jogos esteja ativa por padrão
   currentCaptureTab = 'windows';
   if (tabWindows) tabWindows.classList.add('active');
-  if (tabScreens) tabScreens.classList.remove('active');
   if (inputSearchSources) inputSearchSources.value = '';
   sourceSearchQuery = '';
 
@@ -6687,6 +6962,10 @@ btnCancelShare.addEventListener('click', () => screenShareModal.style.display = 
 // Iniciar Live do Jogo (1080p 60FPS) - Função Modular Unificada
 async function startStreamWithSourceId(sourceId, sourceTitle) {
   if (!sourceId) return;
+  if (window.electronAPI && !sourceId.startsWith('window:')) {
+    showToast('Por segurança, o app só transmite janelas individuais. Selecione a janela do jogo.', '⚠️');
+    return;
+  }
   if (!hasAuthenticatedSession()) {
     showToast('Faça login antes de iniciar uma transmissão.', '⚠️');
     return;
@@ -6711,11 +6990,21 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     if (sourceId === '__browser_display__') {
       const width = targetRes === 1440 ? 2560 : (targetRes === 1080 ? 1920 : 1280);
       stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: width }, height: { ideal: targetRes }, frameRate: { ideal: targetFps, max: targetFps } },
+        video: {
+          displaySurface: 'window',
+          width: { ideal: width },
+          height: { ideal: targetRes },
+          frameRate: { ideal: targetFps, max: targetFps }
+        },
         audio: includeAudio,
         systemAudio: includeAudio ? 'include' : 'exclude',
         windowAudio: includeAudio ? 'system' : 'exclude'
       });
+      const displaySurface = stream.getVideoTracks()[0]?.getSettings().displaySurface;
+      if (!['window', 'browser'].includes(displaySurface)) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error('A transmissão foi cancelada para proteger sua privacidade. Selecione somente a janela ou a aba do jogo, não a tela inteira.');
+      }
     } else {
       const isWindowSource = sourceId.startsWith('window:');
       captureProcessAudio = includeAudio && isWindowSource && Boolean(window.electronAPI?.startProcessAudioCapture);
@@ -6853,22 +7142,8 @@ if (btnTestGameSelect) {
     if (!window.electronAPI) return;
     currentCaptureTab = 'windows';
     if (tabWindows) tabWindows.classList.add('active');
-    if (tabScreens) tabScreens.classList.remove('active');
     await fetchAndRenderSources();
     screenShareModal.style.display = 'flex';
-  });
-}
-
-const cardModeWindow = document.getElementById('cardModeWindow');
-const cardModeScreen = document.getElementById('cardModeScreen');
-if (cardModeWindow && cardModeScreen) {
-  cardModeWindow.addEventListener('click', () => {
-    cardModeWindow.classList.add('active');
-    cardModeScreen.classList.remove('active');
-  });
-  cardModeScreen.addEventListener('click', () => {
-    cardModeScreen.classList.add('active');
-    cardModeWindow.classList.remove('active');
   });
 }
 
@@ -7122,6 +7397,44 @@ const btnSaveProfile = document.getElementById('btnSaveProfile');
 const saveStatusMsg = document.getElementById('saveStatusMsg');
 const inputBannerColor = document.getElementById('inputBannerColor');
 
+const profileTagIcons = { server: '🛡️', friend: '👤', community: '🌐' };
+
+function renderProfileTags(container, tags, removable = false) {
+  if (!container) return;
+  container.replaceChildren();
+  (Array.isArray(tags) ? tags : []).forEach((tag, index) => {
+    if (!tag || !tag.label) return;
+    const chip = document.createElement(removable ? 'button' : 'span');
+    chip.className = 'profile-tag-chip';
+    if (removable) {
+      chip.type = 'button';
+      chip.title = 'Remover tag';
+      chip.setAttribute('aria-label', `Remover tag ${tag.label}`);
+    } else {
+      chip.title = `${tag.type === 'friend' ? 'Amigo' : tag.type === 'community' ? 'Comunidade' : 'Servidor'}: ${tag.label}`;
+    }
+    const icon = document.createElement('span');
+    icon.textContent = profileTagIcons[tag.type] || profileTagIcons.server;
+    const text = document.createElement('span');
+    text.textContent = tag.label;
+    chip.append(icon, text);
+    if (removable) {
+      const remove = document.createElement('span');
+      remove.className = 'profile-tag-remove';
+      remove.setAttribute('aria-hidden', 'true');
+      remove.textContent = '×';
+      chip.appendChild(remove);
+      chip.addEventListener('click', () => {
+        userProfile.profileTags.splice(index, 1);
+        saveUserProfile();
+        applyUserProfile();
+        publishPresenceStatus();
+      });
+    }
+    container.appendChild(chip);
+  });
+}
+
 function applyUserProfile() {
   const myUsername = document.getElementById('myUsername');
   const myStatusText = document.getElementById('myStatusText');
@@ -7201,6 +7514,9 @@ function applyUserProfile() {
   if (inputUsername) inputUsername.value = userProfile.username;
   if (inputAboutMe) inputAboutMe.value = userProfile.aboutMe;
   if (inputBannerColor) inputBannerColor.value = userProfile.bannerColor;
+  renderProfileTags(document.getElementById('profileTagPreview'), userProfile.profileTags);
+  renderProfileTags(document.getElementById('profileTagEditorList'), userProfile.profileTags, true);
+  renderProfileTags(document.getElementById('presenceClanBadges'), userProfile.profileTags);
 
   if (currentChannel) {
     updateSidebarChannelUsers(currentChannel);
@@ -7259,6 +7575,7 @@ if (btnSaveProfile) {
 
     saveUserProfile();
     applyUserProfile();
+    publishPresenceStatus();
     playConnectSound();
 
     if (saveStatusMsg) {
@@ -7269,6 +7586,35 @@ if (btnSaveProfile) {
     }
   });
 }
+
+const inputProfileTag = document.getElementById('inputProfileTag');
+const selectProfileTagType = document.getElementById('selectProfileTagType');
+const btnAddProfileTag = document.getElementById('btnAddProfileTag');
+function addProfileTag() {
+  const label = inputProfileTag?.value.trim().slice(0, 24);
+  const type = selectProfileTagType?.value;
+  if (!label || !['server', 'friend', 'community'].includes(type)) return;
+  if (userProfile.profileTags.length >= 5) {
+    showToast('Você pode adicionar até 5 tags ao perfil.', '⚠️');
+    return;
+  }
+  if (userProfile.profileTags.some((tag) => tag.type === type && tag.label.toLowerCase() === label.toLowerCase())) {
+    showToast('Essa tag já está no seu perfil.', '⚠️');
+    return;
+  }
+  userProfile.profileTags.push({ type, label });
+  if (inputProfileTag) inputProfileTag.value = '';
+  saveUserProfile();
+  applyUserProfile();
+  publishPresenceStatus();
+}
+btnAddProfileTag?.addEventListener('click', addProfileTag);
+inputProfileTag?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    addProfileTag();
+  }
+});
 
 // ==========================================
 // NAVEGAÇÃO ENTRE ABAS DAS CONFIGURAÇÕES
@@ -7399,6 +7745,9 @@ let soundboardVolume = 100;
 let soundboardMuted = false;
 let soundboardAudioContext = null;
 let soundboardMasterGain = null;
+let soundboardBroadcastGain = null;
+let soundboardBroadcastDestination = null;
+let soundboardPublishErrorShown = false;
 let customSoundboardSounds = [];
 let customSoundboardServerId = '';
 const activeCustomSoundPlayers = new Set();
@@ -7416,11 +7765,18 @@ function getSoundboardAudioContext() {
     soundboardAudioContext = new AudioContextClass();
     soundboardMasterGain = soundboardAudioContext.createGain();
     soundboardMasterGain.connect(soundboardAudioContext.destination);
+    soundboardBroadcastGain = soundboardAudioContext.createGain();
+    soundboardBroadcastGain.gain.value = 1;
   }
   if (soundboardAudioContext.state === 'suspended') {
     soundboardAudioContext.resume().catch(() => {});
   }
   return soundboardAudioContext;
+}
+
+function connectSoundboardSource(sourceNode) {
+  sourceNode.connect(soundboardMasterGain);
+  sourceNode.connect(soundboardBroadcastGain);
 }
 
 function updateSoundboardControls() {
@@ -7435,15 +7791,15 @@ function updateSoundboardControls() {
     soundboardMasterGain.gain.setTargetAtTime(outputVolume, soundboardAudioContext.currentTime, 0.015);
   }
   activeCustomSoundPlayers.forEach((audio) => {
-    audio.volume = soundboardVolume / 100;
-    audio.muted = soundboardMuted;
+    audio.volume = 1;
+    audio.muted = false;
   });
   if (muteButton) {
     muteButton.setAttribute('aria-pressed', String(soundboardMuted));
-    muteButton.title = soundboardMuted ? 'Ativar sons' : 'Mutar sons';
+    muteButton.title = soundboardMuted ? 'Ativar sons para você' : 'Mutar sons só para você';
   }
   if (muteIcon) muteIcon.textContent = soundboardMuted ? '🔇' : '🔊';
-  if (muteLabel) muteLabel.textContent = soundboardMuted ? 'Ativar sons' : 'Mutar sons';
+  if (muteLabel) muteLabel.textContent = soundboardMuted ? 'Ativar só para mim' : 'Mutar só para mim';
   if (volumeSlider) volumeSlider.value = String(soundboardVolume);
   if (volumeValue) volumeValue.textContent = `${soundboardVolume}%`;
 }
@@ -7470,10 +7826,13 @@ function initializeSoundboardControls() {
 
 initializeSoundboardControls();
 
-function playSoundEffect(type) {
+async function playSoundEffect(type) {
   try {
     const ctx = getSoundboardAudioContext();
-    if (!ctx || soundboardMuted || soundboardVolume === 0) return;
+    if (!ctx) return;
+    if (livekitRoom?.state === 'connected' && localVoiceCanPublish) {
+      await publishSoundboardTrack();
+    }
     const now = ctx.currentTime;
 
     if (type === 'airhorn') {
@@ -7485,7 +7844,7 @@ function playSoundEffect(type) {
         gain.gain.setValueAtTime(0.25, now + idx * 0.12);
         gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.12 + 0.1);
         osc.connect(gain);
-        gain.connect(soundboardMasterGain);
+        connectSoundboardSource(gain);
         osc.start(now + idx * 0.12);
         osc.stop(now + idx * 0.12 + 0.1);
       });
@@ -7498,7 +7857,7 @@ function playSoundEffect(type) {
       gain.gain.setValueAtTime(0.25, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
       osc.connect(gain);
-      gain.connect(soundboardMasterGain);
+      connectSoundboardSource(gain);
       osc.start(now);
       osc.stop(now + 0.22);
     } else if (type === 'bell') {
@@ -7509,7 +7868,7 @@ function playSoundEffect(type) {
       gain.gain.setValueAtTime(0.3, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
       osc.connect(gain);
-      gain.connect(soundboardMasterGain);
+      connectSoundboardSource(gain);
       osc.start(now);
       osc.stop(now + 0.65);
     } else if (type === 'gameover') {
@@ -7521,7 +7880,7 @@ function playSoundEffect(type) {
         gain.gain.setValueAtTime(0.18, now + idx * 0.14);
         gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.14 + 0.12);
         osc.connect(gain);
-        gain.connect(soundboardMasterGain);
+        connectSoundboardSource(gain);
         osc.start(now + idx * 0.14);
         osc.stop(now + idx * 0.14 + 0.12);
       });
@@ -7534,7 +7893,7 @@ function playSoundEffect(type) {
       gain.gain.setValueAtTime(0.25, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
       osc.connect(gain);
-      gain.connect(soundboardMasterGain);
+      connectSoundboardSource(gain);
       osc.start(now);
       osc.stop(now + 0.15);
     } else {
@@ -7546,11 +7905,13 @@ function playSoundEffect(type) {
       gain.gain.setValueAtTime(0.25, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
       osc.connect(gain);
-      gain.connect(soundboardMasterGain);
+      connectSoundboardSource(gain);
       osc.start(now);
       osc.stop(now + 0.25);
     }
-  } catch (e) {}
+  } catch (error) {
+    console.warn('Não foi possível reproduzir o efeito sonoro:', error);
+  }
 }
 
 document.querySelectorAll('.soundboard-btn').forEach(btn => {
@@ -7559,20 +7920,36 @@ document.querySelectorAll('.soundboard-btn').forEach(btn => {
   });
 });
 
-function playCustomSound(sound) {
-  if (soundboardMuted || soundboardVolume === 0) return;
-  const audio = new Audio(`/api/soundboard/${encodeURIComponent(sound.id)}/audio?serverId=${encodeURIComponent(sound.serverId || activeServerId)}`);
-  audio.volume = soundboardVolume / 100;
-  activeCustomSoundPlayers.add(audio);
-  audio.addEventListener('ended', () => activeCustomSoundPlayers.delete(audio), { once: true });
-  audio.addEventListener('error', () => {
-    activeCustomSoundPlayers.delete(audio);
-    showToast('Não foi possível reproduzir esse áudio.', '⚠️');
-  }, { once: true });
-  audio.play().catch(() => {
-    activeCustomSoundPlayers.delete(audio);
-    showToast('Não foi possível reproduzir esse áudio.', '⚠️');
-  });
+async function playCustomSound(sound) {
+  let audio;
+  let source;
+  try {
+    const ctx = getSoundboardAudioContext();
+    if (!ctx) throw new Error('O áudio não está disponível neste dispositivo.');
+    if (livekitRoom?.state === 'connected' && localVoiceCanPublish) {
+      await publishSoundboardTrack();
+    }
+    audio = new Audio(`/api/soundboard/${encodeURIComponent(sound.id)}/audio?serverId=${encodeURIComponent(sound.serverId || activeServerId)}`);
+    source = ctx.createMediaElementSource(audio);
+    connectSoundboardSource(source);
+    audio.volume = 1;
+    activeCustomSoundPlayers.add(audio);
+    const releasePlayer = () => {
+      activeCustomSoundPlayers.delete(audio);
+      source.disconnect();
+    };
+    audio.addEventListener('ended', releasePlayer, { once: true });
+    audio.addEventListener('error', () => {
+      releasePlayer();
+      showToast('Não foi possível reproduzir esse áudio.', '⚠️');
+    }, { once: true });
+    await audio.play();
+  } catch (error) {
+    if (audio) activeCustomSoundPlayers.delete(audio);
+    source?.disconnect();
+    console.warn('Não foi possível reproduzir o áudio personalizado:', error);
+    showToast(error.message || 'Não foi possível reproduzir esse áudio.', '⚠️');
+  }
 }
 
 function renderCustomSoundboard() {
@@ -7976,7 +8353,7 @@ initializeFreeProfileCustomization();
     const presenceDisplayName = document.getElementById('presenceDisplayName');
     const presenceHandle = document.getElementById('presenceHandle');
     const presencePronouns = document.getElementById('presencePronouns');
-    const presenceClanBadge = document.getElementById('presenceClanBadge');
+    const presenceClanBadges = document.getElementById('presenceClanBadges');
     const presenceStatusIndicator = document.getElementById('presenceStatusIndicator');
     const menuCurrentStatusDot = document.getElementById('menuCurrentStatusDot');
     const menuCurrentStatusText = document.getElementById('menuCurrentStatusText');
@@ -7995,6 +8372,7 @@ initializeFreeProfileCustomization();
     if (presenceDisplayName) presenceDisplayName.textContent = userProfile.displayName || 'Bads';
     if (presenceHandle) presenceHandle.textContent = userProfile.username || 'bads';
     if (presencePronouns) presencePronouns.textContent = userProfile.pronouns || '';
+    renderProfileTags(presenceClanBadges, userProfile.profileTags);
 
     const customStatus = document.getElementById('presenceCustomStatus');
     if (customStatus) {
@@ -8099,8 +8477,7 @@ initializeFreeProfileCustomization();
   // Edit profile
   document.getElementById('menuItemPresenceEditProfile')?.addEventListener('click', () => {
     userPresenceMenu.style.display = 'none';
-    if (typeof openSettings === 'function') openSettings();
-    if (typeof switchSettingsTab === 'function') switchSettingsTab('account');
+    openSettingsTab('account');
   });
 
   // Custom status
@@ -8249,7 +8626,7 @@ initializeFreeProfileCustomization();
       case 'profile':
         voiceUserContextMenu.style.display = 'none';
         if (vctxTargetUser && typeof openMemberProfilePopover === 'function') {
-          openMemberProfilePopover(vctxTargetUser);
+          openMemberProfilePopover(vctxTargetUser, e);
         }
         break;
 

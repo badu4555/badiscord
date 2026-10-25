@@ -776,7 +776,7 @@
           <div class="modal-header-icon">🎮</div>
           <div>
             <h3>Transmitir Jogo ou Janela</h3>
-            <p class="modal-subtitle">Selecionar uma janela não abre o jogo. A transmissão só começa quando você confirmar; sua área de trabalho, outras janelas e notificações não serão transmitidas.</p>
+            <p class="modal-subtitle">Somente a janela do jogo selecionado será transmitida. Monitores inteiros não são compartilhados.</p>
           </div>
         </div>
         <button class="close-modal" id="btnCloseModal">✕</button>
@@ -787,9 +787,6 @@
           <button class="tab-btn active" id="tabWindows">
             <span class="tab-icon">🎮</span> Janelas & Jogos
             <span class="tab-badge-rec">Recomendado</span>
-          </button>
-          <button class="tab-btn" id="tabScreens">
-            <span class="tab-icon">🖥️</span> Telas Inteiras
           </button>
         </div>
         <div class="modal-search-wrapper">
@@ -803,7 +800,7 @@
       <div class="game-privacy-banner" id="gamePrivacyBanner">
         <span class="privacy-shield-icon">🛡️</span>
         <div class="privacy-text">
-          <strong>Modo Janela Focada:</strong> Apenas a janela do jogo selecionado é enviada para os participantes da chamada. Se você minimizar o jogo, seu desktop continua 100% privado e protegido.
+          <strong>Somente janela:</strong> Apenas a janela selecionada é enviada para os participantes. O BADISCORD nunca transmite o monitor inteiro.
         </div>
       </div>
 
@@ -913,6 +910,7 @@
         <div>
           <h3 class="user-popover-name" id="userPopoverName">Bruninho</h3>
           <span class="user-popover-tag" id="userPopoverTag">#0001</span>
+          <div class="profile-tag-list user-popover-profile-tags" id="userPopoverProfileTags"></div>
         </div>
         <div class="user-popover-badges" id="userPopoverBadges">
           <span class="popover-badge" title="Proprietário">👑</span>
@@ -928,6 +926,14 @@
           <output id="userPopoverVolumeValue" for="userPopoverVolumeSlider">100%</output>
         </label>
         <input type="range" id="userPopoverVolumeSlider" min="0" max="100" value="100">
+      </div>
+      <div class="user-popover-volume" id="userPopoverSoundboardVolume" style="display: none;">
+        <label for="userPopoverSoundboardVolumeSlider">
+          <span>Volume dos efeitos sonoros</span>
+          <output id="userPopoverSoundboardVolumeValue" for="userPopoverSoundboardVolumeSlider">100%</output>
+        </label>
+        <input type="range" id="userPopoverSoundboardVolumeSlider" min="0" max="100" value="100">
+        <button type="button" class="user-popover-soundboard-mute" id="btnMuteUserSoundboard">🔇 Mutar efeitos</button>
       </div>
 
       <!-- Caixa de Atividade (Jogando / Ouvindo Música - Foto 1) -->
@@ -948,6 +954,7 @@
         </div>
       </div>
       <div class="profile-contact-actions">
+        <button type="button" id="btnProfileAddFriend">➕ Adicionar amigo</button>
         <button type="button" id="btnProfileCall">📞 Ligar</button>
         <button type="button" id="btnProfileMessage">💬 Mensagem</button>
       </div>
@@ -1158,7 +1165,7 @@
         <span class="presence-handle" id="presenceHandle">badscaps</span>
         <span class="presence-bullet">•</span>
         <span class="presence-pronouns" id="presencePronouns">elu-delu</span>
-        <span class="presence-clan-badge" id="presenceClanBadge">🗡️ KBM!</span>
+        <span class="presence-clan-badges" id="presenceClanBadges"></span>
       </div>
 
       <!-- Fileira de Insígnias -->
@@ -1425,6 +1432,7 @@
               <div class="profile-identity-preview">
                 <h3 id="previewDisplayName">Bads</h3>
                 <span id="previewUsername">@bads</span>
+                <div class="profile-tag-list" id="profileTagPreview"></div>
               </div>
             </div>
           </div>
@@ -1439,6 +1447,21 @@
             <div class="form-group">
               <label class="setting-field-label">NOME DE USUÁRIO (TAG)</label>
               <input type="text" id="inputUsername" class="discord-input" placeholder="seu_usuario" maxlength="32" value="bads">
+            </div>
+
+            <div class="form-group">
+              <label class="setting-field-label" for="inputProfileTag">TAGS DO PERFIL</label>
+              <p class="profile-tags-help">Adicione tags com o nome de um servidor, amigo ou comunidade. Elas aparecem junto ao seu perfil.</p>
+              <div class="profile-tag-editor">
+                <select id="selectProfileTagType" class="discord-select" aria-label="Tipo da tag">
+                  <option value="server">Servidor</option>
+                  <option value="friend">Amigo</option>
+                  <option value="community">Comunidade</option>
+                </select>
+                <input type="text" id="inputProfileTag" class="discord-input" placeholder="Ex.: Servidor dos Amigos" maxlength="24">
+                <button type="button" class="discord-btn-secondary" id="btnAddProfileTag">Adicionar</button>
+              </div>
+              <div class="profile-tag-list profile-tag-editor-list" id="profileTagEditorList" aria-live="polite"></div>
             </div>
 
             <div class="form-group">
@@ -1563,29 +1586,8 @@
           </div>
 
           <div class="form-group">
-            <label class="setting-field-label">MODO DE TRANSMISSÃO PADRÃO</label>
-            <div class="stream-mode-cards">
-              <label class="stream-mode-card active" id="cardModeWindow">
-                <input type="radio" name="streamDefaultMode" value="window" checked>
-                <div class="mode-card-content">
-                  <div class="mode-icon">🎮</div>
-                  <div class="mode-info">
-                    <span class="mode-title">Focar Apenas no Jogo (Recomendado)</span>
-                    <span class="mode-desc">Transmite unicamente a janela do jogo selecionado. Notificações, área de trabalho e outros programas nunca vazam.</span>
-                  </div>
-                </div>
-              </label>
-              <label class="stream-mode-card" id="cardModeScreen">
-                <input type="radio" name="streamDefaultMode" value="screen">
-                <div class="mode-card-content">
-                  <div class="mode-icon">🖥️</div>
-                  <div class="mode-info">
-                    <span class="mode-title">Permitir Monitor Inteiro</span>
-                    <span class="mode-desc">Transmite todo o seu monitor selecionado (útil caso o jogo use tela cheia exclusiva ou anti-cheat rígido).</span>
-                  </div>
-                </div>
-              </label>
-            </div>
+            <label class="setting-field-label">CAPTURA PRIVADA DO JOGO</label>
+            <p>O BADISCORD captura somente uma janela ou aba escolhida. Monitores inteiros não são aceitos. Se o jogo não aparecer em tela cheia exclusiva, use o modo janela sem bordas nas configurações do jogo.</p>
           </div>
 
           <div class="settings-divider"></div>
@@ -1713,11 +1715,11 @@
         <!-- ABA: PAINEL DE EFEITOS SONOROS (SOUNDBOARD) -->
         <div class="settings-tab-pane" id="pane-soundboard" style="display: none;">
           <h2 class="settings-section-title">Painel de Efeitos Sonoros (Soundboard)</h2>
-          <p class="section-desc">Clique nos botões abaixo para tocar sons instantâneos na chamada:</p>
+          <p class="section-desc">Os efeitos são transmitidos separadamente do microfone. Cada participante pode ajustar o volume ou silenciar os efeitos de cada pessoa no perfil dela.</p>
           <div class="soundboard-controls">
             <button type="button" class="soundboard-mute-button" id="btnSoundboardMute" aria-pressed="false">
               <span id="soundboardMuteIcon" aria-hidden="true">🔊</span>
-              <span id="soundboardMuteLabel">Mutar sons</span>
+              <span id="soundboardMuteLabel">Mutar só para mim</span>
             </button>
             <label class="soundboard-volume-control" for="soundboardVolume">
               <span>Volume</span>
@@ -1725,6 +1727,7 @@
             </label>
             <output class="soundboard-volume-value" id="soundboardVolumeValue" for="soundboardVolume">100%</output>
           </div>
+          <small class="soundboard-local-volume-note">O volume e o mudo acima controlam apenas como você ouve os efeitos neste dispositivo.</small>
           <div class="soundboard-grid">
             <button class="soundboard-btn" data-sound="airhorn">📢 Airhorn (Corneta)</button>
             <button class="soundboard-btn" data-sound="badumtss">🥁 Ba-Dum-Tss</button>

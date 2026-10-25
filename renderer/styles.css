@@ -51,7 +51,7 @@
 body {
   background-color: var(--bg-tertiary);
   color: var(--text-normal);
-  overflow: hidden;
+  overflow-y: auto;
   height: 100vh;
 }
 
@@ -1604,6 +1604,10 @@ body {
   display: block;
 }
 
+.sources-error p {
+  color: #f23f43;
+}
+
 .sources-grid {
   flex: 1;
   padding: 14px 20px;
@@ -2595,6 +2599,67 @@ body {
   color: var(--text-muted);
 }
 
+.profile-tags-help {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.profile-tag-editor {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.45fr) minmax(150px, 1fr) auto;
+  gap: 8px;
+}
+
+.profile-tag-editor .discord-select {
+  min-width: 0;
+}
+
+.profile-tag-editor-list,
+.profile-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.profile-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid rgba(148, 155, 164, 0.2);
+  border-radius: 999px;
+  background: rgba(88, 101, 242, 0.14);
+  color: var(--header-primary);
+  font-size: 11px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+button.profile-tag-chip {
+  cursor: pointer;
+}
+
+button.profile-tag-chip:hover {
+  background: rgba(237, 66, 69, 0.2);
+}
+
+.profile-tag-remove {
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+.profile-tag-editor-list:empty,
+.profile-tag-list:empty {
+  display: none;
+}
+
+.profile-identity-preview .profile-tag-list {
+  margin-top: 7px;
+}
+
 .profile-edit-form {
   display: flex;
   flex-direction: column;
@@ -2756,6 +2821,13 @@ body {
   text-align: right;
 }
 
+.soundboard-local-volume-note {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .soundboard-custom-title {
   margin-top: 24px;
   color: var(--header-primary);
@@ -2834,6 +2906,14 @@ body {
 }
 
 @media (max-width: 600px) {
+  .profile-tag-editor {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .profile-tag-editor .discord-select {
+    grid-column: 1 / -1;
+  }
+
   .soundboard-controls {
     flex-wrap: wrap;
   }
@@ -4363,6 +4443,16 @@ body {
   flex-shrink: 0;
 }
 
+.member-avatar img,
+.friend-card-avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
 .member-status-dot {
   position: absolute;
   bottom: -2px;
@@ -4371,6 +4461,7 @@ body {
   height: 10px;
   border-radius: 50%;
   border: 2px solid #2b2d31;
+  z-index: 1;
 }
 
 .member-status-dot.online { background-color: #23a55a; }
@@ -4463,10 +4554,13 @@ body {
 
 .profile-contact-actions button {
   min-height: 34px;
+  min-width: 0;
+  padding: 4px;
   border: 0;
   border-radius: 5px;
   background: #3f4147;
   color: #fff;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -4666,6 +4760,7 @@ body {
   border-radius: 50%;
   border: 3px solid #313338;
   background-color: #23a55a;
+  z-index: 1;
 }
 
 .friend-card-info {
@@ -4758,6 +4853,66 @@ body {
   cursor: pointer;
   display: flex;
   gap: 12px;
+  align-items: center;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.active-now-card:hover {
+  background-color: #32343a;
+}
+
+.active-now-card:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 2px;
+}
+
+.active-now-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.active-now-avatar {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #fff;
+  font-weight: 700;
+}
+
+.active-now-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.active-now-usermeta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.active-now-usermeta strong,
+.active-now-usermeta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.active-now-usermeta strong {
+  color: #f2f3f5;
+  font-size: 13px;
+}
+
+.active-now-usermeta span {
+  color: #b5bac1;
+  font-size: 12px;
 }
 
 .active-now-icon {
@@ -5548,7 +5703,8 @@ body {
 .user-profile-popover {
   position: fixed;
   z-index: 9999;
-  width: 320px;
+  width: min(320px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
   background: #232428;
   border-radius: 12px;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
@@ -5686,6 +5842,22 @@ body {
   width: 100%;
   accent-color: #5865f2;
   cursor: pointer;
+}
+
+.user-popover-soundboard-mute {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: #3f4147;
+  color: #dbdee1;
+  cursor: pointer;
+}
+
+.user-popover-soundboard-mute[aria-pressed="true"] {
+  background: #da373c;
+  color: #fff;
 }
 
 /* Bloco de Atividade (Jogando / Ouvindo) */
@@ -6535,6 +6707,23 @@ body {
   font-size: 11px;
   font-weight: 600;
   margin-left: 4px;
+}
+
+.presence-clan-badges {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-left: 4px;
+}
+
+.presence-clan-badges .profile-tag-chip {
+  padding: 2px 6px;
+  color: #c9cdfb;
+  font-size: 10px;
+}
+
+.user-popover-profile-tags {
+  margin-top: 5px;
 }
 
 /* Badges Row */
@@ -8487,6 +8676,8 @@ body {
     min-width: 0;
     width: 100%;
   }
+
+
 
   .chat-header-actions {
     gap: 6px;

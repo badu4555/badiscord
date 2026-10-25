@@ -385,14 +385,14 @@ ipcMain.handle('get-screen-sources', async (event) => {
     let sources = [];
     try {
       sources = await desktopCapturer.getSources({
-        types: ['window', 'screen'],
+        types: ['window'],
         thumbnailSize: { width: 480, height: 270 },
         fetchWindowIcons: true
       });
     } catch (e1) {
       console.warn('Fallback para getSources simplificado:', e1);
       sources = await desktopCapturer.getSources({
-        types: ['window', 'screen'],
+        types: ['window'],
         thumbnailSize: { width: 320, height: 180 }
       });
     }
@@ -420,10 +420,7 @@ ipcMain.handle('get-screen-sources', async (event) => {
 
     return sources
       .filter(source => {
-        const isScreen = source.id.startsWith('screen:');
-        if (isScreen) return true;
         const name = (source.name || '').trim().toLowerCase();
-        if (!name) return false;
         // Não oculta janelas de jogos ou navegadores
         if (IGNORED_EXACT_NAMES.includes(name)) return false;
         return true;
@@ -450,7 +447,7 @@ ipcMain.handle('get-screen-sources', async (event) => {
 
         return {
           id: source.id,
-          name: name || (isScreen ? 'Monitor Principal' : 'Janela de Jogo'),
+          name: name || (isScreen ? 'Monitor Principal' : 'Janela sem título'),
           thumbnail: thumbData,
           appIcon: appIconData,
           isScreen,
@@ -459,7 +456,7 @@ ipcMain.handle('get-screen-sources', async (event) => {
       });
   } catch (err) {
     console.error('Erro ao listar fontes de captura:', err);
-    return [];
+    throw err;
   }
 });
 
