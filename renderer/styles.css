@@ -8673,11 +8673,13 @@ button.profile-tag-chip:hover {
 }
 
 @media (max-width: 700px), (max-height: 500px) and (orientation: landscape) and (max-width: 950px) {
+  html,
   body {
+    width: 100%;
     height: 100vh;
     height: 100dvh;
-    min-height: 100vh;
-    min-height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .auth-overlay {
@@ -8972,6 +8974,13 @@ button.profile-tag-chip:hover {
     height: 44px;
   }
 
+  .channel-item,
+  .channel-user-item,
+  .dm-menu-item {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
   .friends-header {
     align-items: flex-start;
     min-height: 48px;
@@ -9016,11 +9025,13 @@ button.profile-tag-chip:hover {
   .stage-container {
     background: var(--bg-primary);
     min-width: 0;
+    min-height: 0;
     position: absolute;
     inset: 0 0 0 58px;
     transform: translateX(100%);
     transition: transform 180ms ease;
     z-index: 20;
+    overflow: hidden;
   }
 
   body.mobile-stage-open .stage-container {
@@ -9193,7 +9204,15 @@ button.profile-tag-chip:hover {
 
   .stage-content {
     min-height: 0;
-    padding: 10px 8px 120px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    padding: 8px 8px calc(132px + env(safe-area-inset-bottom));
+    justify-content: flex-start;
+  }
+
+  .stage-content > .empty-state {
+    margin-block: auto;
   }
 
   .stream-viewer-wrapper {
@@ -9201,7 +9220,13 @@ button.profile-tag-chip:hover {
     height: auto;
     min-height: 0;
     aspect-ratio: 16 / 9;
-    flex: 0 1 auto;
+    flex: 0 0 auto;
+  }
+
+  .voice-self-card {
+    top: 8px;
+    right: 8px;
+    bottom: auto;
   }
 
   .stream-player-controls {
@@ -9230,8 +9255,8 @@ button.profile-tag-chip:hover {
   }
 
   .stream-ctrl-btn {
-    min-width: 42px;
-    min-height: 42px;
+    min-width: 48px;
+    min-height: 48px;
     justify-content: center;
     padding: 8px;
     touch-action: manipulation;
@@ -9246,28 +9271,28 @@ button.profile-tag-chip:hover {
 
   .voice-floating-bar {
     display: grid;
-    grid-template-columns: repeat(3, 44px);
-    bottom: max(10px, env(safe-area-inset-bottom));
+    grid-template-columns: repeat(3, 48px);
+    bottom: calc(8px + env(safe-area-inset-bottom));
     max-width: calc(100% - 16px);
-    gap: 4px;
+    gap: 6px;
     left: 50%;
     padding: 6px;
     transform: translateX(-50%);
   }
 
   .voice-floating-bar > button {
-    width: 44px;
-    min-width: 44px;
-    height: 44px;
-    min-height: 44px;
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
+    min-height: 48px;
     padding: 0;
     touch-action: manipulation;
   }
 
   #btnShareScreen {
-    width: 44px;
-    min-width: 44px;
-    height: 44px;
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
     overflow: hidden;
     padding: 0;
     font-size: 0;
@@ -9278,9 +9303,9 @@ button.profile-tag-chip:hover {
   }
 
   .voice-self-card {
-    top: auto;
+    top: 8px;
     right: 8px;
-    bottom: 88px;
+    bottom: auto;
     width: min(190px, calc(100% - 16px));
   }
 
