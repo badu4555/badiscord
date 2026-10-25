@@ -1,7 +1,9 @@
 package com.badiscord.mobile
 
 import android.Manifest
+import android.app.AlertDialog
 import android.app.Activity
+import android.app.DownloadManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -11,6 +13,9 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
+import android.widget.Toast
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -24,11 +29,29 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private var pendingShare: ShareRequest? = null
     private var pendingWebPermission: PermissionRequest? = null
+    private var pendingInstallerUri: Uri? = null
+    private var updateCheckStarted = false
+    private var requestingInstallPermission = false
+
+    private val installPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        requestingInstallPermission = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.canRequestPackageInstalls()) {
+            launchPendingInstaller()
+        } else {
+            pendingInstallerUri = null
+            clearPendingDownload()
+            Toast.makeText(this, "Autorize a instalação do BADISCORD nas configurações do Android.", Toast.LENGTH_LONG).show()
+        }
+    }
 
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -87,6 +110,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val updateDownloadReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
+            val downloadId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
+            val preferences = getSharedPreferences(UPDATE_PREFERENCES, Context.MODE_PRIVATE)
+            if (downloadId < 0 || downloadId != preferences.getLong(KEY_DOWNLOAD_ID, -1L)) return
+
+            val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+            manager.query(DownloadManager.Query().setFilterById(downloadId)).use { cursor ->
+                if (!cursor.moveToFirst()) {
+                    clearPendingDownload()
+                    Toast.makeText(this@MainActivity, "Não foi possível localizar a atualização baixada.", Toast.LENGTH_LONG).show()
+                    return
+                }
+                when (cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
+                    DownloadManager.STATUS_SUCCESSFUL -> {
+                        preferences.edit().putBoolean(KEY_INSTALL_PENDING, true).apply()
+                        if (hasWindowFocus()) installDownloadedUpdate(downloadId)
+                    }
+                    DownloadManager.STATUS_FAILED -> {
+                        val reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                        clearPendingDownload()
+                        Toast.makeText(this@MainActivity, "Falha ao baixar a atualização (código $reason).", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         webView = WebView(this)
@@ -98,7 +150,18 @@ class MainActivity : ComponentActivity() {
         setContentView(webView)
         configureWebView()
         registerShareStateReceiver()
+        registerUpdateDownloadReceiver()
         webView.loadUrl(TRUSTED_URL)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (requestingInstallPermission) return
+        val preferences = getSharedPreferences(UPDATE_PREFERENCES, Context.MODE_PRIVATE)
+        val downloadId = preferences.getLong(KEY_DOWNLOAD_ID, -1L)
+        if (downloadId >= 0L && preferences.getBoolean(KEY_INSTALL_PENDING, false)) {
+            installDownloadedUpdate(downloadId)
+        }
     }
 
     private fun configureWebView() {
@@ -125,8 +188,11 @@ class MainActivity : ComponentActivity() {
             }
 
             override fun onPageFinished(view: WebView, url: String) {
-                if (!isTrustedUrl(Uri.parse(url)) || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
-                view.evaluateJavascript(NATIVE_BRIDGE_SCRIPT, null)
+                if (!isTrustedUrl(Uri.parse(url))) return
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                    view.evaluateJavascript(NATIVE_BRIDGE_SCRIPT, null)
+                }
+                checkForAppUpdate()
             }
         }
 
@@ -231,6 +297,181 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun registerUpdateDownloadReceiver() {
+        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(updateDownloadReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(updateDownloadReceiver, filter)
+        }
+    }
+
+    private fun checkForAppUpdate() {
+        if (updateCheckStarted) return
+        updateCheckStarted = true
+
+        val preferences = getSharedPreferences(UPDATE_PREFERENCES, Context.MODE_PRIVATE)
+        val existingDownloadId = preferences.getLong(KEY_DOWNLOAD_ID, -1L)
+        if (existingDownloadId >= 0L) {
+            val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+            manager.query(DownloadManager.Query().setFilterById(existingDownloadId)).use { cursor ->
+                if (cursor.moveToFirst()) {
+                    when (cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
+                        DownloadManager.STATUS_PENDING,
+                        DownloadManager.STATUS_RUNNING,
+                        DownloadManager.STATUS_PAUSED -> return
+                        DownloadManager.STATUS_SUCCESSFUL -> {
+                            if (preferences.getBoolean(KEY_INSTALL_PENDING, false)) {
+                                installDownloadedUpdate(existingDownloadId)
+                            }
+                            return
+                        }
+                    }
+                }
+            }
+            clearPendingDownload()
+        }
+
+        Thread {
+            val latest = try {
+                val connection = URL(LATEST_RELEASE_API).openConnection() as HttpURLConnection
+                try {
+                    connection.connectTimeout = UPDATE_TIMEOUT_MS
+                    connection.readTimeout = UPDATE_TIMEOUT_MS
+                    connection.setRequestProperty("Accept", "application/vnd.github+json")
+                    connection.setRequestProperty("User-Agent", "BADISCORD-Android")
+                    connection.connect()
+                    if (connection.responseCode !in 200..299) {
+                        throw IllegalStateException("GitHub retornou HTTP ${connection.responseCode}.")
+                    }
+                    connection.inputStream.bufferedReader().use { JSONObject(it.readText()) }
+                        .takeIf { !it.optBoolean("draft") && !it.optBoolean("prerelease") }
+                } finally {
+                    connection.disconnect()
+                }
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "Não foi possível verificar atualizações do BADISCORD.", error)
+                null
+            }
+
+            val tag = latest?.optString("tag_name").orEmpty()
+            val version = tag.removePrefix("v")
+            val installedVersion = packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
+            val apkAsset = latest?.optJSONArray("assets")
+                ?.let { assets -> (0 until assets.length()).map { assets.optJSONObject(it) } }
+                ?.firstOrNull { it?.optString("name") == ANDROID_APK_NAME }
+            val downloadUrl = apkAsset?.optString("browser_download_url").orEmpty()
+            if (!isValidReleaseTag(tag) || compareVersions(version, installedVersion) <= 0 ||
+                !isTrustedReleaseDownload(downloadUrl)
+            ) return@Thread
+
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                AlertDialog.Builder(this)
+                    .setTitle("Atualização $version disponível")
+                    .setMessage("O BADISCORD pode baixar a atualização agora. O Android pedirá sua confirmação para instalar.")
+                    .setNegativeButton("Depois", null)
+                    .setPositiveButton("Baixar atualização") { _, _ -> enqueueUpdateDownload(downloadUrl, version) }
+                    .show()
+            }
+        }.start()
+    }
+
+    private fun enqueueUpdateDownload(downloadUrl: String, version: String) {
+        try {
+            val request = DownloadManager.Request(Uri.parse(downloadUrl))
+                .setTitle("BADISCORD $version")
+                .setDescription("Baixando atualização")
+                .setMimeType(APK_MIME_TYPE)
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(false)
+                .setDestinationInExternalFilesDir(
+                    this,
+                    Environment.DIRECTORY_DOWNLOADS,
+                    "BADISCORD-$version.apk"
+                )
+            val downloadId = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+            getSharedPreferences(UPDATE_PREFERENCES, Context.MODE_PRIVATE).edit()
+                .putLong(KEY_DOWNLOAD_ID, downloadId)
+                .putBoolean(KEY_INSTALL_PENDING, false)
+                .apply()
+            Toast.makeText(this, "O download continuará em segundo plano. Você será avisado quando terminar.", Toast.LENGTH_LONG).show()
+        } catch (error: Exception) {
+            android.util.Log.e(TAG, "Não foi possível iniciar o download da atualização.", error)
+            Toast.makeText(this, "Não foi possível iniciar o download da atualização.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun installDownloadedUpdate(downloadId: Long) {
+        val uri = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).getUriForDownloadedFile(downloadId)
+        if (uri == null) {
+            clearPendingDownload()
+            Toast.makeText(this, "O APK baixado não está disponível para instalação.", Toast.LENGTH_LONG).show()
+            return
+        }
+        pendingInstallerUri = uri
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            requestingInstallPermission = true
+            installPermissionLauncher.launch(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))
+            )
+            return
+        }
+        launchPendingInstaller()
+    }
+
+    private fun launchPendingInstaller() {
+        val uri = pendingInstallerUri ?: return
+        try {
+            val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+                setDataAndType(uri, APK_MIME_TYPE)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                putExtra(Intent.EXTRA_RETURN_RESULT, true)
+            }
+            startActivity(installIntent)
+            pendingInstallerUri = null
+            clearPendingDownload()
+        } catch (error: Exception) {
+            android.util.Log.e(TAG, "Não foi possível abrir o instalador do Android.", error)
+            pendingInstallerUri = null
+            clearPendingDownload()
+            Toast.makeText(this, "O Android não conseguiu abrir o instalador.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun clearPendingDownload() {
+        getSharedPreferences(UPDATE_PREFERENCES, Context.MODE_PRIVATE).edit()
+            .remove(KEY_DOWNLOAD_ID)
+            .remove(KEY_INSTALL_PENDING)
+            .apply()
+    }
+
+    private fun isValidReleaseTag(tag: String): Boolean =
+        RELEASE_TAG_REGEX.matches(tag)
+
+    private fun isTrustedReleaseDownload(downloadUrl: String): Boolean =
+        runCatching {
+            val uri = Uri.parse(downloadUrl)
+            val segments = uri.pathSegments
+            uri.scheme == "https" && uri.host == RELEASE_HOST && uri.userInfo == null &&
+                uri.query == null && uri.fragment == null && segments.size == 6 &&
+                segments[0] == "badu4555" && segments[1] == "badiscord" &&
+                segments[2] == "releases" && segments[3] == "download" &&
+                isValidReleaseTag(segments[4]) && segments[5] == ANDROID_APK_NAME
+        }.getOrDefault(false)
+
+    private fun compareVersions(left: String, right: String): Int {
+        val leftParts = left.split('.').mapNotNull { it.toIntOrNull() }
+        val rightParts = right.split('.').mapNotNull { it.toIntOrNull() }
+        for (index in 0 until maxOf(leftParts.size, rightParts.size)) {
+            val comparison = (leftParts.getOrElse(index) { 0 }).compareTo(rightParts.getOrElse(index) { 0 })
+            if (comparison != 0) return comparison
+        }
+        return 0
+    }
+
     private fun reportShareState(active: Boolean, message: String) {
         val quotedMessage = JSONObject.quote(message)
         runOnUiThread {
@@ -252,6 +493,7 @@ class MainActivity : ComponentActivity() {
             stopService(Intent(this, ScreenShareService::class.java))
         }
         unregisterReceiver(shareStateReceiver)
+        unregisterReceiver(updateDownloadReceiver)
         super.onDestroy()
     }
 
@@ -276,6 +518,16 @@ class MainActivity : ComponentActivity() {
         private const val TRUSTED_HOST = "badiscord.onrender.com"
         private const val TRUSTED_ORIGIN = "https://$TRUSTED_HOST"
         private const val TRUSTED_URL = "$TRUSTED_ORIGIN"
+        private const val RELEASE_HOST = "github.com"
+        private const val LATEST_RELEASE_API = "https://api.github.com/repos/badu4555/badiscord/releases/latest"
+        private const val ANDROID_APK_NAME = "BADISCORD-Android.apk"
+        private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
+        private const val UPDATE_PREFERENCES = "app_update"
+        private const val KEY_DOWNLOAD_ID = "download_id"
+        private const val KEY_INSTALL_PENDING = "install_pending"
+        private const val UPDATE_TIMEOUT_MS = 10_000
+        private val RELEASE_TAG_REGEX = Regex("""v\d+\.\d+\.\d+""")
+        private const val TAG = "BADISCORD"
 
         private val NATIVE_BRIDGE_SCRIPT = """
             (() => {

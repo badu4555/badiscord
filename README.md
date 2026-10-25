@@ -66,7 +66,19 @@ cd C:\Users\Luis_\badiscord\android
 gradle --no-daemon :app:assembleDebug
 ```
 
-O APK ficará em `android\app\build\outputs\apk\debug\app-debug.apk`. O workflow `Android APK` também compila esse APK e o disponibiliza como artefato de execução. A primeira instalação precisa ser validada em um dispositivo Android real: aceite a permissão de captura na tela do sistema e confirme que a transmissão aparece para outro participante do canal.
+O APK de depuração ficará em `android\app\build\outputs\apk\debug\app-debug.apk`. O workflow `Android APK` também compila esse APK e o disponibiliza como artefato de execução. A primeira instalação precisa ser validada em um dispositivo Android real: aceite a permissão de captura na tela do sistema e confirme que a transmissão aparece para outro participante do canal.
+
+O app Android verifica novas releases ao abrir. Quando houver uma versão nova, é possível iniciar o download dentro do próprio app; o Android abre o instalador e pede confirmação. Para publicar atualizações instaláveis sobre a versão anterior, configure os segredos `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` e `ANDROID_KEY_PASSWORD` nas [configurações de Actions do repositório](https://github.com/badu4555/badiscord/settings/secrets/actions). Gere uma chave de assinatura com `keytool`, guarde o arquivo `.jks` fora do repositório e reutilize-o em todas as releases. As versões Android anteriores à ativação dessa chave foram assinadas com chaves temporárias; a migração inicial exige desinstalar o APK antigo e instalar a versão assinada, o que pode apagar os dados locais.
+
+No Windows com JDK instalado, gere a chave localmente (mantenha o `.jks` seguro e nunca o envie ao repositório):
+
+```powershell
+keytool -genkeypair -v -keystore badiscord-release.jks -alias badiscord -keyalg RSA -keysize 2048 -validity 10000
+$env:ANDROID_KEYSTORE_BASE64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes("$PWD\badiscord-release.jks"))
+Set-Clipboard $env:ANDROID_KEYSTORE_BASE64
+```
+
+Cadastre o conteúdo copiado como `ANDROID_KEYSTORE_BASE64`, as senhas solicitadas pelo `keytool` como `ANDROID_KEYSTORE_PASSWORD` e `ANDROID_KEY_PASSWORD`, e o alias `badiscord` como `ANDROID_KEY_ALIAS`. Faça backup seguro da chave: perdê-la impede que futuras versões atualizem as instalações existentes. Não compartilhe as senhas ou o arquivo de chave.
 
 ## Publicar o backend no Render
 
