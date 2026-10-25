@@ -6,12 +6,20 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import io.livekit.android.LiveKit
 import io.livekit.android.room.Room
+import io.livekit.android.audio.ScreenAudioCapturer
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
+import io.livekit.android.room.track.LocalAudioTrack
+import io.livekit.android.room.track.LocalVideoTrack
+import io.livekit.android.room.track.Track
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +33,8 @@ class ScreenShareService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var room: Room? = null
     private var shareJob: Job? = null
+    private var screenAudioCapturer: ScreenAudioCapturer? = null
+    private var screenAudioTrack: LocalAudioTrack? = null
     private var isStopping = false
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -53,6 +63,21 @@ class ScreenShareService : Service() {
 
         createNotificationChannel()
         val notification = buildNotification()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                var serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                }
+                startForeground(NOTIFICATION_ID, notification, serviceType)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (error: Exception) {
+            publishState(false, error.message ?: "O Android não autorizou o serviço de transmissão.")
+            stopSelf(startId)
+            return
+        }
 
         shareJob = serviceScope.launch {
             try {
@@ -69,7 +94,8 @@ class ScreenShareService : Service() {
                     )
                 )
                 if (!published) throw IllegalStateException("O LiveKit não publicou a tela.")
-                publishState(true)
+                val audioWarning = startScreenAudioCapture(liveKitRoom)
+                publishState(true, audioWarning)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -79,6 +105,53 @@ class ScreenShareService : Service() {
         }
     }
 
+    private suspend fun startScreenAudioCapture(liveKitRoom: Room): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return "A tela está sendo transmitida sem áudio do sistema. A captura de áudio exige Android 10 ou superior."
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            return "A tela está sendo transmitida sem áudio. Permita o acesso ao microfone para capturar o áudio do sistema."
+        }
+
+        return try {
+            val screenTrack = liveKitRoom.localParticipant
+                .getTrackPublication(Track.Source.SCREEN_SHARE)?.track as? LocalVideoTrack
+                ?: return "A tela está sendo transmitida, mas não foi possível iniciar a captura de áudio."
+            liveKitRoom.localParticipant.setMicrophoneEnabled(true)
+            val audioTrack = liveKitRoom.localParticipant
+                .getTrackPublication(Track.Source.MICROPHONE)?.track as? LocalAudioTrack
+                ?: run {
+                    liveKitRoom.localParticipant.setMicrophoneEnabled(false)
+                    return "A tela está sendo transmitida, mas o LiveKit não criou a faixa de áudio."
+                }
+            val capturer = ScreenAudioCapturer.createFromScreenShareTrack(screenTrack)
+            if (capturer == null) {
+                liveKitRoom.localParticipant.setMicrophoneEnabled(false)
+                return "A tela está sendo transmitida sem áudio. O Android não disponibilizou a captura do áudio do sistema."
+            }
+            screenAudioCapturer = capturer
+            screenAudioTrack = audioTrack
+            audioTrack.setAudioBufferCallback(capturer)
+            ""
+        } catch (error: Exception) {
+            releaseScreenAudioCapture()
+            try {
+                liveKitRoom.localParticipant.setMicrophoneEnabled(false)
+            } catch (disableError: Exception) {
+                android.util.Log.w(TAG, "Não foi possível desativar a faixa de áudio após falha.", disableError)
+            }
+            android.util.Log.w(TAG, "Não foi possível iniciar o áudio da transmissão.", error)
+            "A tela está sendo transmitida sem áudio do sistema: ${error.message ?: "captura indisponível"}."
+        }
+    }
+
+    private fun releaseScreenAudioCapture() {
+        screenAudioTrack?.setAudioBufferCallback(null)
+        screenAudioTrack = null
+        screenAudioCapturer?.releaseAudioResources()
+        screenAudioCapturer = null
+    }
+
     private fun stopSharing() {
         if (isStopping) return
         isStopping = true
@@ -86,10 +159,24 @@ class ScreenShareService : Service() {
             shareJob?.cancelAndJoin()
             shareJob = null
             try {
+                releaseScreenAudioCapture()
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "Não foi possível liberar a captura de áudio.", error)
+            }
+            try {
+                room?.localParticipant?.setMicrophoneEnabled(false)
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "A faixa de áudio pode já estar desconectada.", error)
+            }
+            try {
                 room?.localParticipant?.setScreenShareEnabled(false)
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "A tela pode já estar desconectada.", error)
+            }
+            try {
                 room?.disconnect()
             } catch (error: Exception) {
-                android.util.Log.w(TAG, "A transmissão pode já estar desconectada.", error)
+                android.util.Log.w(TAG, "A sala LiveKit pode já estar desconectada.", error)
             } finally {
                 room = null
                 publishState(false)
@@ -145,6 +232,7 @@ class ScreenShareService : Service() {
         }
 
     override fun onDestroy() {
+        releaseScreenAudioCapture()
         serviceScope.cancel()
         room?.disconnect()
         super.onDestroy()

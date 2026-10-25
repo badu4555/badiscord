@@ -932,7 +932,11 @@ async function connectToLiveKitRoom(channelName) {
           audioElement.playsInline = true;
           audioElement.dataset.participantIdentity = participant.identity;
           audioElement.muted = isDeafened;
-          if (publication.source === window.LivekitClient.Track.Source.ScreenShareAudio) {
+          if (
+            publication.source === window.LivekitClient.Track.Source.ScreenShareAudio ||
+            (isMobileScreenShareIdentity(participant.identity) &&
+              publication.source === window.LivekitClient.Track.Source.Microphone)
+          ) {
             audioElement.volume = streamPlayerVolume / 100;
             audioElement.muted = isDeafened || isStreamAudioMuted;
             remoteScreenAudioElements.add(audioElement);
@@ -2131,9 +2135,12 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
         status: 'online',
         isOwner: false,
         isSpeaking: false,
-        isStreaming: false,
+        isStreaming: participant.isStreaming === true,
+        screenShareParticipantId: participant.screenShareParticipantId || participant.id,
+        channelName,
+        serverId,
         pingMs: null,
-        viewerCount: 0
+        viewerCount: Number.isFinite(participant.viewerCount) ? participant.viewerCount : 0
       });
     });
   }
@@ -2214,6 +2221,27 @@ function renderLiveIndicator(member) {
   const indicator = document.createElement('span');
   indicator.className = 'live-indicator';
   indicator.title = `${member.viewerCount || 0} assistindo`;
+  const preview = document.createElement('span');
+  preview.className = 'live-preview-thumbnail';
+  const previewPlaceholder = document.createElement('span');
+  previewPlaceholder.className = 'live-preview-placeholder';
+  previewPlaceholder.textContent = '▶ AO VIVO';
+  preview.appendChild(previewPlaceholder);
+  const previewStream = remoteScreenTracks.get(member.screenShareParticipantId || member.id);
+  if (previewStream) {
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = true;
+    video._liveTrack = previewStream.track;
+    previewStream.track.attach(video);
+    video.play().catch((error) => {
+      console.warn('Não foi possível reproduzir a miniatura da transmissão:', error);
+    });
+    previewPlaceholder.hidden = true;
+    preview.appendChild(video);
+  }
+  indicator.appendChild(preview);
   const badge = document.createElement('span');
   badge.className = 'live-indicator-badge';
   badge.textContent = `● AO VIVO ${member.viewerCount || 0}`;
@@ -2226,22 +2254,55 @@ function renderLiveIndicator(member) {
     watchButton.setAttribute('aria-label', `Assistir à transmissão de ${member.name}`);
     watchButton.addEventListener('click', (event) => {
       event.stopPropagation();
-      watchLiveStream(member.screenShareParticipantId || member.id);
+      watchLiveStream(
+        member.screenShareParticipantId || member.id,
+        member.channelName || currentChannel,
+        member.serverId || activeServerId
+      ).catch((error) => {
+        console.warn('Não foi possível entrar na transmissão:', error);
+        showToast(error.message || 'Não foi possível abrir esta transmissão.', '⚠️');
+      });
     });
     indicator.appendChild(watchButton);
   }
   return indicator;
 }
 
-function watchLiveStream(participantId) {
+function detachLiveIndicatorPreviews(container) {
+  container?.querySelectorAll('.live-preview-thumbnail video').forEach((video) => {
+    video._liveTrack?.detach(video);
+  });
+}
+
+async function watchLiveStream(participantId, channelName = currentChannel, serverId = activeServerId) {
+  if (!channelName || !serverId) {
+    throw new Error('O canal desta transmissão não está mais disponível.');
+  }
+  if (serverId !== activeServerId) {
+    selectServer(serverId);
+  }
+  if (currentChannel !== channelName || livekitRoom?.name !== getLiveKitRoomName(channelName, serverId)) {
+    await joinVoiceChannel(channelName);
+  }
+  if (currentChannel !== channelName || livekitRoom?.state !== 'connected') {
+    throw new Error('Não foi possível entrar no canal de voz para assistir.');
+  }
+
+  let stream = remoteScreenTracks.get(participantId);
+  const waitUntil = Date.now() + 20000;
+  while (!stream && Date.now() < waitUntil) {
+    if (currentChannel !== channelName || livekitRoom?.state !== 'connected') {
+      throw new Error('A conexão com o canal de voz foi encerrada antes da live abrir.');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    stream = remoteScreenTracks.get(participantId);
+  }
   if (!currentChannel || !livekitRoom || livekitRoom.state !== 'connected') {
     showToast('Entre no canal de voz para assistir a esta transmissão.', '⚠️');
     return;
   }
-  const stream = remoteScreenTracks.get(participantId);
   if (!stream || !remoteVideoPlayer || !streamViewerWrapper) {
-    showToast('A transmissão está conectando. Tente novamente em instantes.', '⏳');
-    return;
+    throw new Error('A transmissão não está mais disponível. Atualize a lista e tente novamente.');
   }
   try {
     const mobileQuality = window.LivekitClient?.VideoQuality?.MEDIUM;
@@ -2310,6 +2371,7 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
 
   const targetList = document.getElementById(`users-${channelName}`);
   if (!targetList) return;
+  detachLiveIndicatorPreviews(targetList);
   targetList.innerHTML = '';
 
   const onlineMembers = getVoiceChannelParticipants(channelName, serverId);
@@ -2361,6 +2423,7 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
 // Renderizar participantes na tela principal da sala de voz (Estilo Discord 1:1)
 function renderVoiceParticipants() {
   if (!participantsGrid) return;
+  detachLiveIndicatorPreviews(participantsGrid);
   remoteCameraTracks.forEach((track) => track.detach());
   if (localCamTrack) localCamTrack.detach();
   participantsGrid.innerHTML = '';
@@ -2509,7 +2572,11 @@ async function joinVoiceChannel(channelName) {
     return;
   }
 
-  if (currentChannel === channelName) {
+  if (
+    currentChannel === channelName &&
+    livekitRoom?.state === 'connected' &&
+    livekitRoom.name === getLiveKitRoomName(channelName)
+  ) {
     switchView('voice');
     return;
   }
@@ -7095,6 +7162,7 @@ window.onAndroidScreenShareStateChanged = (active, message = '') => {
   if (panel) panel.classList.add('is-live');
   if (gameActivityStatus) gameActivityStatus.textContent = 'AO VIVO • Tela do celular';
   if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'none';
+  if (message) showToast(message, '⚠️');
   refreshVoiceParticipantViews();
 };
 

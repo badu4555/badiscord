@@ -1119,12 +1119,31 @@ app.get('/api/servers/:serverId/voice-participants', requireAuth, async (req, re
     const rooms = roomNames.length ? await livekitRoomService.listRooms(roomNames) : [];
     const channelEntries = await Promise.all(rooms.map(async (room) => {
       const participants = await livekitRoomService.listParticipants(room.name);
+      const participantsByIdentity = new Map();
+      participants.forEach((participant) => {
+        const isMobileScreenShare = participant.identity.endsWith('-mobile-screen');
+        const identity = isMobileScreenShare
+          ? participant.identity.slice(0, -'-mobile-screen'.length)
+          : participant.identity;
+        const existing = participantsByIdentity.get(identity) || {
+          id: identity,
+          name: participant.name?.replace(/ \(Tela móvel\)$/, '') || 'Usuário',
+          isStreaming: false,
+          screenShareParticipantId: identity
+        };
+        existing.isStreaming ||= isMobileScreenShare || (participant.tracks || []).some((track) => (
+          track.source === TrackSource.SCREEN_SHARE
+        ));
+        if (isMobileScreenShare) existing.screenShareParticipantId = participant.identity;
+        participantsByIdentity.set(identity, existing);
+      });
+      const roomParticipants = Array.from(participantsByIdentity.values());
       return [
         room.name,
-        participants.map((participant) => ({
-          id: participant.identity,
-          name: participant.name || 'Usuário'
-        })).filter((participant) => !participant.id.endsWith('-mobile-screen'))
+        roomParticipants.map((participant) => ({
+          ...participant,
+          viewerCount: Math.max(0, roomParticipants.length - 1)
+        }))
       ];
     }));
     const channelsByRoom = new Map(channelEntries);
@@ -2012,7 +2031,7 @@ app.post('/api/token', requireAuth, async (req, res) => {
           roomJoin: true,
           room: roomName,
           canPublish: true,
-          canPublishSources: [TrackSource.SCREEN_SHARE],
+          canPublishSources: [TrackSource.SCREEN_SHARE, TrackSource.MICROPHONE],
           canSubscribe: false,
           canPublishData: false
         }

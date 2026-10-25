@@ -81,7 +81,7 @@ class MainActivity : ComponentActivity() {
             putExtra(ScreenShareService.EXTRA_PROJECTION_DATA, result.data)
         }
         try {
-            if (startService(serviceIntent) == null) {
+            if (startForegroundService(serviceIntent) == null) {
                 reportShareState(false, "O Android não conseguiu iniciar o serviço de transmissão.")
             }
         } catch (error: IllegalStateException) {
@@ -95,6 +95,20 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) {
         if (pendingShare != null) launchScreenCapturePermission()
+    }
+
+    private val screenAudioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        if (pendingShare == null) return@registerForActivityResult
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            launchScreenCapturePermission()
+        }
     }
 
     private val webPermissionLauncher = registerForActivityResult(
@@ -310,7 +324,9 @@ class MainActivity : ComponentActivity() {
                     return
                 }
                 pendingShare = request
-                if (
+                if (!hasPermission(Manifest.permission.RECORD_AUDIO)) {
+                    screenAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                } else if (
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                     !hasPermission(Manifest.permission.POST_NOTIFICATIONS)
                 ) {

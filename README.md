@@ -59,7 +59,9 @@ O instalador, o ZIP portátil e os metadados de atualização serão gerados na 
 
 ## Aplicativo Android
 
-O projeto Android fica em `android/` e usa um WebView restrito ao domínio oficial do BADISCORD. Para transmitir, o aplicativo solicita a permissão de captura de tela do Android e publica o vídeo por um participante LiveKit separado, sem substituir a conexão de voz do WebView. A transmissão permanece ativa em segundo plano por meio de um serviço foreground e pode ser encerrada pelo botão na notificação.
+O projeto Android fica em `android/` e usa um WebView restrito ao domínio oficial do BADISCORD. Para transmitir, o aplicativo solicita as permissões de áudio e captura de tela do Android e publica vídeo e áudio do sistema por um participante LiveKit separado, sem substituir a conexão de voz do WebView. A captura do áudio do sistema requer Android 10 ou superior; alguns aplicativos podem bloquear a captura por política própria. A transmissão permanece ativa em segundo plano por meio de um serviço foreground e pode ser encerrada pelo botão na notificação.
+
+Membros autenticados de um servidor veem o indicador e a miniatura das transmissões ativas nos canais de voz. O botão `Assistir` entra no canal autorizado e abre a live automaticamente; ele não concede acesso a pessoas que não são membros do servidor.
 
 Em um computador com JDK 17 ou superior, Android SDK (API 35) e Gradle 8.9, gere o APK de depuração com:
 
