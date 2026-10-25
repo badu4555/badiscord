@@ -3045,6 +3045,13 @@ button.profile-tag-chip:hover {
   line-height: 1.45;
 }
 
+.stream-quality-help {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .stream-mode-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;

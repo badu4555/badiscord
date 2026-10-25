@@ -612,6 +612,8 @@ let livekitAudioTrack = null;
 let localVoiceCanPublish = true;
 let livekitScreenTrack = null;
 let livekitScreenAudioTrack = null;
+let localStreamResolution = null;
+let localStreamFps = null;
 const SOUNDBOARD_TRACK_NAME = 'badiscord-soundboard';
 let soundboardLiveKitTrack = null;
 let soundboardPublishInFlight = null;
@@ -2106,6 +2108,10 @@ function watchLiveStream(participantId) {
     return;
   }
   try {
+    const mobileQuality = window.LivekitClient?.VideoQuality?.MEDIUM;
+    const desktopQuality = window.LivekitClient?.VideoQuality?.HIGH;
+    const requestedQuality = isMobileStreamDevice() ? mobileQuality : desktopQuality;
+    if (requestedQuality !== undefined) stream.publication?.setVideoQuality(requestedQuality);
     stream.track.attach(remoteVideoPlayer);
     remoteVideoPlayer.muted = true;
     remoteVideoPlayer.defaultMuted = true;
@@ -2130,6 +2136,15 @@ function watchLiveStream(participantId) {
     console.warn('Não foi possível abrir a transmissão:', error);
     showToast('Não foi possível abrir esta transmissão.', '⚠️');
   }
+}
+
+function isMobileStreamDevice() {
+  const userAgent = navigator.userAgent || '';
+  return Boolean(
+    navigator.userAgentData?.mobile ||
+    /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent) ||
+    (/Macintosh/i.test(userAgent) && navigator.maxTouchPoints > 1)
+  );
 }
 
 function stopWatchingLive() {
@@ -3649,9 +3664,9 @@ async function checkRunningGame() {
 
     if (localScreenTrack) {
       if (panel) panel.classList.add('is-live');
-      const configuredResolution = localStorage.getItem('badiscord_stream_res') || '1080';
+      const configuredResolution = localStreamResolution || localStorage.getItem('badiscord_stream_res') || '1080';
       const resolutionLabel = configuredResolution === '1440' ? '2K (1440p)' : `${configuredResolution}p`;
-      const configuredFps = localStorage.getItem('badiscord_stream_fps') || '60';
+      const configuredFps = localStreamFps || localStorage.getItem('badiscord_stream_fps') || '60';
       if (statusEl) statusEl.textContent = `AO VIVO em ${resolutionLabel} ${configuredFps}FPS`;
       if (btnQuick) {
         btnQuick.innerHTML = '⏹️';
@@ -6796,6 +6811,14 @@ async function stopCurrentStream() {
   }
   isLocalStreamer = false;
   isLoopbackEnabled = false;
+  localStreamResolution = null;
+  localStreamFps = null;
+  const resolutionBadge = document.querySelector('.res-pill');
+  if (resolutionBadge) {
+    const configuredResolution = localStorage.getItem('badiscord_stream_res') || '1080';
+    const configuredFps = localStorage.getItem('badiscord_stream_fps') || '60';
+    resolutionBadge.textContent = `${configuredResolution === '1440' ? '2K (1440p)' : `${configuredResolution}p`} ${configuredFps}FPS`;
+  }
   const liveViewerCount = document.getElementById('liveViewerCount');
   if (liveViewerCount) liveViewerCount.textContent = '👁 0';
   if (btnStopStreamDirect) btnStopStreamDirect.style.display = '';
@@ -6975,14 +6998,19 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     return;
   }
 
-  const targetRes = parseInt((selectResolution && selectResolution.value) || localStorage.getItem('badiscord_stream_res') || '1080', 10);
-  const targetFps = parseInt((selectFps && selectFps.value) || localStorage.getItem('badiscord_stream_fps') || '60', 10);
+  const requestedRes = parseInt((selectResolution && selectResolution.value) || localStorage.getItem('badiscord_stream_res') || '1080', 10);
+  const requestedFps = parseInt((selectFps && selectFps.value) || localStorage.getItem('badiscord_stream_fps') || '60', 10);
+  const mobilePublisher = isMobileStreamDevice();
+  const targetRes = mobilePublisher && requestedRes > 1080 ? 1080 : requestedRes;
+  const targetFps = mobilePublisher ? Math.min(requestedFps, 30) : requestedFps;
   const includeAudio = chkStreamAudio ? chkStreamAudio.checked : true;
 
-  localStorage.setItem('badiscord_stream_res', String(targetRes));
-  localStorage.setItem('badiscord_stream_fps', String(targetFps));
-
+  localStorage.setItem('badiscord_stream_res', String(requestedRes));
+  localStorage.setItem('badiscord_stream_fps', String(requestedFps));
   if (screenShareModal) screenShareModal.style.display = 'none';
+  if (mobilePublisher && (targetRes !== requestedRes || targetFps !== requestedFps)) {
+    showToast(`Modo otimizado para celular: transmissão em ${targetRes}p ${targetFps} FPS para reduzir travamentos.`, '⚡');
+  }
 
   try {
     let stream;
@@ -7053,11 +7081,18 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
       source: screenShareSource,
       name: sourceTitle || 'BADISCORD Live',
       stream: `screen-share-${authenticatedAccount.id}`,
-      videoEncoding: {
-        maxBitrate: targetRes === 1440 ? 9000000 : (targetRes === 1080 ? 5000000 : 2500000),
+      screenShareEncoding: {
+        maxBitrate: targetRes === 1440 ? 12000000 : (targetRes === 1080 ? 8000000 : 4000000),
         maxFramerate: targetFps
-      }
+      },
+      screenShareSimulcastLayers: [
+        window.LivekitClient.VideoPresets.h720,
+        window.LivekitClient.VideoPresets.h360
+      ],
+      degradationPreference: 'balanced'
     });
+    localStreamResolution = targetRes;
+    localStreamFps = targetFps;
     if (localScreenAudioTrack) {
       await room.localParticipant.publishTrack(localScreenAudioTrack, {
         source: screenShareAudioSource,
@@ -7095,6 +7130,10 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     if (gameActivityStatus) {
       gameActivityStatus.textContent = `AO VIVO em ${targetRes === 1440 ? '2K (1440p)' : `${targetRes}p`} ${targetFps}FPS`;
     }
+    const resolutionBadge = document.querySelector('.res-pill');
+    if (resolutionBadge) {
+      resolutionBadge.textContent = `${targetRes === 1440 ? '2K (1440p)' : `${targetRes}p`} ${targetFps}FPS`;
+    }
 
     if (btnGameQuickStream) {
       btnGameQuickStream.innerHTML = '⏹️';
@@ -7119,7 +7158,7 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
       stopCurrentStream();
     };
 
-    showToast('Transmissão iniciada!', '📡');
+    if (!mobilePublisher) showToast('Transmissão iniciada!', '📡');
   } catch (err) {
     await stopCurrentStream();
     console.error('Falha ao iniciar captura da tela:', err);
