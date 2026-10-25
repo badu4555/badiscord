@@ -752,7 +752,6 @@ async function connectToLiveKitRoom(channelName) {
   livekitConnectionInFlight = true;
 
   try {
-    const livekitUrl = await fetchLiveKitConfig();
     const roomName = getLiveKitRoomName(channelName);
     const participantName = userProfile.displayName || 'Bads';
 
@@ -895,7 +894,10 @@ async function connectToLiveKitRoom(channelName) {
       await livekitRoom.disconnect();
     }
 
-    const credentials = await requestLiveKitToken(roomName, participantName);
+    const [livekitUrl, credentials] = await Promise.all([
+      fetchLiveKitConfig(),
+      requestLiveKitToken(roomName, participantName)
+    ]);
     localVoiceCanPublish = credentials.canPublish;
     await livekitRoom.prepareConnection(livekitUrl, credentials.token);
     await livekitRoom.connect(livekitUrl, credentials.token);
@@ -2414,7 +2416,7 @@ async function joinVoiceChannel(channelName) {
   try {
     const room = await connectToLiveKitRoom(channelName);
     if (!room || room.state !== 'connected') throw new Error('Não foi possível conectar ao canal de voz.');
-    await measurePing();
+    void measurePing();
     const microphoneTrack = await publishMicToLiveKit();
     if (microphoneTrack?.mediaStreamTrack) {
       localAudioTrack = microphoneTrack.mediaStreamTrack;
@@ -3568,6 +3570,11 @@ async function toggleCamera() {
     showToast('📹 Câmera desativada', '📹');
   } else {
     try {
+      const accepted = window.confirm('O BADISCORD precisa da sua permissão para acessar a câmera e transmitir seu vídeo aos participantes. Deseja permitir?');
+      if (!accepted) return;
+      if (window.electronAPI?.grantCameraPermission) {
+        await window.electronAPI.grantCameraPermission();
+      }
       if (!window.LivekitClient?.createLocalVideoTrack) {
         throw new Error('A câmera não está disponível neste navegador.');
       }
@@ -3728,13 +3735,12 @@ if (btnGameQuickStream) {
       return;
     }
 
-    currentCaptureTab = 'windows';
-    if (tabWindows) tabWindows.classList.add('active');
+    setCaptureTab('games');
     if (inputSearchSources) inputSearchSources.value = '';
     sourceSearchQuery = '';
 
-    await fetchAndRenderSources();
     screenShareModal.style.display = 'flex';
+    await fetchAndRenderSources();
   });
 }
 
@@ -4035,7 +4041,13 @@ function renderFriendsList(filter = '') {
   if (!friendsCardsList) return;
   friendsCardsList.innerHTML = '';
 
-  const filtered = friendsList.filter(f => {
+  const statusFilteredFriends = friendsList.filter((friend) => {
+    const isOnline = (friend.status || 'online') !== 'offline';
+    if (currentFriendsTab === 'online') return isOnline;
+    if (currentFriendsTab === 'offline') return !isOnline;
+    return true;
+  });
+  const filtered = statusFilteredFriends.filter(f => {
     if (!filter) return true;
     const q = filter.toLowerCase();
     return f.name.toLowerCase().includes(q) || 
@@ -4045,10 +4057,12 @@ function renderFriendsList(filter = '') {
   });
 
   if (friendsCountLabel) {
-    friendsCountLabel.textContent = `ONLINE — ${filtered.length}`;
+    const sectionName = currentFriendsTab === 'offline' ? 'OFFLINE' : (currentFriendsTab === 'all' ? 'TODOS' : 'ONLINE');
+    friendsCountLabel.textContent = `${sectionName} — ${filtered.length}`;
   }
 
   if (filtered.length === 0) {
+    const noStatusMatches = friendsList.length > 0 && !filter && currentFriendsTab !== 'all';
     const empty = document.createElement('div');
     empty.className = 'friends-empty-state';
     empty.innerHTML = `
@@ -4056,6 +4070,10 @@ function renderFriendsList(filter = '') {
       <div class="friends-empty-title">${friendsList.length === 0 ? 'Nenhum amigo adicionado ainda' : 'Nenhum resultado encontrado'}</div>
       <div class="friends-empty-desc">${friendsList.length === 0 ? 'Clique em "Adicionar amigo" e informe um nome com tag (ex: bads#0000) para começar!' : 'Tente buscar com outro nome ou tag.'}</div>
     `;
+    if (noStatusMatches) {
+      empty.querySelector('.friends-empty-title').textContent = `Nenhum amigo ${currentFriendsTab === 'offline' ? 'offline' : 'online'}`;
+      empty.querySelector('.friends-empty-desc').textContent = `Os amigos ${currentFriendsTab === 'offline' ? 'offline' : 'online'} aparecerão aqui.`;
+    }
     friendsCardsList.appendChild(empty);
     return;
   }
@@ -4080,7 +4098,7 @@ function renderFriendsList(filter = '') {
     }
 
     const dot = document.createElement('div');
-    dot.className = 'friend-card-avatar-dot';
+    dot.className = `friend-card-avatar-dot${(friend.status || 'online') === 'offline' ? ' offline' : ''}`;
     avatar.appendChild(dot);
 
     const info = document.createElement('div');
@@ -5784,7 +5802,14 @@ async function renderExploreServers() {
     if (alreadyIn) btnJoin.style.opacity = '0.5';
 
     btnJoin.addEventListener('click', async () => {
+      if (!hasAuthenticatedSession()) {
+        showAuthOverlay();
+        openAuthView('viewAuthLogin');
+        showToast('Faça login para entrar em um servidor.', '🔒');
+        return;
+      }
       const newSrv = {
+        ...pub,
         id: pub.id,
         name: pub.name,
         icon: pub.icon,
@@ -5792,13 +5817,29 @@ async function renderExploreServers() {
         textChannels: pub.textChannels?.length ? pub.textChannels : ['geral', 'apresentacao', 'midia'],
         voiceChannels: pub.voiceChannels?.length ? pub.voiceChannels : ['Bate-Papo 🔊', 'Call Geral']
       };
-      servers.push(newSrv);
-      saveServers();
-      const joined = await syncLocalServersWithBackend(newSrv.id);
-      if (!joined) return;
-      closeCreateServerModal();
-      showToast(`Você entrou na comunidade "${pub.name}"! 🎉`, '✅');
-      restoreServerView(newSrv.id);
+      btnJoin.disabled = true;
+      btnJoin.textContent = 'Entrando...';
+      try {
+        const response = await fetch(`/api/servers/${encodeURIComponent(newSrv.id)}/join`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { Accept: 'application/json' }
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Não foi possível entrar neste servidor.');
+
+        servers = servers.filter((server) => server.id !== newSrv.id);
+        servers.push(newSrv);
+        saveServers();
+        closeCreateServerModal();
+        selectServer(newSrv.id);
+        openTextChannel(newSrv.textChannels[0] || 'geral');
+        showToast(`Você entrou na comunidade "${pub.name}"! 🎉`, '✅');
+      } catch (error) {
+        btnJoin.disabled = false;
+        btnJoin.textContent = 'Entrar';
+        showToast(error.message || 'Não foi possível entrar neste servidor.', '⚠️');
+      }
     });
 
     card.appendChild(left);
@@ -6356,6 +6397,7 @@ function updatePingUI(ms) {
 // MODAL DE TRANSMISSÃO DE JOGOS & JANELAS (ESTILO DISCORD)
 // ==========================================
 const tabWindows = document.getElementById('tabWindows');
+const tabGames = document.getElementById('tabGames');
 const btnRefreshSources = document.getElementById('btnRefreshSources');
 const inputSearchSources = document.getElementById('inputSearchSources');
 const gamePrivacyBanner = document.getElementById('gamePrivacyBanner');
@@ -6363,26 +6405,25 @@ const selectedTargetName = document.getElementById('selectedTargetName');
 const chkStreamAudio = document.getElementById('chkStreamAudio');
 
 let cachedSources = [];
-let currentCaptureTab = 'windows'; // Padrão: Janelas & Jogos focados
+let currentCaptureTab = 'games';
 let sourceSearchQuery = '';
 let sourceLoadError = '';
 
-if (tabWindows) {
-  tabWindows.addEventListener('click', () => {
-    currentCaptureTab = 'windows';
-    tabWindows.classList.add('active');
-    if (gamePrivacyBanner) {
-      gamePrivacyBanner.className = 'game-privacy-banner';
-      gamePrivacyBanner.innerHTML = `
-        <span class="privacy-shield-icon">🛡️</span>
-        <div class="privacy-text">
-          <strong>Somente janela:</strong> Apenas a janela selecionada é transmitida; o monitor inteiro nunca é compartilhado.
-        </div>
-      `;
-    }
-    renderSourcesFiltered();
-  });
+function setCaptureTab(tab) {
+  currentCaptureTab = tab;
+  tabGames?.classList.toggle('active', tab === 'games');
+  tabWindows?.classList.toggle('active', tab === 'windows');
+  if (gamePrivacyBanner) {
+    gamePrivacyBanner.className = 'game-privacy-banner';
+    gamePrivacyBanner.innerHTML = tab === 'games'
+      ? '<span class="privacy-shield-icon">🛡️</span><div class="privacy-text"><strong>Detecção privada:</strong> somente jogos reconhecidos aparecem automaticamente. Navegadores e outras janelas ficam ocultos nesta aba.</div>'
+      : '<span class="privacy-shield-icon">🛡️</span><div class="privacy-text"><strong>Escolha manual:</strong> selecione uma janela específica, como seu navegador para transmitir um vídeo do YouTube. O monitor inteiro nunca é compartilhado.</div>';
+  }
+  renderSourcesFiltered();
 }
+
+if (tabGames) tabGames.addEventListener('click', () => setCaptureTab('games'));
+if (tabWindows) tabWindows.addEventListener('click', () => setCaptureTab('windows'));
 
 if (inputSearchSources) {
   inputSearchSources.addEventListener('input', (e) => {
@@ -6443,6 +6484,8 @@ function renderSourcesFiltered() {
     if (source.isScreen) return false;
     const isSelfWindow = (source.name || '').trim().toLowerCase() === 'badiscord';
     if (isSelfWindow) return false;
+    if (currentCaptureTab === 'games' && !source.isGame) return false;
+    if (currentCaptureTab === 'windows' && source.isGame) return false;
 
     if (sourceSearchQuery) {
       const name = (source.name || '').toLowerCase();
@@ -6461,10 +6504,9 @@ function renderSourcesFiltered() {
   if (filtered.length === 0) {
     const emptyDiv = document.createElement('div');
     emptyDiv.className = 'sources-empty';
-    emptyDiv.innerHTML = `
-      <p>🎮 Nenhuma janela de jogo encontrada ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p>
-      <small>Abra o jogo e clique em 🔄 <strong>Atualizar</strong>. Se ele estiver em tela cheia exclusiva e não aparecer, altere o modo de exibição para <strong>Janela sem bordas</strong> ou <strong>Janela</strong>; assim, somente a janela do jogo poderá ser capturada.</small>
-    `;
+    emptyDiv.innerHTML = currentCaptureTab === 'games'
+      ? `<p>🎮 Nenhum jogo detectado ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p><small>Abra um jogo e clique em 🔄 <strong>Atualizar</strong>. Para transmitir um navegador ou outro aplicativo, escolha a aba <strong>Outras janelas</strong>.</small>`
+      : `<p>🪟 Nenhuma outra janela encontrada ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p><small>Use esta aba para escolher manualmente um navegador ou aplicativo específico. A janela só será transmitida depois que você a selecionar.</small>`;
     sourcesGrid.appendChild(emptyDiv);
     return;
   }
@@ -6567,7 +6609,6 @@ const streamVolumeSlider = document.getElementById('streamVolumeSlider');
 const streamVolumePercent = document.getElementById('streamVolumePercent');
 const btnStreamAudioMute = document.getElementById('btnStreamAudioMute');
 const streamMuteIcon = document.getElementById('streamMuteIcon');
-const streamAudioControls = document.getElementById('streamAudioControls');
 const btnStreamFullscreen = document.getElementById('btnStreamFullscreen');
 const btnStopStreamDirect = document.getElementById('btnStopStreamDirect');
 const streamVolumeHud = document.getElementById('streamVolumeHud');
@@ -6813,7 +6854,6 @@ async function stopCurrentStream() {
   const liveViewerCount = document.getElementById('liveViewerCount');
   if (liveViewerCount) liveViewerCount.textContent = '👁 0';
   if (btnStopStreamDirect) btnStopStreamDirect.style.display = '';
-  if (streamAudioControls) streamAudioControls.style.display = '';
   const localIdentity = livekitRoom?.localParticipant?.identity;
   if (localIdentity) remoteScreenTracks.delete(localIdentity);
   refreshVoiceParticipantViews();
@@ -6908,13 +6948,12 @@ btnShareScreen.addEventListener('click', async () => {
   }
 
   // Garantir que a aba Janelas & Jogos esteja ativa por padrão
-  currentCaptureTab = 'windows';
-  if (tabWindows) tabWindows.classList.add('active');
+  setCaptureTab('games');
   if (inputSearchSources) inputSearchSources.value = '';
   sourceSearchQuery = '';
 
-  await fetchAndRenderSources();
   screenShareModal.style.display = 'flex';
+  await fetchAndRenderSources();
 });
 
 btnCloseModal.addEventListener('click', () => screenShareModal.style.display = 'none');
@@ -7078,8 +7117,6 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     }
 
     if (streamLoopbackBadge) streamLoopbackBadge.style.display = 'inline-flex';
-    if (streamAudioControls) streamAudioControls.style.display = 'none';
-
     updateStreamVolume(streamPlayerVolume, false);
 
     const streamerName = document.getElementById('streamerName');
@@ -7112,10 +7149,11 @@ if (btnTestGameSelect) {
   btnTestGameSelect.addEventListener('click', async () => {
     closeSettings();
     if (!window.electronAPI) return;
-    currentCaptureTab = 'windows';
-    if (tabWindows) tabWindows.classList.add('active');
-    await fetchAndRenderSources();
+    setCaptureTab('games');
+    if (inputSearchSources) inputSearchSources.value = '';
+    sourceSearchQuery = '';
     screenShareModal.style.display = 'flex';
+    await fetchAndRenderSources();
   });
 }
 

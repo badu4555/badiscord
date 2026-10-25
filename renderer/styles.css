@@ -796,9 +796,8 @@ body {
   justify-content: space-between;
   align-items: center;
   z-index: 20;
-  opacity: 0;
-  transition: opacity 0.15s ease;
-  pointer-events: none;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .stream-viewer-wrapper:hover .stream-player-controls {
@@ -4768,6 +4767,10 @@ button.profile-tag-chip:hover {
   border: 3px solid #313338;
   background-color: #23a55a;
   z-index: 1;
+}
+
+.friend-card-avatar-dot.offline {
+  background-color: #80848e;
 }
 
 .friend-card-info {

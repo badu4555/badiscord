@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   getScreenSources: () => ipcRenderer.invoke('get-screen-sources'),
   getDetectedGame: () => ipcRenderer.invoke('get-detected-game'),
+  grantCameraPermission: () => ipcRenderer.invoke('camera-permission:grant'),
   startProcessAudioCapture: (sourceId) => ipcRenderer.invoke('start-process-audio-capture', sourceId),
   resumeProcessAudioCapture: () => ipcRenderer.invoke('resume-process-audio-capture'),
   stopProcessAudioCapture: () => ipcRenderer.invoke('stop-process-audio-capture'),

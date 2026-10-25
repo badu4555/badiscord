@@ -1266,6 +1266,20 @@ app.get('/api/servers/public', (req, res) => {
   return res.json({ servers: listPublicServers() });
 });
 
+app.post('/api/servers/:serverId/join', requireAuth, (req, res) => {
+  const serverId = normalize(req.params.serverId);
+  if (!SERVER_ID_POLICY.test(serverId)) return res.status(400).json({ error: 'Servidor inválido.' });
+
+  const server = db.prepare('SELECT id, is_public FROM servers WHERE id = ?').get(serverId);
+  if (!server) return res.status(404).json({ error: 'Servidor não encontrado.' });
+  if (!server.is_public) return res.status(403).json({ error: 'Este servidor não está aberto para entrada pública.' });
+  if (isServerBanned(req.user.id, serverId)) return res.status(403).json({ error: 'Você não pode entrar neste servidor.' });
+
+  db.prepare(`INSERT OR IGNORE INTO server_members (server_id, user_id, role, joined_at)
+    VALUES (?, ?, 'member', ?)`).run(serverId, req.user.id, new Date().toISOString());
+  return res.json({ ok: true });
+});
+
 app.post('/api/servers', requireAuth, (req, res) => {
   const name = normalize(req.body?.name).slice(0, 32);
   const icon = normalize(req.body?.icon).slice(0, 16) || '🎮';

@@ -607,7 +607,8 @@
             <h3>Amigos</h3>
             <span class="friends-header-divider"></span>
             <div class="friends-tabs">
-              <button class="friends-tab-btn active" data-tab="online">Disponível</button>
+              <button class="friends-tab-btn active" data-tab="online">Online</button>
+              <button class="friends-tab-btn" data-tab="offline">Offline</button>
               <button class="friends-tab-btn" data-tab="all">Todos</button>
               <button class="friends-tab-btn" data-tab="pending">
                 Pendente
@@ -765,15 +766,15 @@
     <span class="toast-msg" id="toastMsg">Link copiado!</span>
   </div>
 
-  <!-- Modal de Seleção de Tela e Janelas de Jogos (Estilo Discord) -->
+  <!-- Modal de seleção manual de jogos ou janelas para transmissão -->
   <div class="modal-overlay" id="screenShareModal" style="display: none;">
     <div class="modal-card modal-stream-card">
       <header class="modal-header">
         <div class="modal-header-info">
           <div class="modal-header-icon">🎮</div>
           <div>
-            <h3>Transmitir Jogo ou Janela</h3>
-            <p class="modal-subtitle">Somente a janela do jogo selecionado será transmitida. Monitores inteiros não são compartilhados.</p>
+            <h3>Transmitir jogo ou janela</h3>
+            <p class="modal-subtitle">Jogos são detectados automaticamente. Escolha manualmente outra janela para transmitir um vídeo ou aplicativo. Monitores inteiros não são compartilhados.</p>
           </div>
         </div>
         <button class="close-modal" id="btnCloseModal">✕</button>
@@ -781,13 +782,16 @@
 
       <div class="modal-tabs-bar">
         <div class="modal-tabs">
-          <button class="tab-btn active" id="tabWindows">
-            <span class="tab-icon">🎮</span> Janelas & Jogos
+          <button class="tab-btn active" id="tabGames">
+            <span class="tab-icon">🎮</span> Jogos detectados
             <span class="tab-badge-rec">Recomendado</span>
+          </button>
+          <button class="tab-btn" id="tabWindows">
+            <span class="tab-icon">🪟</span> Outras janelas
           </button>
         </div>
         <div class="modal-search-wrapper">
-          <input type="text" id="inputSearchSources" class="source-search-input" placeholder="🔍 Filtrar jogos ou janelas...">
+          <input type="text" id="inputSearchSources" class="source-search-input" placeholder="🔍 Buscar nesta aba...">
         </div>
         <button class="refresh-sources-btn" id="btnRefreshSources" title="Recarregar Janelas e Jogos Abertos">
           <span class="refresh-icon">🔄</span> Atualizar
@@ -797,7 +801,7 @@
       <div class="game-privacy-banner" id="gamePrivacyBanner">
         <span class="privacy-shield-icon">🛡️</span>
         <div class="privacy-text">
-          <strong>Somente janela:</strong> Apenas a janela selecionada é enviada para os participantes. O BADISCORD nunca transmite o monitor inteiro.
+          <strong>Detecção privada:</strong> somente jogos reconhecidos aparecem automaticamente. Navegadores e outras janelas ficam ocultos nesta aba.
         </div>
       </div>
 

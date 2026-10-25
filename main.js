@@ -9,6 +9,29 @@ const { spawn } = require('child_process');
 const APP_ORIGIN = app.isPackaged
   ? 'https://badiscord.onrender.com'
   : 'http://localhost:3000';
+const GAME_KEYWORDS = [
+  'roblox', 'minecraft', 'valorant', 'counter-strike', 'cs:go', 'cs2', 'league of legends', 'lol',
+  'gta', 'grand theft auto', 'fortnite', 'apex legends', 'apex', 'genshin', 'cyberpunk',
+  'rocket league', 'call of duty', 'warzone', 'cod', 'overwatch', 'fifa', 'ea sports fc', 'fc 24', 'fc 25',
+  'dead by daylight', 'terraria', 'among us', 'fivem',
+  'baldurs gate', 'elden ring', 'dota', 'honkai', 'pubg', 'rdr2', 'red dead',
+  'destiny', 'rust', 'rainbow six', 'r6', 'fall guys', 'stumble guys', 'brawlhalla',
+  'forza', 'palworld', 'helldivers', 'wuthering waves', 'zenless', 'tarkov',
+  'path of exile', 'poe', 'world of warcraft', 'wow', 'diablo', 'god of war', 'assassin',
+  'the sims', 'sims', 'lethal company', 'phasmophobia', 'euro truck', 'ets2', 'farming simulator',
+  'cuphead', 'hollow knight', 'hades', 'osu!', 'geometry dash', 'brawl stars', 'clash',
+  'retroarch', 'stardew valley', 'sea of thieves', 'smite'
+];
+const BROWSER_WINDOW_MARKERS = [
+  'chrome', 'microsoft edge', 'edge', 'firefox', 'brave', 'opera',
+  'vivaldi', 'arc browser', 'safari', 'browser'
+];
+
+function isGameWindowName(name) {
+  const lowerName = String(name || '').trim().toLowerCase();
+  if (!lowerName || BROWSER_WINDOW_MARKERS.some((marker) => lowerName.includes(marker))) return false;
+  return GAME_KEYWORDS.some((keyword) => lowerName.includes(keyword));
+}
 
 function isTrustedRenderer(event) {
   try {
@@ -55,6 +78,7 @@ process.on('uncaughtException', (err) => {
 let mainWindow;
 let updateWindow;
 let processAudioCapture = null;
+let cameraPermissionGranted = false;
 let updateState = { status: 'available', version: '' };
 
 autoUpdater.autoDownload = false;
@@ -404,32 +428,17 @@ ipcMain.handle('get-screen-sources', async (event) => {
       'dwm notification window'
     ];
 
-    const GAME_KEYWORDS = [
-      'roblox', 'minecraft', 'valorant', 'counter-strike', 'cs:go', 'cs2', 'league of legends', 'lol',
-      'gta', 'grand theft auto', 'fortnite', 'apex legends', 'apex', 'genshin', 'cyberpunk',
-      'rocket league', 'call of duty', 'warzone', 'cod', 'overwatch', 'fifa', 'ea sports fc', 'fc 24', 'fc 25',
-      'dead by daylight', 'terraria', 'among us', 'fivem', 'steam', 'epic games',
-      'baldurs gate', 'elden ring', 'dota', 'honkai', 'pubg', 'rdr2', 'red dead',
-      'destiny', 'rust', 'rainbow six', 'r6', 'fall guys', 'stumble guys', 'brawlhalla',
-      'forza', 'palworld', 'helldivers', 'wuthering waves', 'zenless', 'tarkov',
-      'path of exile', 'poe', 'world of warcraft', 'wow', 'diablo', 'god of war', 'assassin',
-      'the sims', 'sims', 'lethal company', 'phasmophobia', 'euro truck', 'ets2', 'farming simulator',
-      'cuphead', 'hollow knight', 'hades', 'osu!', 'geometry dash', 'brawl stars', 'clash', 'bluestacks',
-      'retroarch', 'game', 'jogos', 'simulator', 'stardew valley', 'sea of thieves', 'smite'
-    ];
-
     return sources
       .filter(source => {
         const name = (source.name || '').trim().toLowerCase();
-        // Não oculta janelas de jogos ou navegadores
-        if (IGNORED_EXACT_NAMES.includes(name)) return false;
+        if (IGNORED_EXACT_NAMES.includes(name) || name === 'badiscord') return false;
         return true;
       })
       .map(source => {
         const isScreen = source.id.startsWith('screen:');
         const name = (source.name || '').trim();
         const lowerName = name.toLowerCase();
-        const isGame = !isScreen && GAME_KEYWORDS.some(k => lowerName.includes(k));
+        const isGame = !isScreen && isGameWindowName(lowerName);
 
         let appIconData = null;
         try {
@@ -458,6 +467,12 @@ ipcMain.handle('get-screen-sources', async (event) => {
     console.error('Erro ao listar fontes de captura:', err);
     throw err;
   }
+});
+
+ipcMain.handle('camera-permission:grant', (event) => {
+  if (!isTrustedRenderer(event)) throw new Error('Origem da solicitação de câmera inválida.');
+  cameraPermissionGranted = true;
+  return true;
 });
 
 ipcMain.handle('start-process-audio-capture', async (event, sourceId) => {
@@ -504,41 +519,16 @@ ipcMain.handle('get-detected-game', async (event) => {
       'badiscord'
     ];
 
-    const GAME_KEYWORDS = [
-      'roblox', 'minecraft', 'valorant', 'counter-strike', 'cs:go', 'cs2', 'league of legends', 'lol',
-      'gta', 'grand theft auto', 'fortnite', 'apex legends', 'apex', 'genshin', 'cyberpunk',
-      'rocket league', 'call of duty', 'warzone', 'cod', 'overwatch', 'fifa', 'ea sports fc', 'fc 24', 'fc 25',
-      'dead by daylight', 'terraria', 'among us', 'fivem', 'steam', 'epic games',
-      'baldurs gate', 'elden ring', 'dota', 'honkai', 'pubg', 'rdr2', 'red dead',
-      'destiny', 'rust', 'rainbow six', 'r6', 'fall guys', 'stumble guys', 'brawlhalla',
-      'forza', 'palworld', 'helldivers', 'wuthering waves', 'zenless', 'tarkov',
-      'path of exile', 'poe', 'world of warcraft', 'wow', 'diablo', 'god of war', 'assassin',
-      'the sims', 'sims', 'lethal company', 'phasmophobia', 'euro truck', 'ets2', 'farming simulator',
-      'cuphead', 'hollow knight', 'hades', 'osu!', 'geometry dash', 'brawl stars', 'clash', 'bluestacks',
-      'retroarch', 'game', 'jogos', 'simulator', 'stardew valley', 'sea of thieves', 'smite'
-    ];
-
     const validWindows = sources.filter(s => {
       const name = (s.name || '').trim().toLowerCase();
       if (!name) return false;
       if (IGNORED_EXACT_NAMES.some(ign => name === ign || name.startsWith('badiscord'))) return false;
-      return true;
+      return isGameWindowName(name);
     });
 
     if (validWindows.length === 0) return null;
 
-    // Prioridade 1: Janela que combina com qualquer palavra-chave de jogo
-    let matchedGame = validWindows.find(s => {
-      const lower = s.name.toLowerCase();
-      return GAME_KEYWORDS.some(k => lower.includes(k));
-    });
-
-    // Prioridade 2: Se não houver jogo por palavra-chave, pegar a primeira janela de aplicação aberta
-    if (!matchedGame) {
-      matchedGame = validWindows[0];
-    }
-
-    if (!matchedGame) return null;
+    const matchedGame = validWindows[0];
 
     let appIconData = null;
     try {
@@ -547,12 +537,10 @@ ipcMain.handle('get-detected-game', async (event) => {
       }
     } catch (e) {}
 
-    const isRecognizedGame = GAME_KEYWORDS.some(k => matchedGame.name.toLowerCase().includes(k));
-
     return {
       id: matchedGame.id,
       name: matchedGame.name.trim(),
-      isGame: isRecognizedGame,
+      isGame: true,
       appIcon: appIconData
     };
   } catch (err) {
@@ -563,14 +551,16 @@ ipcMain.handle('get-detected-game', async (event) => {
 
 app.whenReady().then(() => {
   app.on('web-contents-created', (event, contents) => {
-    contents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    contents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const allowedPermissions = ['media', 'camera', 'microphone', 'display-capture'];
       let isTrustedOrigin = false;
       try {
         isTrustedOrigin = new URL(webContents.getURL()).origin === APP_ORIGIN;
       } catch {}
 
-      if (isTrustedOrigin && allowedPermissions.includes(permission)) {
+      const requestsCamera = permission === 'camera'
+        || (permission === 'media' && details?.mediaTypes?.includes('video'));
+      if (isTrustedOrigin && allowedPermissions.includes(permission) && (!requestsCamera || cameraPermissionGranted)) {
         callback(true);
         return;
       }
