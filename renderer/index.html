@@ -51,6 +51,18 @@
             <span class="auth-link-forgot" id="btnGoToForgot">Esqueceu sua senha?</span>
           </div>
 
+          <div class="auth-options">
+            <label class="auth-option">
+              <input type="checkbox" id="keepConnectedCheckbox">
+              <span>Manter conectado neste celular</span>
+            </label>
+            <label class="auth-option">
+              <input type="checkbox" id="rememberLoginIdCheckbox">
+              <span>Lembrar meu ID e usar o gerenciador de senhas</span>
+            </label>
+            <small class="auth-option-hint">A senha fica salva com segurança pelo navegador ou aparelho, nunca pelo BADISCORD.</small>
+          </div>
+
           <div class="auth-captcha" id="loginRecaptcha"></div>
 
           <button type="submit" class="auth-submit-btn" id="btnLoginSubmit">Entrar</button>
@@ -617,7 +629,7 @@
             <div class="friends-tabs">
               <button class="friends-tab-btn active" data-tab="online">Online</button>
               <button class="friends-tab-btn" data-tab="offline">Offline</button>
-              <button class="friends-tab-btn" data-tab="all">Todos</button>
+              <button class="friends-tab-btn" data-tab="all">Todos <span class="friends-count-badge" id="allFriendsTabBadge" style="display:none">0</span></button>
               <button class="friends-tab-btn" data-tab="pending">
                 Pendente
                 <span class="pending-tab-badge" id="pendingTabBadge" style="display:none">0</span>

@@ -276,6 +276,8 @@ async function submitLoginForm() {
   const emailInput = document.getElementById('loginEmail');
   const passwordInput = document.getElementById('loginPassword');
   const submitButton = document.getElementById('btnLoginSubmit');
+  const keepConnected = document.getElementById('keepConnectedCheckbox')?.checked === true;
+  const rememberLoginId = document.getElementById('rememberLoginIdCheckbox')?.checked === true;
 
   if (!form || !emailInput || !passwordInput) return;
 
@@ -293,7 +295,17 @@ async function submitLoginForm() {
   }
 
   try {
-    const user = await loginAccount(email, password, getRecaptchaToken('login'));
+    try {
+      localStorage.setItem('badiscord_keep_connected_mobile', String(keepConnected));
+      localStorage.setItem('badiscord_remember_login_id', String(rememberLoginId));
+      if (rememberLoginId) localStorage.setItem('badiscord_login_email', email);
+      else localStorage.removeItem('badiscord_login_email');
+    } catch (error) {
+      console.error('Não foi possível salvar as preferências de login:', error);
+      showToast('Não foi possível salvar suas preferências neste dispositivo.', '⚠️');
+    }
+
+    const user = await loginAccount(email, password, getRecaptchaToken('login'), keepConnected);
     await finalizeAuthSession(user);
     showToast('Login realizado com sucesso!', '✅');
   } catch (error) {
@@ -491,12 +503,12 @@ async function registerAccount({ email, username, password, recaptchaToken = '' 
   return { ...payload.user, homeServerId: payload.homeServerId };
 }
 
-async function loginAccount(email, password, recaptchaToken = '') {
+async function loginAccount(email, password, recaptchaToken = '', rememberMe = false) {
   const response = await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ email, password, recaptchaToken })
+    body: JSON.stringify({ email, password, recaptchaToken, rememberMe })
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || 'E-mail ou senha inválidos.');
@@ -588,6 +600,31 @@ function logoutAccount() {
 }
 
 async function ensureAuthState() {
+  let keepConnectedOnMobile = false;
+  try {
+    keepConnectedOnMobile = localStorage.getItem('badiscord_keep_connected_mobile') === 'true';
+  } catch (error) {
+    console.error('Não foi possível ler a preferência de sessão móvel:', error);
+    showToast('Não foi possível ler a preferência de sessão deste dispositivo.', '⚠️');
+  }
+
+  if (isMobileStreamDevice() && !keepConnectedOnMobile) {
+    try {
+      const logoutResponse = await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Accept: 'application/json' }
+      });
+      if (!logoutResponse.ok) throw new Error('Não foi possível encerrar a sessão anterior.');
+    } catch (error) {
+      console.error('Não foi possível encerrar a sessão móvel anterior:', error);
+      showToast(error.message || 'Não foi possível encerrar a sessão anterior.', '⚠️');
+    }
+    showAuthOverlay();
+    openAuthView('viewAuthLogin');
+    return false;
+  }
+
   try {
     const response = await fetch('/api/auth/me', { credentials: 'include', headers: { Accept: 'application/json' } });
     if (!response.ok) throw new Error('Sessão ausente');
@@ -4027,15 +4064,13 @@ function getDMList() {
 }
 
 function updateDMBadge() {
-  const badge = document.getElementById('dmBadgeCount');
-  if (badge) {
-    if (friendsList.length > 0) {
-      badge.textContent = friendsList.length;
-      badge.style.display = '';
-    } else {
-      badge.style.display = 'none';
-    }
-  }
+  const navigationBadge = document.getElementById('dmBadgeCount');
+  if (navigationBadge) navigationBadge.style.display = 'none';
+
+  const allFriendsBadge = document.getElementById('allFriendsTabBadge');
+  if (!allFriendsBadge) return;
+  allFriendsBadge.textContent = String(friendsList.length);
+  allFriendsBadge.style.display = friendsList.length > 0 ? '' : 'none';
 }
 
 function updateRequestsBadge() {
@@ -9696,8 +9731,8 @@ initializeFreeProfileCustomization();
   const btnBackToLoginFrom2FA = document.getElementById('btnBackToLoginFrom2FA');
 
   const loginEmail = document.getElementById('loginEmail');
-  const loginPassword = document.getElementById('loginPassword');
-  const btnLoginSubmit = document.getElementById('btnLoginSubmit');
+  const keepConnectedCheckbox = document.getElementById('keepConnectedCheckbox');
+  const rememberLoginIdCheckbox = document.getElementById('rememberLoginIdCheckbox');
 
   const regEmail = document.getElementById('regEmail');
   const regUsername = document.getElementById('regUsername');
@@ -9715,6 +9750,37 @@ initializeFreeProfileCustomization();
   let active2FACode = null;
   let targetRecoveryEmail = null;
 
+  try {
+    if (keepConnectedCheckbox) {
+      keepConnectedCheckbox.checked = localStorage.getItem('badiscord_keep_connected_mobile') === 'true';
+    }
+    if (rememberLoginIdCheckbox) {
+      rememberLoginIdCheckbox.checked = localStorage.getItem('badiscord_remember_login_id') === 'true';
+      if (rememberLoginIdCheckbox.checked && loginEmail) {
+        loginEmail.value = localStorage.getItem('badiscord_login_email') || '';
+      }
+    }
+  } catch (error) {
+    console.error('Não foi possível carregar as preferências de login:', error);
+  }
+
+  [keepConnectedCheckbox, rememberLoginIdCheckbox].forEach((checkbox) => {
+    checkbox?.addEventListener('change', () => {
+      try {
+        if (checkbox === keepConnectedCheckbox) {
+          localStorage.setItem('badiscord_keep_connected_mobile', String(checkbox.checked));
+        } else {
+          localStorage.setItem('badiscord_remember_login_id', String(checkbox.checked));
+          if (!checkbox.checked) localStorage.removeItem('badiscord_login_email');
+          else if (loginEmail?.value.trim()) localStorage.setItem('badiscord_login_email', loginEmail.value.trim());
+        }
+      } catch (error) {
+        console.error('Não foi possível salvar as preferências de login:', error);
+        showToast('Não foi possível salvar suas preferências neste dispositivo.', '⚠️');
+      }
+    });
+  });
+
   function switchAuthView(viewName) {
     if (viewAuthLogin) viewAuthLogin.style.display = viewName === 'login' ? 'block' : 'none';
     if (viewAuthRegister) viewAuthRegister.style.display = viewName === 'register' ? 'block' : 'none';
@@ -9727,33 +9793,6 @@ initializeFreeProfileCustomization();
   if (btnGoToForgot) btnGoToForgot.addEventListener('click', () => switchAuthView('forgot'));
   if (btnBackToLoginFromForgot) btnBackToLoginFromForgot.addEventListener('click', () => switchAuthView('login'));
   if (btnBackToLoginFrom2FA) btnBackToLoginFrom2FA.addEventListener('click', () => switchAuthView('login'));
-
-  if (btnLoginSubmit) {
-    btnLoginSubmit.addEventListener('click', async () => {
-      const email = loginEmail ? loginEmail.value.trim() : '';
-      const password = loginPassword ? loginPassword.value : '';
-
-      if (!email || !password) {
-        showToast('Preencha seu e-mail e senha.', '⚠️');
-        return;
-      }
-
-      const recaptchaToken = getRecaptchaToken('login');
-      if (recaptchaSiteKey && !recaptchaToken) {
-        showToast('Confirme que você não é um robô.', '⚠️');
-        return;
-      }
-
-      try {
-        const account = await loginAccount(email, password, recaptchaToken);
-        await finalizeAuthSession(account);
-        showToast(`Bem-vindo de volta, ${account.displayName}!`, '👋');
-      } catch (error) {
-        resetRecaptcha('login');
-        showToast(error.message || 'Não foi possível entrar.', '❌');
-      }
-    });
-  }
 
   if (btnRegisterSubmit) {
     btnRegisterSubmit.addEventListener('click', async () => {

@@ -12,6 +12,7 @@ const { AccessToken, RoomServiceClient, TrackSource } = require('livekit-server-
 const app = express();
 const scryptAsync = promisify(crypto.scrypt);
 const AUTH_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+const AUTH_REMEMBERED_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_POLICY = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 const EMAIL_POLICY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_CUSTOM_SOUND_BYTES = 4 * 1024 * 1024;
@@ -361,21 +362,21 @@ function parseCookies(req) {
   }, {});
 }
 
-function setSessionCookie(res, token) {
+function setSessionCookie(res, token, maxAgeMs = AUTH_SESSION_MAX_AGE_MS) {
   const secure = process.env.NODE_ENV === 'production';
-  res.setHeader('Set-Cookie', `badiscord_session=${encodeURIComponent(token)}; Max-Age=${AUTH_SESSION_MAX_AGE_MS / 1000}; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`);
+  res.setHeader('Set-Cookie', `badiscord_session=${encodeURIComponent(token)}; Max-Age=${maxAgeMs / 1000}; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`);
 }
 
 function clearSessionCookie(res) {
   res.setHeader('Set-Cookie', 'badiscord_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax');
 }
 
-function createSession(res, userId) {
+function createSession(res, userId, maxAgeMs = AUTH_SESSION_MAX_AGE_MS) {
   const token = crypto.randomBytes(32).toString('base64url');
   const now = Date.now();
   db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
-    .run(hashSessionToken(token), userId, now + AUTH_SESSION_MAX_AGE_MS, new Date(now).toISOString());
-  setSessionCookie(res, token);
+    .run(hashSessionToken(token), userId, now + maxAgeMs, new Date(now).toISOString());
+  setSessionCookie(res, token, maxAgeMs);
 }
 
 function getAuthenticatedUser(req) {
@@ -536,7 +537,10 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(401).json({ error: 'Senha incorreta.' });
   }
 
-  createSession(res, user.id);
+  const sessionMaxAge = req.body?.rememberMe === true
+    ? AUTH_REMEMBERED_SESSION_MAX_AGE_MS
+    : AUTH_SESSION_MAX_AGE_MS;
+  createSession(res, user.id, sessionMaxAge);
   return res.json({ user: publicUser(user) });
 });
 
