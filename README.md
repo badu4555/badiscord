@@ -44,6 +44,8 @@ O aplicativo desktop precisa de conexão com a internet para abrir o BADISCORD e
 
 A versão instalada pelo `.exe` procura atualizações automaticamente ao abrir e periodicamente enquanto estiver em execução. Quando uma nova versão estiver disponível, uma janela mostrará a versão e permitirá baixar e instalar agora ou adiar; depois do download, é possível reiniciar para concluir. A primeira versão com atualização automática precisa ser instalada manualmente; as seguintes poderão ser atualizadas pelo próprio aplicativo. A versão portátil `.zip` continua sendo atualizada por download manual.
 
+Durante uma live, use o botão de tela cheia no player para expandir a janela do BADISCORD; pressione `Esc` ou o botão novamente para voltar.
+
 Os pacotes ainda não são assinados digitalmente; o Windows pode exibir um aviso do SmartScreen na primeira execução.
 
 ## Gerar os pacotes para Windows
@@ -69,6 +71,8 @@ gradle --no-daemon :app:assembleDebug
 O APK de depuração ficará em `android\app\build\outputs\apk\debug\app-debug.apk`. O workflow `Android APK` também compila esse APK e o disponibiliza como artefato de execução. A primeira instalação precisa ser validada em um dispositivo Android real: aceite a permissão de captura na tela do sistema e confirme que a transmissão aparece para outro participante do canal.
 
 O app Android verifica novas releases ao abrir. Quando houver uma versão nova, é possível iniciar o download dentro do próprio app; o Android abre o instalador e pede confirmação. Para publicar atualizações instaláveis sobre a versão anterior, configure os segredos `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` e `ANDROID_KEY_PASSWORD` nas [configurações de Actions do repositório](https://github.com/badu4555/badiscord/settings/secrets/actions). Gere uma chave de assinatura com `keytool`, guarde o arquivo `.jks` fora do repositório e reutilize-o em todas as releases. As versões Android anteriores à ativação dessa chave foram assinadas com chaves temporárias; a migração inicial exige desinstalar o APK antigo e instalar a versão assinada, o que pode apagar os dados locais.
+
+Ao assistir a uma live no Android, toque no botão de tela cheia para ocultar temporariamente as barras do sistema. Use o botão Voltar para sair desse modo.
 
 No Windows com JDK instalado, gere a chave localmente (mantenha o `.jks` seguro e nunca o envie ao repositório):
 

@@ -390,6 +390,13 @@ function createWindow() {
     } catch (e) {}
   });
 
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow?.webContents.send('stream-fullscreen:changed', true);
+  });
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow?.webContents.send('stream-fullscreen:changed', false);
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const externalUrl = new URL(url);
@@ -421,6 +428,14 @@ function createWindow() {
     stopProcessAudioCapture();
   });
 }
+
+ipcMain.handle('stream-fullscreen:set', (event, enabled) => {
+  if (!isTrustedRenderer(event) || typeof enabled !== 'boolean') {
+    throw new Error('Solicitação de tela cheia inválida.');
+  }
+  mainWindow.setFullScreen(enabled);
+  return mainWindow.isFullScreen();
+});
 
 // Handler para listar telas e janelas disponíveis para transmissão (como no Discord)
 ipcMain.handle('get-screen-sources', async (event) => {

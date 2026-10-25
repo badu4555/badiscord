@@ -21,11 +21,16 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONObject
@@ -34,6 +39,10 @@ import java.net.URL
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
+    private lateinit var rootContainer: FrameLayout
+    private lateinit var fullscreenBackCallback: OnBackPressedCallback
+    private var customView: View? = null
+    private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var pendingShare: ShareRequest? = null
     private var pendingWebPermission: PermissionRequest? = null
     private var pendingInstallerUri: Uri? = null
@@ -142,12 +151,27 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         webView = WebView(this)
+        rootContainer = FrameLayout(this).apply {
+            addView(
+                webView,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
         ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             view.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
-        setContentView(webView)
+        setContentView(rootContainer)
+        fullscreenBackCallback = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                hideCustomView()
+            }
+        }
+        onBackPressedDispatcher.addCallback(this, fullscreenBackCallback)
         configureWebView()
         registerShareStateReceiver()
         registerUpdateDownloadReceiver()
@@ -197,6 +221,33 @@ class MainActivity : ComponentActivity() {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+                if (customView != null) {
+                    callback.onCustomViewHidden()
+                    return
+                }
+
+                customView = view
+                customViewCallback = callback
+                rootContainer.addView(
+                    view,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                )
+                fullscreenBackCallback.isEnabled = true
+                WindowInsetsControllerCompat(window, rootContainer).apply {
+                    systemBarsBehavior =
+                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    hide(WindowInsetsCompat.Type.systemBars())
+                }
+            }
+
+            override fun onHideCustomView() {
+                this@MainActivity.hideCustomView()
+            }
+
             override fun onPermissionRequest(request: PermissionRequest) {
                 if (!isTrustedUrl(Uri.parse(request.origin.toString()))) {
                     request.deny()
@@ -226,6 +277,19 @@ class MainActivity : ComponentActivity() {
                 if (pendingWebPermission === request) pendingWebPermission = null
             }
         }
+    }
+
+    private fun hideCustomView() {
+        val view = customView ?: return
+        rootContainer.removeView(view)
+        customView = null
+        fullscreenBackCallback.isEnabled = false
+        val callback = customViewCallback
+        customViewCallback = null
+        callback?.onCustomViewHidden()
+        WindowInsetsControllerCompat(window, rootContainer).show(
+            WindowInsetsCompat.Type.systemBars()
+        )
     }
 
     private fun handleNativeMessage(rawMessage: String) {

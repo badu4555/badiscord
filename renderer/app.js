@@ -7132,13 +7132,58 @@ if (btnStreamAudioMute) {
 
 // Tela Cheia da Live
 if (btnStreamFullscreen) {
-  btnStreamFullscreen.addEventListener('click', () => {
-    if (!document.fullscreenElement) {
-      streamViewerWrapper.requestFullscreen().catch(err => {
-        console.error('Erro ao expandir tela cheia:', err);
-      });
-    } else {
-      document.exitFullscreen();
+  let isElectronFullscreen = false;
+
+  const updateFullscreenButton = () => {
+    const isFullscreen = isElectronFullscreen ||
+      document.fullscreenElement === streamViewerWrapper ||
+      document.webkitFullscreenElement === streamViewerWrapper;
+    btnStreamFullscreen.title = isFullscreen ? 'Sair da tela cheia' : 'Tela Cheia';
+    btnStreamFullscreen.setAttribute('aria-label', btnStreamFullscreen.title);
+  };
+
+  const toggleStreamFullscreen = async () => {
+    try {
+      if (window.electronAPI?.setStreamFullscreen) {
+        isElectronFullscreen = await window.electronAPI.setStreamFullscreen(!isElectronFullscreen);
+        streamViewerWrapper?.classList.toggle('electron-fullscreen', isElectronFullscreen);
+        updateFullscreenButton();
+        return;
+      }
+
+      const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
+      if (fullscreenElement) {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        return;
+      }
+
+      if (streamViewerWrapper?.requestFullscreen) {
+        await streamViewerWrapper.requestFullscreen();
+      } else if (streamViewerWrapper?.webkitRequestFullscreen) {
+        streamViewerWrapper.webkitRequestFullscreen();
+      } else if (remoteVideoPlayer?.webkitEnterFullscreen) {
+        remoteVideoPlayer.webkitEnterFullscreen();
+      } else {
+        showToast('Tela cheia não está disponível neste dispositivo.', '⚠️');
+      }
+    } catch (error) {
+      console.error('Erro ao expandir tela cheia:', error);
+      showToast('Não foi possível abrir a live em tela cheia.', '⚠️');
+    }
+  };
+
+  btnStreamFullscreen.addEventListener('click', toggleStreamFullscreen);
+  document.addEventListener('fullscreenchange', updateFullscreenButton);
+  document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+  window.electronAPI?.onStreamFullscreenChanged?.((enabled) => {
+    isElectronFullscreen = enabled;
+    streamViewerWrapper?.classList.toggle('electron-fullscreen', enabled);
+    updateFullscreenButton();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && isElectronFullscreen) {
+      void window.electronAPI.setStreamFullscreen(false);
     }
   });
 }
