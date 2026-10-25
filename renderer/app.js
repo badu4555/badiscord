@@ -2864,6 +2864,46 @@ function renderMessageAttachments(attachments = []) {
   return list;
 }
 
+function createLinkifiedText(value) {
+  const fragment = document.createDocumentFragment();
+  const text = String(value || '');
+  const urlPattern = /https?:\/\/[^\s<>"']+|www\.[^\s<>"']+/gi;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = urlPattern.exec(text))) {
+    let urlText = match[0];
+    let trailingText = '';
+    while (/[.,!?;:]$/.test(urlText)) {
+      trailingText = urlText.slice(-1) + trailingText;
+      urlText = urlText.slice(0, -1);
+    }
+    while (/[)\]}]$/.test(urlText)) {
+      const closingCharacter = urlText.slice(-1);
+      const openingCharacter = { ')': '(', ']': '[', '}': '{' }[closingCharacter];
+      const openCount = [...urlText].filter((character) => character === openingCharacter).length;
+      const closeCount = [...urlText].filter((character) => character === closingCharacter).length;
+      if (closeCount <= openCount) break;
+      trailingText = closingCharacter + trailingText;
+      urlText = urlText.slice(0, -1);
+    }
+
+    if (!urlText) continue;
+    fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+    const link = document.createElement('a');
+    link.href = urlText.startsWith('www.') ? `https://${urlText}` : urlText;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = urlText;
+    fragment.appendChild(link);
+    if (trailingText) fragment.appendChild(document.createTextNode(trailingText));
+    lastIndex = match.index + match[0].length;
+  }
+
+  fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+  return fragment;
+}
+
 function renderPollCard(message) {
   const poll = message.poll;
   const card = document.createElement('div');
@@ -2910,7 +2950,7 @@ function renderTopicCard(message) {
   if (topic.description) {
     const description = document.createElement('p');
     description.className = 'chat-topic-description';
-    description.textContent = topic.description;
+    description.appendChild(createLinkifiedText(topic.description));
     card.appendChild(description);
   }
 
@@ -2919,7 +2959,8 @@ function renderTopicCard(message) {
   (Array.isArray(topic.replies) ? topic.replies : []).forEach((reply) => {
     const item = document.createElement('div');
     item.className = 'chat-thread-reply';
-    item.textContent = `${reply.author}: ${reply.text}`;
+    item.appendChild(document.createTextNode(`${reply.author}: `));
+    item.appendChild(createLinkifiedText(reply.text));
     replies.appendChild(item);
   });
   card.appendChild(replies);
@@ -3016,7 +3057,7 @@ function createMessageElement(msg) {
 
   const text = document.createElement('div');
   text.className = 'message-text';
-  text.textContent = msg.text || '';
+  text.appendChild(createLinkifiedText(msg.text));
 
   content.appendChild(header);
   if (msg.text) content.appendChild(text);

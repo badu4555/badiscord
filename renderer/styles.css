@@ -4165,6 +4165,20 @@ button.profile-tag-chip:hover {
   white-space: pre-wrap;
 }
 
+.message-text a,
+.chat-topic-description a,
+.chat-thread-reply a {
+  color: #00a8fc;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+.message-text a:hover,
+.chat-topic-description a:hover,
+.chat-thread-reply a:hover {
+  color: #70cfff;
+}
+
 .chat-input-container {
   position: relative;
   padding: 0 16px 20px;
@@ -9090,23 +9104,42 @@ button.profile-tag-chip:hover {
   }
 
   .friends-header-left {
+    flex: 1 1 auto;
     gap: 6px;
+    min-width: 0;
+    flex-wrap: wrap;
   }
 
   .friends-header-left h3 {
     margin: 0;
   }
 
+  .friends-header {
+    height: auto;
+    min-height: 48px;
+    align-items: center;
+    gap: 0 8px;
+  }
+
+  .friends-header-divider {
+    display: none;
+  }
+
   .friends-tabs {
+    flex: 0 0 100%;
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
     overflow-x: auto;
     flex-wrap: nowrap;
-    padding-bottom: 4px;
+    gap: 6px;
+    padding: 4px 0 8px;
     scrollbar-width: thin;
   }
 
   .friends-tab-btn {
     flex: 0 0 auto;
+    min-height: 36px;
     white-space: nowrap;
   }
 

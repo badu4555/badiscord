@@ -390,10 +390,15 @@ function createWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://github.com/badu4555/badiscord/releases/')) {
-      shell.openExternal(url).catch((error) => {
-        console.error('Não foi possível abrir a página de download:', error);
-      });
+    try {
+      const externalUrl = new URL(url);
+      if (externalUrl.protocol === 'https:' || externalUrl.protocol === 'http:') {
+        shell.openExternal(externalUrl.href).catch((error) => {
+          console.error('Não foi possível abrir o link externo:', error);
+        });
+      }
+    } catch (error) {
+      console.error('Não foi possível validar o link externo:', error);
     }
     return { action: 'deny' };
   });
