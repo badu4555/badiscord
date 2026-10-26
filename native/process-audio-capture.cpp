@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -92,6 +93,56 @@ struct AudioStreamHeader {
 static int reportFailure(const char* operation, HRESULT status) {
   std::fprintf(stderr, "%s failed (0x%08lX)\n", operation, static_cast<unsigned long>(status));
   return 1;
+}
+
+static std::string getWindowProcessName(HWND window) {
+  DWORD processId = 0;
+  if (!GetWindowThreadProcessId(window, &processId) || !processId) return {};
+
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+  if (!process) return {};
+
+  std::vector<WCHAR> imagePath(32768);
+  DWORD pathLength = static_cast<DWORD>(imagePath.size());
+  const BOOL queried = QueryFullProcessImageNameW(process, 0, imagePath.data(), &pathLength);
+  CloseHandle(process);
+  if (!queried || pathLength == 0) return {};
+
+  const std::wstring fullPath(imagePath.data(), pathLength);
+  const std::size_t fileNameStart = fullPath.find_last_of(L"\\/");
+  const std::wstring fileName = fileNameStart == std::wstring::npos
+      ? fullPath
+      : fullPath.substr(fileNameStart + 1);
+  const int utf8Length = WideCharToMultiByte(
+      CP_UTF8, 0, fileName.data(), static_cast<int>(fileName.size()), nullptr, 0, nullptr, nullptr);
+  if (utf8Length <= 0) return {};
+
+  std::string utf8Name(static_cast<std::size_t>(utf8Length), '\0');
+  if (WideCharToMultiByte(
+          CP_UTF8, 0, fileName.data(), static_cast<int>(fileName.size()),
+          utf8Name.data(), utf8Length, nullptr, nullptr) != utf8Length) {
+    return {};
+  }
+  return utf8Name;
+}
+
+static int listWindowProcessNames(int argc, char** argv) {
+  for (int index = 2; index < argc; ++index) {
+    char* end = nullptr;
+    const unsigned long long handleValue = std::strtoull(argv[index], &end, 10);
+    if (!end || *end != '\0' || handleValue == 0) {
+      std::fprintf(stderr, "A window handle is invalid.\n");
+      return 2;
+    }
+    if (handleValue > (std::numeric_limits<std::uintptr_t>::max)()) {
+      std::fprintf(stderr, "A window handle is out of range.\n");
+      return 2;
+    }
+    const HWND window = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(handleValue));
+    const std::string processName = getWindowProcessName(window);
+    std::printf("%llu\t%s\n", handleValue, processName.c_str());
+  }
+  return std::fflush(stdout) == 0 ? 0 : 1;
 }
 
 static int captureProcessAudio(HWND window) {
@@ -242,6 +293,9 @@ static int captureProcessAudio(HWND window) {
 int main(int argc, char** argv) {
   _setmode(_fileno(stdout), _O_BINARY);
   std::setvbuf(stdout, nullptr, _IONBF, 0);
+  if (argc >= 3 && std::strcmp(argv[1], "--process-names") == 0) {
+    return listWindowProcessNames(argc, argv);
+  }
   if (argc != 2) {
     std::fprintf(stderr, "A window handle is required.\n");
     return 2;
@@ -251,6 +305,10 @@ int main(int argc, char** argv) {
   const unsigned long long handleValue = std::strtoull(argv[1], &end, 10);
   if (!end || *end != '\0' || handleValue == 0) {
     std::fprintf(stderr, "The selected window handle is invalid.\n");
+    return 2;
+  }
+  if (handleValue > (std::numeric_limits<std::uintptr_t>::max)()) {
+    std::fprintf(stderr, "The selected window handle is out of range.\n");
     return 2;
   }
 

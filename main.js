@@ -38,12 +38,92 @@ const BROWSER_WINDOW_MARKERS = [
   'opera', 'vivaldi', 'arc browser', 'safari', 'browser'
 ];
 
-function isGameWindowName(name) {
+function isGameWindowName(name, processName = '') {
   const lowerName = String(name || '').trim().toLowerCase();
-  if (!lowerName || BROWSER_WINDOW_MARKERS.some((marker) => lowerName.includes(marker))) return false;
+  const lowerProcessName = String(processName || '').trim().toLowerCase();
+  if (
+    (!lowerName && !lowerProcessName) ||
+    BROWSER_WINDOW_MARKERS.some((marker) => `${lowerName} ${lowerProcessName}`.includes(marker))
+  ) return false;
   return GAME_KEYWORDS.some((keyword) => {
-    if (keyword.length > 3) return lowerName.includes(keyword);
-    return new RegExp(`(^|[^a-z0-9])${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i').test(lowerName);
+    if (keyword.length > 3) return lowerName.includes(keyword) || lowerProcessName.includes(keyword);
+    const matcher = new RegExp(`(^|[^a-z0-9])${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`, 'i');
+    return matcher.test(lowerName) || matcher.test(lowerProcessName);
+  });
+}
+
+function getWindowHandle(sourceId) {
+  return /^window:(\d+):[^:]+$/.exec(String(sourceId || ''))?.[1] || null;
+}
+
+async function getWindowProcessNames(sources) {
+  if (process.platform !== 'win32') return new Map();
+
+  const handles = [...new Set(sources.map((source) => getWindowHandle(source.id)).filter(Boolean))];
+  if (handles.length === 0) return new Map();
+
+  const helperPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'process-audio-capture.exe')
+    : path.join(__dirname, 'native', 'process-audio-capture.exe');
+  if (!fs.existsSync(helperPath)) {
+    console.warn('A detecção de jogos por executável não está disponível: o módulo nativo de áudio não foi compilado.');
+    return new Map();
+  }
+
+  return new Promise((resolve) => {
+    const child = spawn(helperPath, ['--process-names', ...handles], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const timeout = setTimeout(() => {
+      console.warn('A consulta aos processos das janelas expirou.');
+      child.kill();
+      finish(new Map());
+    }, 5000);
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      if (stdout.length > 1_000_000) {
+        console.warn('A consulta aos processos retornou dados demais.');
+        child.kill();
+        finish(new Map());
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr = (stderr + chunk).slice(-2000);
+    });
+    child.on('error', (error) => {
+      console.warn('Não foi possível consultar os executáveis das janelas:', error.message);
+      finish(new Map());
+    });
+    child.on('close', (code) => {
+      if (code !== 0) {
+        console.warn('A consulta aos executáveis das janelas falhou:', stderr.trim() || `código ${code}`);
+        finish(new Map());
+        return;
+      }
+      const processNames = new Map();
+      stdout.split(/\r?\n/).forEach((line) => {
+        const separator = line.indexOf('\t');
+        if (separator < 1) return;
+        const handle = line.slice(0, separator);
+        const processName = line.slice(separator + 1).trim();
+        if (/^\d+$/.test(handle) && processName) processNames.set(handle, processName);
+      });
+      finish(processNames);
+    });
   });
 }
 
@@ -261,8 +341,8 @@ async function startProcessAudioCapture(sourceId) {
   if (process.platform !== 'win32') {
     throw new Error('A captura isolada de áudio está disponível somente no aplicativo desktop para Windows.');
   }
-  const windowSource = /^window:(\d+):[01]$/.exec(String(sourceId || ''));
-  if (!windowSource) {
+  const windowHandle = getWindowHandle(sourceId);
+  if (!windowHandle) {
     throw new Error('Selecione uma janela de aplicativo para capturar o áudio exclusivo do jogo.');
   }
 
@@ -283,7 +363,7 @@ async function startProcessAudioCapture(sourceId) {
   }
 
   const capture = {
-    child: spawn(helperPath, [windowSource[1]], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }),
+    child: spawn(helperPath, [windowHandle], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }),
     headerReady: false,
     pendingOutput: Buffer.alloc(0),
     unalignedPcm: Buffer.alloc(0),
@@ -463,6 +543,7 @@ ipcMain.handle('get-screen-sources', async (event) => {
       'dwm notification window'
     ];
 
+    const processNames = await getWindowProcessNames(sources);
     return sources
       .filter(source => {
         const name = (source.name || '').trim().toLowerCase();
@@ -473,7 +554,8 @@ ipcMain.handle('get-screen-sources', async (event) => {
         const isScreen = source.id.startsWith('screen:');
         const name = (source.name || '').trim();
         const lowerName = name.toLowerCase();
-        const isGame = !isScreen && isGameWindowName(lowerName);
+        const processName = processNames.get(getWindowHandle(source.id)) || '';
+        const isGame = !isScreen && isGameWindowName(lowerName, processName);
 
         let appIconData = null;
         try {
@@ -554,16 +636,19 @@ ipcMain.handle('get-detected-game', async (event) => {
       'badiscord'
     ];
 
+    const processNames = await getWindowProcessNames(sources);
     const validWindows = sources.filter(s => {
       const name = (s.name || '').trim().toLowerCase();
-      if (!name) return false;
+      const processName = processNames.get(getWindowHandle(s.id));
+      if (!name && !processName) return false;
       if (IGNORED_EXACT_NAMES.some(ign => name === ign || name.startsWith('badiscord'))) return false;
-      return isGameWindowName(name);
+      return isGameWindowName(name, processName);
     });
 
     if (validWindows.length === 0) return null;
 
     const matchedGame = validWindows[0];
+    const matchedGameProcessName = processNames.get(getWindowHandle(matchedGame.id)) || '';
 
     let appIconData = null;
     try {
@@ -574,7 +659,7 @@ ipcMain.handle('get-detected-game', async (event) => {
 
     return {
       id: matchedGame.id,
-      name: matchedGame.name.trim(),
+      name: matchedGame.name.trim() || matchedGameProcessName || 'Jogo detectado',
       isGame: true,
       appIcon: appIconData
     };

@@ -6663,7 +6663,7 @@ function setCaptureTab(tab) {
   if (gamePrivacyBanner) {
     gamePrivacyBanner.className = 'game-privacy-banner';
     gamePrivacyBanner.innerHTML = tab === 'games'
-      ? '<span class="privacy-shield-icon">🛡️</span><div class="privacy-text"><strong>Detecção privada:</strong> jogos reconhecidos aparecem automaticamente. Se seu jogo não for reconhecido, procure-o manualmente em <strong>Outras janelas</strong>; navegadores não aparecem nesta aba.</div>'
+      ? '<span class="privacy-shield-icon">🛡️</span><div class="privacy-text"><strong>Detecção privada:</strong> jogos reconhecidos pelo título ou executável aparecem automaticamente. Se seu jogo não for reconhecido, procure-o manualmente em <strong>Outras janelas</strong>; navegadores não aparecem nesta aba.</div>'
       : '<span class="privacy-shield-icon">🛡️</span><div class="privacy-text"><strong>Escolha manual:</strong> selecione uma janela específica, como seu navegador para transmitir um vídeo do YouTube. O monitor inteiro nunca é compartilhado.</div>';
   }
   renderSourcesFiltered();
