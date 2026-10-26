@@ -9695,6 +9695,18 @@ button.profile-tag-chip:hover {
     height: 44px;
     min-height: 44px;
   }
+
+  html.badiscord-android-webview .channels-sidebar {
+    padding-bottom: max(48px, env(safe-area-inset-bottom));
+  }
+
+  html.badiscord-android-webview .voice-floating-bar {
+    bottom: calc(48px + env(safe-area-inset-bottom));
+  }
+
+  html.badiscord-android-webview .stage-content {
+    padding-bottom: calc(180px + env(safe-area-inset-bottom));
+  }
 }
 
 @media (max-width: 700px) and (min-height: 800px) {

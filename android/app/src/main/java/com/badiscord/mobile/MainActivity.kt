@@ -167,14 +167,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
+        window.statusBarColor = Color.rgb(16, 26, 27)
+        window.navigationBarColor = Color.rgb(16, 26, 27)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isStatusBarContrastEnforced = false
             window.isNavigationBarContrastEnforced = false
         }
         webView = WebView(this)
         rootContainer = FrameLayout(this).apply {
+            clipChildren = true
+            clipToPadding = true
             addView(
                 webView,
                 FrameLayout.LayoutParams(
@@ -183,16 +185,11 @@ class MainActivity : ComponentActivity() {
                 )
             )
         }
-        ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { _, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { view, insets ->
             val safeArea = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            webView.layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ).apply {
-                setMargins(safeArea.left, safeArea.top, safeArea.right, safeArea.bottom)
-            }
+            view.setPadding(safeArea.left, safeArea.top, safeArea.right, safeArea.bottom)
             insets
         }
         setContentView(rootContainer)
@@ -252,6 +249,10 @@ class MainActivity : ComponentActivity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 if (!isTrustedUrl(Uri.parse(url))) return
+                view.evaluateJavascript(
+                    "document.documentElement.classList.add('badiscord-android-webview');",
+                    null
+                )
                 if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
                     view.evaluateJavascript(NATIVE_BRIDGE_SCRIPT, null)
                 }
