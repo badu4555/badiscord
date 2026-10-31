@@ -2333,6 +2333,7 @@ async function watchLiveStream(participantId, channelName = currentChannel, serv
     if (btnStopStreamDirect) btnStopStreamDirect.style.display = 'none';
     if (participantsGrid) participantsGrid.style.display = 'none';
     watchingLiveParticipantId = participantId;
+    showStreamOverlayControls();
     switchView('voice');
     remoteVideoPlayer.play().catch((error) => {
       console.warn('Não foi possível iniciar a reprodução da transmissão:', error);
@@ -2361,6 +2362,8 @@ function stopWatchingLive() {
   watchingLiveParticipantId = '';
   if (remoteVideoPlayer && !isLocalStreamer) remoteVideoPlayer.srcObject = null;
   if (streamViewerWrapper && !isLocalStreamer) streamViewerWrapper.style.display = 'none';
+  if (streamControlsHideTimeout) clearTimeout(streamControlsHideTimeout);
+  streamViewerWrapper?.classList.remove('controls-hidden');
   const viewerCount = document.getElementById('liveViewerCount');
   if (viewerCount && !isLocalStreamer) viewerCount.textContent = '👁 0';
   if (btnStopStreamDirect) btnStopStreamDirect.style.display = '';
@@ -5297,6 +5300,8 @@ const btnListenTogether = document.getElementById('btnListenTogether');
 const btnProfileAddFriend = document.getElementById('btnProfileAddFriend');
 const btnProfileCall = document.getElementById('btnProfileCall');
 const btnProfileMessage = document.getElementById('btnProfileMessage');
+const btnProfileDisconnectVoice = document.getElementById('btnProfileDisconnectVoice');
+const profileVoiceActions = document.getElementById('profileVoiceActions');
 const userPopoverModActions = document.getElementById('userPopoverModActions');
 const btnOpenBanModal = document.getElementById('btnOpenBanModal');
 const btnKickMember = document.getElementById('btnKickMember');
@@ -5400,6 +5405,9 @@ function openMemberProfilePopover(member, triggerEvent) {
 
   const isSelf = member.isSelf || member.id === authenticatedAccount?.id
     || String(member.name || '').toLowerCase() === (userProfile.displayName || '').toLowerCase();
+  if (profileVoiceActions) {
+    profileVoiceActions.style.display = isSelf && Boolean(currentChannel) ? 'flex' : 'none';
+  }
   if (userPopoverVolume) {
     const canAdjustVolume = !isSelf && typeof member.id === 'string' && Boolean(member.id);
     userPopoverVolume.style.display = canAdjustVolume ? 'block' : 'none';
@@ -5510,6 +5518,10 @@ btnProfileMessage?.addEventListener('click', () => {
   openDirectMessage(friend);
 });
 btnProfileCall?.addEventListener('click', () => startPrivateCall(currentInspectedMember));
+btnProfileDisconnectVoice?.addEventListener('click', () => {
+  if (userProfilePopover) userProfilePopover.style.display = 'none';
+  void disconnectVoice(true);
+});
 
 if (userPopoverVolumeSlider) {
   userPopoverVolumeSlider.addEventListener('input', () => {
@@ -6888,10 +6900,36 @@ const btnStreamAudioMute = document.getElementById('btnStreamAudioMute');
 const streamMuteIcon = document.getElementById('streamMuteIcon');
 const btnStreamFullscreen = document.getElementById('btnStreamFullscreen');
 const btnStopStreamDirect = document.getElementById('btnStopStreamDirect');
+const btnLeaveStreamCall = document.getElementById('btnLeaveStreamCall');
 const streamVolumeHud = document.getElementById('streamVolumeHud');
 const streamVolumeHudIcon = document.getElementById('streamVolumeHudIcon');
 const streamVolumeHudVal = document.getElementById('streamVolumeHudVal');
 const streamLoopbackBadge = document.getElementById('streamLoopbackBadge');
+
+let streamControlsHideTimeout = null;
+function showStreamOverlayControls() {
+  if (!streamViewerWrapper) return;
+  streamViewerWrapper.classList.remove('controls-hidden');
+  if (streamControlsHideTimeout) clearTimeout(streamControlsHideTimeout);
+  if (window.matchMedia('(hover: none)').matches) {
+    streamControlsHideTimeout = window.setTimeout(() => {
+      streamViewerWrapper.classList.add('controls-hidden');
+    }, 3500);
+  }
+}
+
+if (streamViewerWrapper) {
+  streamViewerWrapper.addEventListener('click', (event) => {
+    if (event.target.closest('.stream-player-controls, .stream-header-tag button')) {
+      showStreamOverlayControls();
+      return;
+    }
+    showStreamOverlayControls();
+  });
+  streamViewerWrapper.addEventListener('pointermove', () => {
+    if (!window.matchMedia('(hover: none)').matches) showStreamOverlayControls();
+  });
+}
 
 let streamPlayerVolume = parseInt(localStorage.getItem('badiscord_stream_player_vol') || '100', 10);
 let isStreamAudioMuted = false;
@@ -7123,6 +7161,7 @@ async function stopCurrentStream() {
   watchingLiveParticipantId = '';
   if (streamViewerWrapper) {
     streamViewerWrapper.style.display = 'none';
+    streamViewerWrapper.classList.remove('controls-hidden');
   }
   if (participantsGrid && currentChannel) {
     participantsGrid.style.display = 'grid';
@@ -7290,6 +7329,12 @@ if (btnStreamFullscreen) {
 if (btnStopStreamDirect) {
   btnStopStreamDirect.addEventListener('click', () => {
     stopCurrentStream();
+  });
+}
+
+if (btnLeaveStreamCall) {
+  btnLeaveStreamCall.addEventListener('click', () => {
+    void disconnectVoice(true);
   });
 }
 
@@ -7512,6 +7557,7 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     remoteVideoPlayer.muted = true;
     remoteVideoPlayer.defaultMuted = true;
     streamViewerWrapper.style.display = 'flex';
+    showStreamOverlayControls();
 
     // Oculta temporariamente o grid de participantes enquanto transmite para focar a live centralizada
     if (participantsGrid) {

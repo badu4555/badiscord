@@ -460,13 +460,20 @@
           <!-- Player de Live -->
           <div class="stream-viewer-wrapper" id="streamViewerWrapper" style="display: none;">
             <div class="stream-header-tag">
-              <span class="live-pill">AO VIVO</span>
-              <span class="res-pill">1080p 60FPS</span>
-              <span id="streamerName">Transmitindo Tela</span>
-              <span class="live-viewer-count" id="liveViewerCount" aria-live="polite">👁 0</span>
+              <div class="stream-header-quality">
+                <span class="live-pill">AO VIVO</span>
+                <span class="res-pill">1080p 60FPS</span>
+              </div>
+              <div class="stream-header-viewers">
+                <span id="streamerName">Transmitindo Tela</span>
+                <span class="live-viewer-count" id="liveViewerCount" aria-live="polite">👁 0</span>
+              </div>
               <span id="streamLoopbackBadge" class="stream-loopback-badge" style="display: none;">
                 🔊 Áudio enviado somente para quem está assistindo
               </span>
+              <button type="button" class="stream-leave-call-btn" id="btnLeaveStreamCall" title="Sair do canal de voz" aria-label="Sair do canal de voz">
+                ☎ Sair da call
+              </button>
             </div>
 
             <video id="remoteVideoPlayer" autoplay playsinline muted></video>
@@ -981,6 +988,9 @@
         <button type="button" id="btnProfileAddFriend">➕ Adicionar amigo</button>
         <button type="button" id="btnProfileCall">📞 Ligar</button>
         <button type="button" id="btnProfileMessage">💬 Mensagem</button>
+      </div>
+      <div class="profile-contact-actions profile-voice-actions" id="profileVoiceActions" style="display: none;">
+        <button type="button" id="btnProfileDisconnectVoice">☎ Sair do canal de voz</button>
       </div>
 
       <!-- Ações de Moderação (Banir 1h/permanente, Expulsar, Silenciar) -->

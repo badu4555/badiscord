@@ -26,6 +26,10 @@
   scrollbar-width: thin;
 }
 
+html {
+  background-color: var(--bg-tertiary);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -62,7 +66,11 @@ body {
   background-color: var(--bg-tertiary);
   color: var(--text-normal);
   overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
   height: 100vh;
+  width: 100%;
 }
 
 .auth-overlay {
@@ -266,6 +274,7 @@ body {
   display: flex;
   height: 100vh;
   width: 100vw;
+  background: var(--bg-tertiary);
 }
 
 /* Sidebar de Servidores */
@@ -788,6 +797,46 @@ body {
   font-weight: 700;
   color: #fff;
   backdrop-filter: blur(4px);
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+}
+
+.stream-header-quality,
+.stream-header-viewers {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.stream-header-viewers {
+  flex: 1 1 auto;
+}
+
+#streamerName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-leave-call-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(218, 55, 60, 0.88);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.stream-leave-call-btn:hover {
+  background: var(--status-red-hover);
 }
 
 .live-pill {
@@ -839,6 +888,18 @@ body {
 .stream-viewer-wrapper:hover .stream-player-controls {
   opacity: 1;
   pointer-events: auto;
+}
+
+.stream-viewer-wrapper.controls-hidden .stream-player-controls,
+.stream-viewer-wrapper.controls-hidden .stream-header-tag {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.stream-player-controls,
+.stream-header-tag {
+  transition: opacity 180ms ease, visibility 180ms ease;
 }
 
 #streamViewerWrapper:fullscreen,
@@ -4876,6 +4937,15 @@ button.profile-tag-chip:hover {
 
 .profile-contact-actions button:hover {
   background: #5865f2;
+}
+
+.profile-voice-actions button {
+  flex: 1 0 100%;
+  background: var(--status-red);
+}
+
+.profile-voice-actions button:hover {
+  background: var(--status-red-hover);
 }
 
 .private-call-bar {
@@ -9264,6 +9334,44 @@ button.profile-tag-chip:hover {
     min-height: 0;
     aspect-ratio: 16 / 9;
     flex: 0 0 auto;
+  }
+
+  .stream-header-tag {
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "quality viewers leave"
+      "badge badge badge";
+    gap: 6px;
+    width: auto;
+    max-width: none;
+    padding: 7px;
+    border-radius: 8px;
+    font-size: 11px;
+  }
+
+  .stream-header-quality {
+    grid-area: quality;
+    gap: 5px;
+  }
+
+  .stream-header-viewers {
+    grid-area: viewers;
+    gap: 5px;
+  }
+
+  .stream-leave-call-btn {
+    grid-area: leave;
+    min-height: 36px;
+    padding: 4px 7px;
+    font-size: 10px;
+  }
+
+  .stream-loopback-badge {
+    grid-area: badge;
   }
 
   .voice-self-card {
