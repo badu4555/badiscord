@@ -3965,7 +3965,7 @@ async function checkRunningGame() {
       }
     } else {
       if (titleEl) titleEl.textContent = 'Nenhum jogo detectado';
-      if (statusEl) statusEl.textContent = 'Abra um jogo para transmitir';
+      if (statusEl) statusEl.textContent = 'Use janela sem bordas se estiver em tela cheia';
       if (btnQuick) {
         btnQuick.innerHTML = '🖥️';
         btnQuick.title = 'Escolher janela do jogo para transmitir';
@@ -6782,7 +6782,7 @@ function renderSourcesFiltered() {
     const emptyDiv = document.createElement('div');
     emptyDiv.className = 'sources-empty';
     emptyDiv.innerHTML = currentCaptureTab === 'games'
-      ? `<p>🎮 Nenhum jogo detectado ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p><small>Abra o jogo e clique em 🔄 <strong>Atualizar</strong>. Se o título não for reconhecido, procure-o em <strong>Outras janelas</strong>. Navegadores só aparecem na escolha manual.</small>`
+      ? `<p>🎮 Nenhum jogo detectado ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p><small>Jogos em tela cheia exclusiva podem não aparecer. Mude o jogo para <strong>Janela sem bordas</strong> e clique em 🔄 <strong>Atualizar</strong>. Se o título não for reconhecido, procure-o em <strong>Outras janelas</strong>. Navegadores só aparecem na escolha manual.</small>`
       : `<p>🪟 Nenhuma outra janela encontrada ${sourceSearchQuery ? 'para essa busca' : 'no momento'}.</p><small>Use esta aba para escolher manualmente um navegador ou aplicativo específico. A janela só será transmitida depois que você a selecionar.</small>`;
     sourcesGrid.appendChild(emptyDiv);
     return;
