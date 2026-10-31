@@ -166,15 +166,20 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val appBackgroundColor = Color.rgb(16, 26, 27)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.rgb(16, 26, 27)
-        window.navigationBarColor = Color.rgb(16, 26, 27)
+        window.decorView.setBackgroundColor(appBackgroundColor)
+        window.statusBarColor = appBackgroundColor
+        window.navigationBarColor = appBackgroundColor
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isStatusBarContrastEnforced = false
             window.isNavigationBarContrastEnforced = false
         }
-        webView = WebView(this)
+        webView = WebView(this).apply {
+            setBackgroundColor(appBackgroundColor)
+        }
         rootContainer = FrameLayout(this).apply {
+            setBackgroundColor(appBackgroundColor)
             clipChildren = true
             clipToPadding = true
             addView(

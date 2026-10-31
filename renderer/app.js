@@ -7270,6 +7270,23 @@ if (btnStreamAudioMute) {
 // Tela Cheia da Live
 if (btnStreamFullscreen) {
   let isElectronFullscreen = false;
+  let mobileOrientationLockActive = false;
+
+  const syncMobileFullscreenOrientation = async (isFullscreen) => {
+    const isMobile = window.matchMedia('(pointer: coarse), (max-width: 700px)').matches;
+    if ((!isMobile && !mobileOrientationLockActive) || !window.screen?.orientation) return;
+    try {
+      if (isFullscreen && !mobileOrientationLockActive && window.screen.orientation.lock) {
+        await window.screen.orientation.lock('landscape');
+        mobileOrientationLockActive = true;
+      } else if (!isFullscreen && mobileOrientationLockActive) {
+        window.screen.orientation.unlock();
+        mobileOrientationLockActive = false;
+      }
+    } catch (error) {
+      console.warn('Não foi possível ajustar a orientação da live:', error);
+    }
+  };
 
   const updateFullscreenButton = () => {
     const isFullscreen = isElectronFullscreen ||
@@ -7277,6 +7294,7 @@ if (btnStreamFullscreen) {
       document.webkitFullscreenElement === streamViewerWrapper;
     btnStreamFullscreen.title = isFullscreen ? 'Sair da tela cheia' : 'Tela Cheia';
     btnStreamFullscreen.setAttribute('aria-label', btnStreamFullscreen.title);
+    void syncMobileFullscreenOrientation(isFullscreen);
   };
 
   const toggleStreamFullscreen = async () => {
@@ -7301,6 +7319,7 @@ if (btnStreamFullscreen) {
         streamViewerWrapper.webkitRequestFullscreen();
       } else if (remoteVideoPlayer?.webkitEnterFullscreen) {
         remoteVideoPlayer.webkitEnterFullscreen();
+        await syncMobileFullscreenOrientation(true);
       } else {
         showToast('Tela cheia não está disponível neste dispositivo.', '⚠️');
       }
@@ -7313,6 +7332,12 @@ if (btnStreamFullscreen) {
   btnStreamFullscreen.addEventListener('click', toggleStreamFullscreen);
   document.addEventListener('fullscreenchange', updateFullscreenButton);
   document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+  remoteVideoPlayer?.addEventListener('webkitbeginfullscreen', () => {
+    void syncMobileFullscreenOrientation(true);
+  });
+  remoteVideoPlayer?.addEventListener('webkitendfullscreen', () => {
+    void syncMobileFullscreenOrientation(false);
+  });
   window.electronAPI?.onStreamFullscreenChanged?.((enabled) => {
     isElectronFullscreen = enabled;
     streamViewerWrapper?.classList.toggle('electron-fullscreen', enabled);
