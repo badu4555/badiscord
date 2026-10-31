@@ -5,6 +5,7 @@ Aplicativo independente para comunidades, com clientes Web/Electron e backend No
 - **Detecção de Fala em Tempo Real** (borda verde iluminada no avatar quando você fala).
 - **Transmissão de tela em 720p, 1080p e 2K (1440p)** com seleção de FPS.
 - **Áudio isolado da janela selecionada** no aplicativo desktop Windows, sem incluir o áudio dos demais aplicativos.
+- **Uso de memória otimizado** com menos prévias de vídeo redundantes e cache recente limitado a 100 mensagens por conversa.
 - **Lista de participantes por canal de voz**, atualizada sem precisar entrar no canal.
 - **Controle de volume individual** dos participantes, salvo no dispositivo.
 - **Menu de participantes acessível por toque longo no celular**, com controles locais de volume, silenciar e ocultar vídeo.

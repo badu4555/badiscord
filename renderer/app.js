@@ -85,6 +85,8 @@ const USER_MUTES_STORAGE_KEY = 'badiscord_muted_users';
 const USER_NICKNAMES_STORAGE_KEY = 'badiscord_user_nicknames';
 const SOUNDBOARD_USER_VOLUMES_STORAGE_KEY = 'badiscord_soundboard_user_volumes';
 const SOUNDBOARD_USER_MUTES_STORAGE_KEY = 'badiscord_soundboard_muted_users';
+const MAX_CACHED_MESSAGES_PER_CONVERSATION = 100;
+const MAX_CACHED_CONVERSATIONS_PER_TYPE = 5;
 let userVolumes = {};
 let mutedUserIdentities = new Set();
 let soundboardUserVolumes = {};
@@ -627,6 +629,7 @@ function logoutAccount() {
   spotifyActivity = null;
   spotifyConnected = false;
   serverVoiceRosters.clear();
+  serverVoiceRosterSignatures.clear();
   incomingFriendRequestIds = null;
   clearInterval(channelMessagesPollingTimer);
   channelMessagesPollingTimer = null;
@@ -679,6 +682,7 @@ async function ensureAuthState() {
     clearInterval(voiceRosterPollingTimer);
     voiceRosterPollingTimer = null;
     serverVoiceRosters.clear();
+    serverVoiceRosterSignatures.clear();
     incomingFriendRequestIds = null;
     clearCurrentSession();
     showAuthOverlay();
@@ -1391,6 +1395,7 @@ try {
 let activeServerId = servers[0]?.id || '';
 let serverSyncTimeout = null;
 const serverVoiceRosters = new Map();
+const serverVoiceRosterSignatures = new Map();
 let voiceRosterPollingTimer = null;
 let voiceRosterRequestInProgress = false;
 
@@ -1909,11 +1914,15 @@ async function refreshServerVoiceRoster(serverId = activeServerId) {
     if (!response.ok) throw new Error(payload.error || 'Não foi possível consultar os canais de voz.');
     if (serverId !== activeServerId) return;
 
+    const rosterSignature = JSON.stringify(payload.channels || {});
+    if (serverVoiceRosterSignatures.get(serverId) === rosterSignature) return;
+
     const rosters = new Map();
     Object.entries(payload.channels || {}).forEach(([channelName, participants]) => {
       rosters.set(channelName, Array.isArray(participants) ? participants : []);
     });
     serverVoiceRosters.set(serverId, rosters);
+    serverVoiceRosterSignatures.set(serverId, rosterSignature);
     const server = servers.find((item) => item.id === serverId);
     (server?.voiceChannels || []).forEach((channelName) => updateSidebarChannelUsers(channelName, serverId));
   } finally {
@@ -2216,32 +2225,34 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
   });
 }
 
-function renderLiveIndicator(member) {
+function renderLiveIndicator(member, includePreview = true) {
   if (!member.isStreaming) return null;
   const indicator = document.createElement('span');
   indicator.className = 'live-indicator';
   indicator.title = `${member.viewerCount || 0} assistindo`;
-  const preview = document.createElement('span');
-  preview.className = 'live-preview-thumbnail';
-  const previewPlaceholder = document.createElement('span');
-  previewPlaceholder.className = 'live-preview-placeholder';
-  previewPlaceholder.textContent = '▶ AO VIVO';
-  preview.appendChild(previewPlaceholder);
-  const previewStream = remoteScreenTracks.get(member.screenShareParticipantId || member.id);
-  if (previewStream) {
-    const video = document.createElement('video');
-    video.autoplay = true;
-    video.playsInline = true;
-    video.muted = true;
-    video._liveTrack = previewStream.track;
-    previewStream.track.attach(video);
-    video.play().catch((error) => {
-      console.warn('Não foi possível reproduzir a miniatura da transmissão:', error);
-    });
-    previewPlaceholder.hidden = true;
-    preview.appendChild(video);
+  if (includePreview) {
+    const preview = document.createElement('span');
+    preview.className = 'live-preview-thumbnail';
+    const previewPlaceholder = document.createElement('span');
+    previewPlaceholder.className = 'live-preview-placeholder';
+    previewPlaceholder.textContent = '▶ AO VIVO';
+    preview.appendChild(previewPlaceholder);
+    const previewStream = remoteScreenTracks.get(member.screenShareParticipantId || member.id);
+    if (previewStream) {
+      const video = document.createElement('video');
+      video.autoplay = true;
+      video.playsInline = true;
+      video.muted = true;
+      video._liveTrack = previewStream.track;
+      previewStream.track.attach(video);
+      video.play().catch((error) => {
+        console.warn('Não foi possível reproduzir a miniatura da transmissão:', error);
+      });
+      previewPlaceholder.hidden = true;
+      preview.appendChild(video);
+    }
+    indicator.appendChild(preview);
   }
-  indicator.appendChild(preview);
   const badge = document.createElement('span');
   badge.className = 'live-indicator-badge';
   badge.textContent = `● AO VIVO ${member.viewerCount || 0}`;
@@ -2474,7 +2485,7 @@ function renderVoiceParticipants() {
     nameSpan.textContent = member.name;
     tag.appendChild(nameSpan);
     tag.appendChild(createParticipantRttBadge(member));
-    const liveIndicator = renderLiveIndicator(member);
+    const liveIndicator = renderLiveIndicator(member, false);
     if (liveIndicator) tag.appendChild(liveIndicator);
 
     if (member.game) {
@@ -2708,20 +2719,32 @@ function getDirectMessagesStorageKey(friendId) {
   return `badiscord_dm_messages_${authenticatedAccount?.id || 'guest'}_${friendId}`;
 }
 
+function rememberConversationMessages(cache, key, messages) {
+  cache.delete(key);
+  cache.set(key, messages);
+  while (cache.size > MAX_CACHED_CONVERSATIONS_PER_TYPE) {
+    cache.delete(cache.keys().next().value);
+  }
+  return messages;
+}
+
 function getStoredMessages(srvId, chanName) {
   const key = getChatStorageKey(srvId, chanName);
-  if (channelMessagesCache.has(key)) return channelMessagesCache.get(key);
+  if (channelMessagesCache.has(key)) {
+    return rememberConversationMessages(channelMessagesCache, key, channelMessagesCache.get(key));
+  }
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
       // Remove mensagens mockadas antigas se existirem
-      const clean = parsed.filter(m => m.author !== 'BADISCORD Bot' && m.id !== 2);
+      const clean = parsed.filter(m => m.author !== 'BADISCORD Bot' && m.id !== 2)
+        .slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
       if (clean.length !== parsed.length) {
         localStorage.setItem(key, JSON.stringify(clean));
       }
-      channelMessagesCache.set(key, clean);
-      return clean;
+      return rememberConversationMessages(channelMessagesCache, key, clean);
     }
   } catch (e) {}
   // O chat começa limpo por padrão (sem mensagens falsas)
@@ -2730,14 +2753,19 @@ function getStoredMessages(srvId, chanName) {
 
 function getStoredDMMessages(friendId, friend) {
   const key = getDirectMessagesStorageKey(friendId);
-  if (directMessagesCache.has(key)) return directMessagesCache.get(key);
+  if (directMessagesCache.has(key)) {
+    return rememberConversationMessages(directMessagesCache, key, directMessagesCache.get(key));
+  }
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        directMessagesCache.set(key, parsed);
-        return parsed;
+        const recentMessages = parsed.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
+        if (recentMessages.length !== parsed.length) {
+          localStorage.setItem(key, JSON.stringify(recentMessages));
+        }
+        return rememberConversationMessages(directMessagesCache, key, recentMessages);
       }
     }
   } catch (e) {}
@@ -2771,9 +2799,10 @@ async function requestChannelMessages(srvId, chanName, options = {}) {
 
 function cacheChannelMessages(srvId, chanName, messages) {
   const key = getChatStorageKey(srvId, chanName);
-  channelMessagesCache.set(key, messages);
+  const recentMessages = messages.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
+  rememberConversationMessages(channelMessagesCache, key, recentMessages);
   try {
-    localStorage.setItem(key, JSON.stringify(messages));
+    localStorage.setItem(key, JSON.stringify(recentMessages));
   } catch (error) {
     console.error('Não foi possível atualizar o cache local das mensagens:', error);
   }
@@ -2791,13 +2820,13 @@ async function syncChannelMessages(srvId, chanName, generation, showError = fals
     if (!payload.full && changedMessages.length === 0) return;
     const cachedMessages = getStoredMessages(srvId, chanName);
     const messages = payload.full
-      ? changedMessages
+      ? changedMessages.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION)
       : changedMessages.reduce((current, changed) => {
         const index = current.findIndex((message) => message.id === changed.id);
         if (index === -1) current.push(changed);
         else current[index] = changed;
         return current;
-      }, cachedMessages).slice(-200);
+      }, [...cachedMessages]).slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
     const latestUpdatedAt = messages.reduce((latest, message) => (
       Date.parse(message.updatedAt || '') > Date.parse(latest || '')
         ? message.updatedAt
@@ -2819,9 +2848,10 @@ function directMessagesUrl(friendId) {
 
 function cacheDirectMessages(friendId, messages) {
   const key = getDirectMessagesStorageKey(friendId);
-  directMessagesCache.set(key, messages);
+  const recentMessages = messages.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
+  rememberConversationMessages(directMessagesCache, key, recentMessages);
   try {
-    localStorage.setItem(key, JSON.stringify(messages));
+    localStorage.setItem(key, JSON.stringify(recentMessages));
   } catch (error) {
     console.error('Não foi possível atualizar o cache local das mensagens diretas:', error);
   }
@@ -2838,13 +2868,13 @@ async function syncDirectMessages(friendId, generation, showError = false) {
     if (!payload.full && changedMessages.length === 0) return;
     const cachedMessages = getStoredDMMessages(friendId, currentDmFriend);
     const messages = payload.full
-      ? changedMessages
+      ? changedMessages.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION)
       : changedMessages.reduce((current, changed) => {
         const index = current.findIndex((message) => message.id === changed.id);
         if (index === -1) current.push(changed);
         else current[index] = changed;
         return current;
-      }, cachedMessages).slice(-200);
+      }, [...cachedMessages]).slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
     const latestUpdatedAt = messages.reduce((latest, message) => (
       Date.parse(message.updatedAt || '') > Date.parse(latest || '')
         ? message.updatedAt
