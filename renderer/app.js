@@ -9166,6 +9166,13 @@ function applyTheme(theme) {
   Object.entries(vars).forEach(([key, val]) => {
     document.documentElement.style.setProperty(key, val);
   });
+  const systemBarColor = vars['--bg-tertiary'];
+  const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeColorMeta) themeColorMeta.content = systemBarColor;
+  window.BADISCORDNative?.postMessage(JSON.stringify({
+    action: 'theme',
+    color: systemBarColor
+  }));
 
   document.querySelectorAll('.theme-card').forEach(c => {
     c.classList.toggle('active', c.dataset.theme === theme);

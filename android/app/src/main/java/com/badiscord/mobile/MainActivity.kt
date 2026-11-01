@@ -344,6 +344,24 @@ class MainActivity : ComponentActivity() {
     private fun processNativeMessage(rawMessage: String) {
         val message = runCatching { JSONObject(rawMessage) }.getOrNull() ?: return
         when (message.optString("action")) {
+            "theme" -> {
+                val colorValue = message.optString("color")
+                if (!colorValue.matches(Regex("^#[0-9a-fA-F]{6}$"))) return
+                val color = Color.parseColor(colorValue)
+                window.decorView.setBackgroundColor(color)
+                window.statusBarColor = color
+                window.navigationBarColor = color
+                webView.setBackgroundColor(color)
+                rootContainer.setBackgroundColor(color)
+                val red = Color.red(color) / 255.0
+                val green = Color.green(color) / 255.0
+                val blue = Color.blue(color) / 255.0
+                val luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+                WindowInsetsControllerCompat(window, rootContainer).apply {
+                    isAppearanceLightStatusBars = luminance > 0.5
+                    isAppearanceLightNavigationBars = luminance > 0.5
+                }
+            }
             "start" -> {
                 val request = ShareRequest(
                     serverUrl = message.optString("serverUrl"),
@@ -655,6 +673,14 @@ class MainActivity : ComponentActivity() {
                   window.BADISCORDNative?.postMessage(JSON.stringify({ action: 'stop' }));
                 }
               };
+              const syncSystemBarTheme = () => {
+                const color = getComputedStyle(document.documentElement)
+                  .getPropertyValue('--bg-tertiary').trim();
+                if (/^#[0-9a-f]{6}$/i.test(color)) {
+                  window.BADISCORDNative?.postMessage(JSON.stringify({ action: 'theme', color }));
+                }
+              };
+              syncSystemBarTheme();
               window.addEventListener('pagehide', () => window.AndroidScreenShare.stopScreenShare(), { once: true });
             })();
         """.trimIndent()
