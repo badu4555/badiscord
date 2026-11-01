@@ -1532,8 +1532,15 @@ function playDeafenSound(deafened) {
 // ELEMENTOS DA INTERFACE
 // ==========================================
 const guildList = document.getElementById('guildList');
+const btnMobileOpenGeneralChat = document.getElementById('btnMobileOpenGeneralChat');
 document.querySelectorAll('.mobile-back-button').forEach((button) => {
   button.addEventListener('click', () => document.body.classList.remove('mobile-stage-open'));
+});
+btnMobileOpenGeneralChat?.addEventListener('click', () => {
+  const server = servers.find((item) => item.id === activeServerId);
+  const textChannels = server?.textChannels || ['geral'];
+  const generalChannel = textChannels.find((channel) => String(channel).replace(/^#/, '').toLowerCase() === 'geral');
+  openTextChannel(generalChannel || textChannels[0] || 'geral');
 });
 const btnAddGuild = document.getElementById('btnAddGuild');
 const btnHomeDM = document.getElementById('btnHomeDM');
@@ -4293,6 +4300,10 @@ function restoreServerView(srvId) {
 
   selectServer(srvId);
   if (currentChannel) {
+    switchView('voice');
+  } else if (window.matchMedia('(max-width: 700px), (max-height: 500px) and (orientation: landscape) and (max-width: 950px)').matches) {
+    const server = servers.find((item) => item.id === srvId);
+    currentChannelTitle.textContent = server?.voiceChannels?.[0] || 'Canal de voz';
     switchView('voice');
   } else {
     const srv = servers.find(s => s.id === srvId);
