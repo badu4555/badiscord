@@ -8786,6 +8786,10 @@ button.profile-tag-chip:hover {
   display: none;
 }
 
+.mobile-open-general-chat-sidebar {
+  display: none;
+}
+
 .mobile-members-toggle {
   display: none;
 }
@@ -9176,6 +9180,20 @@ button.profile-tag-chip:hover {
     padding: 0 9px;
     touch-action: manipulation;
     white-space: nowrap;
+  }
+
+  .mobile-open-general-chat-sidebar {
+    align-items: center;
+    background: var(--bg-primary);
+    border: 1px solid var(--bg-modifier-hover);
+    border-radius: 8px;
+    color: var(--header-primary);
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    margin: 8px 10px 0;
+    min-height: 40px;
+    touch-action: manipulation;
   }
 
   .mobile-back-button {
