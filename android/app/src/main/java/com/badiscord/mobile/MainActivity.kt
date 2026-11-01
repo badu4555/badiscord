@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.view.Gravity
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
@@ -42,6 +43,8 @@ import java.net.URL
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private lateinit var rootContainer: FrameLayout
+    private lateinit var statusBarBackground: View
+    private lateinit var navigationBarBackground: View
     private lateinit var fullscreenBackCallback: OnBackPressedCallback
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
@@ -178,10 +181,18 @@ class MainActivity : ComponentActivity() {
         webView = WebView(this).apply {
             setBackgroundColor(appBackgroundColor)
         }
+        statusBarBackground = View(this).apply {
+            setBackgroundColor(appBackgroundColor)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        navigationBarBackground = View(this).apply {
+            setBackgroundColor(appBackgroundColor)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
         rootContainer = FrameLayout(this).apply {
             setBackgroundColor(appBackgroundColor)
-            clipChildren = true
-            clipToPadding = true
+            clipChildren = false
+            clipToPadding = false
             addView(
                 webView,
                 FrameLayout.LayoutParams(
@@ -189,12 +200,30 @@ class MainActivity : ComponentActivity() {
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
             )
+            addView(statusBarBackground)
+            addView(navigationBarBackground)
         }
         ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { view, insets ->
             val safeArea = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
             view.setPadding(safeArea.left, safeArea.top, safeArea.right, safeArea.bottom)
+            statusBarBackground.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                safeArea.top
+            ).apply {
+                gravity = Gravity.TOP
+                topMargin = -safeArea.top
+            }
+            statusBarBackground.visibility = if (safeArea.top > 0) View.VISIBLE else View.GONE
+            navigationBarBackground.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                safeArea.bottom
+            ).apply {
+                gravity = Gravity.BOTTOM
+                bottomMargin = -safeArea.bottom
+            }
+            navigationBarBackground.visibility = if (safeArea.bottom > 0) View.VISIBLE else View.GONE
             insets
         }
         setContentView(rootContainer)
@@ -353,6 +382,8 @@ class MainActivity : ComponentActivity() {
                 window.navigationBarColor = color
                 webView.setBackgroundColor(color)
                 rootContainer.setBackgroundColor(color)
+                statusBarBackground.setBackgroundColor(color)
+                navigationBarBackground.setBackgroundColor(color)
                 val red = Color.red(color) / 255.0
                 val green = Color.green(color) / 255.0
                 val blue = Color.blue(color) / 255.0
