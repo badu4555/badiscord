@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { promisify } = require('util');
 const cors = require('cors');
 const Database = require('better-sqlite3');
+const nodemailer = require('nodemailer');
 const { AccessToken, RoomServiceClient, TrackSource } = require('livekit-server-sdk');
 
 const app = express();
@@ -32,6 +33,34 @@ const SPOTIFY_CLIENT_ID = normalize(process.env.SPOTIFY_CLIENT_ID);
 const SPOTIFY_CLIENT_SECRET = normalize(process.env.SPOTIFY_CLIENT_SECRET);
 const SPOTIFY_REDIRECT_URI = normalize(process.env.SPOTIFY_REDIRECT_URI);
 const SPOTIFY_TOKEN_ENCRYPTION_KEY = normalize(process.env.SPOTIFY_TOKEN_ENCRYPTION_KEY);
+const SMTP_HOST = normalize(process.env.SMTP_HOST);
+const SMTP_PORT_VALUE = normalize(process.env.SMTP_PORT);
+const SMTP_PORT = SMTP_PORT_VALUE ? Number(SMTP_PORT_VALUE) : 587;
+const SMTP_SECURE = normalize(process.env.SMTP_SECURE).toLowerCase() === 'true'
+  || (!process.env.SMTP_SECURE && SMTP_PORT === 465);
+const SMTP_USER = normalize(process.env.SMTP_USER);
+const SMTP_PASS = process.env.SMTP_PASS || '';
+const SMTP_FROM = normalize(process.env.SMTP_FROM);
+const isSmtpConfigured = Boolean(
+  SMTP_HOST &&
+  Number.isInteger(SMTP_PORT) &&
+  SMTP_PORT > 0 &&
+  SMTP_PORT <= 65535 &&
+  SMTP_USER &&
+  SMTP_PASS &&
+  SMTP_FROM
+);
+const recoveryMailer = isSmtpConfigured
+  ? nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000
+  })
+  : null;
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '*')
   .split(',')
   .map((origin) => origin.trim())
@@ -573,18 +602,57 @@ app.post('/api/auth/logout', (req, res) => {
   return res.json({ ok: true });
 });
 
-app.post('/api/auth/recovery/request', (req, res) => {
+app.post('/api/auth/recovery/request', async (req, res) => {
   const email = normalizeEmail(req.body?.email);
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-  if (!EMAIL_POLICY.test(email) || !user) return res.status(404).json({ error: 'Conta não encontrada.' });
+  if (!EMAIL_POLICY.test(email)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
+
+  if (!recoveryMailer && process.env.NODE_ENV === 'production') {
+    console.error('O envio de recuperação está indisponível: configure as variáveis SMTP no servidor.');
+    return res.status(503).json({ error: 'O envio de e-mail está temporariamente indisponível. Tente novamente mais tarde.' });
+  }
+
+  const user = db.prepare('SELECT id, email, display_name FROM users WHERE email = ?').get(email);
+  if (!user) {
+    return res.status(202).json({
+      recoveryId: crypto.randomUUID(),
+      message: 'Se houver uma conta com esse e-mail, enviaremos um código de recuperação.'
+    });
+  }
 
   const code = String(crypto.randomInt(100000, 1000000));
   const recoveryId = crypto.randomUUID();
+
+  if (recoveryMailer) {
+    const safeDisplayName = String(user.display_name || '').replace(/[&<>"']/g, (character) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    })[character]);
+    try {
+      await recoveryMailer.sendMail({
+        from: SMTP_FROM,
+        to: user.email,
+        subject: 'Seu código para redefinir a senha do BADISCORD',
+        text: `Olá${user.display_name ? `, ${user.display_name}` : ''}.\n\nSeu código de recuperação do BADISCORD é: ${code}\n\nEle expira em 10 minutos e só pode ser usado uma vez. Se você não pediu a redefinição da senha, ignore este e-mail.`,
+        html: `<p>Olá${safeDisplayName ? `, ${safeDisplayName}` : ''}.</p><p>Seu código de recuperação do BADISCORD é:</p><p style="font-size:28px;font-weight:bold;letter-spacing:6px">${code}</p><p>Ele expira em 10 minutos e só pode ser usado uma vez.</p><p>Se você não pediu a redefinição da senha, ignore este e-mail.</p>`
+      });
+    } catch (error) {
+      console.error('Falha ao enviar o e-mail de recuperação:', error);
+      return res.status(503).json({ error: 'Não foi possível enviar o e-mail de recuperação agora. Tente novamente mais tarde.' });
+    }
+  }
+
   db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').run(user.id);
   db.prepare('INSERT INTO recovery_codes (id, user_id, code_hash, expires_at) VALUES (?, ?, ?, ?)')
     .run(recoveryId, user.id, hashSessionToken(code), Date.now() + 10 * 60 * 1000);
 
-  return res.json({ recoveryId, demoCode: process.env.NODE_ENV === 'production' ? undefined : code });
+  return res.status(202).json({
+    recoveryId,
+    message: 'Se houver uma conta com esse e-mail, enviaremos um código de recuperação.',
+    demoCode: recoveryMailer ? undefined : code
+  });
 });
 
 app.post('/api/auth/recovery/reset', async (req, res) => {

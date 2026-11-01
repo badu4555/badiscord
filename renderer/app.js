@@ -10197,6 +10197,7 @@ initializeFreeProfileCustomization();
 
   const forgotEmail = document.getElementById('forgotEmail');
   const btnSend2FACode = document.getElementById('btnSend2FACode');
+  const auth2FANotice = document.getElementById('auth2FANotice');
   const authGenerated2FACode = document.getElementById('authGenerated2FACode');
   const input2FACode = document.getElementById('input2FACode');
   const inputNewPassword2FA = document.getElementById('inputNewPassword2FA');
@@ -10300,9 +10301,10 @@ initializeFreeProfileCustomization();
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || 'Não foi possível iniciar a recuperação.');
         active2FACode = payload.recoveryId;
-        if (authGenerated2FACode) authGenerated2FACode.textContent = payload.demoCode || 'enviado para seu e-mail';
+        if (authGenerated2FACode) authGenerated2FACode.textContent = payload.demoCode || '';
+        if (auth2FANotice) auth2FANotice.style.display = payload.demoCode ? '' : 'none';
         switchAuthView('2fa');
-        showToast(`Código 2FA enviado para ${email}!`, '📩');
+        showToast(payload.message || 'Se houver uma conta com esse e-mail, enviaremos um código de recuperação.', '📩');
       } catch (error) {
         showToast(error.message || 'Não foi possível iniciar a recuperação.', '❌');
       }

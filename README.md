@@ -91,6 +91,14 @@ Cadastre o conteúdo copiado como `ANDROID_KEYSTORE_BASE64`, as senhas solicitad
 
 O arquivo `render.yaml` configura o serviço Node automaticamente. No Render, crie um Blueprint a partir deste repositório e preencha `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` e `ALLOWED_ORIGINS` como variáveis secretas. O endpoint ficará disponível em `https://badiscord-api.onrender.com` ou no domínio gerado pelo Render.
 
+Para habilitar a recuperação de senha por e-mail, configure também estas variáveis no serviço do Render. Use as credenciais SMTP do provedor de e-mail e mantenha a senha como secret:
+
+- `SMTP_HOST`, `SMTP_PORT` e `SMTP_SECURE` (`true` normalmente na porta 465; `false` na porta 587).
+- `SMTP_USER` e `SMTP_PASS` com o usuário e a senha SMTP ou senha de aplicativo do provedor.
+- `SMTP_FROM` com o remetente autorizado pelo provedor, por exemplo `BADISCORD <contato@seudominio.com>`.
+
+Sem essas variáveis, o endpoint de recuperação informa que o envio está indisponível em produção; ele não confirma falsamente o envio do código. Em desenvolvimento, o código continua disponível apenas na interface local.
+
 ### Configurar atividade do Spotify
 
 Crie um aplicativo no [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), adicione como Redirect URI exatamente `https://SEU-DOMINIO-DA-API/api/spotify/callback` e configure no backend:

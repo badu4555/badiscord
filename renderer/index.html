@@ -152,12 +152,11 @@
         <div class="auth-header-wrap">
           <div class="auth-2fa-shield">🛡️</div>
           <h2 class="auth-title">Verificação de 2 Fatores</h2>
-          <p class="auth-subtitle">Digite o código de 6 dígitos gerado e sua nova senha.</p>
+          <p class="auth-subtitle">Digite o código enviado ao seu e-mail e escolha uma nova senha.</p>
         </div>
 
-        <!-- Alerta com código simulado gerado -->
-        <div class="auth-2fa-notice" id="auth2FANotice">
-          <span>Seu código 2FA de recuperação é: <strong id="authGenerated2FACode">123456</strong></span>
+        <div class="auth-2fa-notice" id="auth2FANotice" style="display: none;">
+          <span>Código de desenvolvimento: <strong id="authGenerated2FACode"></strong></span>
         </div>
 
         <form class="auth-form" id="form2FA" onsubmit="return false;">
