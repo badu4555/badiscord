@@ -878,11 +878,19 @@ async function connectToLiveKitRoom(channelName) {
 
       livekitRoom.on(window.LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
         console.log('Participante conectado:', participant.identity);
+        syncGameVoiceOverlay({
+          id: `joined-${participant.identity}-${Date.now()}`,
+          text: `${participant.name || participant.identity || 'Alguém'} entrou na call`
+        });
         refreshVoiceParticipantViews();
       });
 
       livekitRoom.on(window.LivekitClient.RoomEvent.ParticipantDisconnected, (participant) => {
         console.log('Participante desconectado:', participant.identity);
+        syncGameVoiceOverlay({
+          id: `left-${participant.identity}-${Date.now()}`,
+          text: `${participant.name || participant.identity || 'Alguém'} saiu da call`
+        });
         clearRemoteAudioElements(participant.identity);
         remoteScreenTracks.delete(participant.identity);
         remoteCameraTracks.delete(participant.identity);
@@ -1591,7 +1599,13 @@ const btnDisconnectVoice = document.getElementById('btnDisconnectVoice');
 
 // Botões da Barra Flutuante do Palco (Foto 1)
 const btnStageMic = document.getElementById('btnStageMic');
-const stageMicIcon = document.getElementById('stageMicIcon');
+const btnStageMicOptions = document.getElementById('btnStageMicOptions');
+const btnStageStreamOptions = document.getElementById('btnStageStreamOptions');
+const btnStageMore = document.getElementById('btnStageMore');
+const btnStageDeafen = document.getElementById('btnStageDeafen');
+const btnStageStopStream = document.getElementById('btnStageStopStream');
+const stageStreamStopIcon = document.getElementById('stageStreamStopIcon');
+const callControlMenus = [...document.querySelectorAll('.voice-control-menu')];
 const btnStageActivities = document.getElementById('btnStageActivities');
 const btnStageSoundboard = document.getElementById('btnStageSoundboard');
 
@@ -2139,6 +2153,9 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
         username: profile.username || '',
         tag: profile.tag || '0001',
         fullTag: profile.fullTag || `${name}#${profile.tag || '0001'}`,
+        roleId: profile.roleId || '',
+        groupName: profile.groupName || 'Disponíveis',
+        role: profile.role || '',
         initial: profile.initial || name[0].toUpperCase(),
         color: profile.color || '#5865F2',
         avatarUrl: profile.avatarUrl || '',
@@ -2183,6 +2200,7 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
     detail: userProfile.aboutMe || 'Disponível',
     status: 'online',
     isOwner: true,
+    isMuted: isMuted || isDeafened,
     isSpeaking: isLocalSpeaking,
     isStreaming: isLocalStreamer || remoteScreenTracks.has(getMobileScreenShareIdentity(livekitRoom?.localParticipant?.identity || authenticatedAccount?.id || '')),
     screenShareParticipantId: isNativeMobileStreamer || remoteScreenTracks.has(getMobileScreenShareIdentity(livekitRoom?.localParticipant?.identity || authenticatedAccount?.id || ''))
@@ -2211,6 +2229,9 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
       username: profile.username || '',
       tag: profile.tag || '0001',
       fullTag: profile.fullTag || `${name}#${profile.tag || '0001'}`,
+      roleId: profile.roleId || '',
+      groupName: profile.groupName || 'Disponíveis',
+      role: profile.role || '',
       initial: profile.initial || name[0].toUpperCase(),
       color: profile.color || '#5865F2',
       avatarUrl: profile.avatarUrl || '',
@@ -2387,10 +2408,56 @@ function refreshVoiceParticipantViews() {
     const viewerCount = document.getElementById('liveViewerCount');
     if (viewerCount) viewerCount.textContent = `👁 ${getVoiceViewerCount()}`;
   }
+  syncGameVoiceOverlay();
   if (!currentChannel) return;
   updateSidebarChannelUsers(currentChannel);
   renderVoiceParticipants();
 }
+
+let gameOverlayEnabled = localStorage.getItem('badiscord_game_overlay_enabled') !== 'false';
+
+function updateGameOverlayToggleButton() {
+  const button = document.getElementById('btnToggleGameOverlay');
+  if (!button) return;
+  button.hidden = !window.electronAPI?.updateGameOverlay;
+  button.setAttribute('aria-pressed', String(gameOverlayEnabled));
+  button.title = gameOverlayEnabled ? 'Desativar mini perfil no jogo' : 'Ativar mini perfil no jogo';
+  button.setAttribute('aria-label', button.title);
+  button.classList.toggle('is-active', gameOverlayEnabled);
+}
+
+function syncGameVoiceOverlay(activity = null) {
+  if (!window.electronAPI?.updateGameOverlay) return;
+  const isVisible = Boolean(
+    gameOverlayEnabled &&
+    detectedGame?.name &&
+    currentChannel &&
+    livekitRoom?.state === 'connected'
+  );
+  const participants = isVisible ? getVoiceChannelParticipants().map((participant) => ({
+    id: participant.id,
+    name: participant.name,
+    avatarUrl: participant.avatarUrl || '',
+    isMuted: Boolean(participant.isMuted),
+    isSpeaking: Boolean(participant.isSpeaking),
+    isStreaming: Boolean(participant.isStreaming)
+  })) : [];
+  window.electronAPI.updateGameOverlay({
+    visible: isVisible,
+    gameName: detectedGame?.name || '',
+    channelName: currentChannel || '',
+    participants,
+    activity
+  });
+}
+
+document.getElementById('btnToggleGameOverlay')?.addEventListener('click', () => {
+  gameOverlayEnabled = !gameOverlayEnabled;
+  localStorage.setItem('badiscord_game_overlay_enabled', String(gameOverlayEnabled));
+  updateGameOverlayToggleButton();
+  syncGameVoiceOverlay();
+});
+updateGameOverlayToggleButton();
 
 function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
   if (!channelName) return;
@@ -2441,7 +2508,18 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
     userItem.appendChild(micIcon);
     targetList.appendChild(userItem);
     userItem.addEventListener('click', (event) => {
-      openMemberProfilePopover(member, event);
+      event.stopPropagation();
+      const rect = userItem.getBoundingClientRect();
+      window.openVoiceUserContextMenu?.(rect.left + rect.width / 2, rect.top + rect.height / 2, member);
+    });
+    userItem.setAttribute('role', 'button');
+    userItem.tabIndex = 0;
+    userItem.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = userItem.getBoundingClientRect();
+      window.openVoiceUserContextMenu?.(rect.left + rect.width / 2, rect.top + rect.height / 2, member);
     });
   });
 }
@@ -2460,6 +2538,9 @@ function renderVoiceParticipants() {
     const card = document.createElement('div');
     card.className = 'participant-card';
     card.dataset.participantIdentity = member.id;
+    card.setAttribute('role', 'button');
+    card.tabIndex = 0;
+    card.setAttribute('aria-label', `Opções para ${member.name}`);
     if (member.id === 'self') {
       card.id = 'localParticipantCard';
       if (isLocalSpeaking) card.classList.add('speaking');
@@ -2522,7 +2603,16 @@ function renderVoiceParticipants() {
     card.appendChild(micIcon);
     participantsGrid.appendChild(card);
     card.addEventListener('click', (event) => {
-      openMemberProfilePopover(member, event);
+      event.stopPropagation();
+      const rect = card.getBoundingClientRect();
+      window.openVoiceUserContextMenu?.(event.clientX || rect.left + rect.width / 2, event.clientY || rect.top + rect.height / 2, member);
+    });
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = card.getBoundingClientRect();
+      window.openVoiceUserContextMenu?.(rect.left + rect.width / 2, rect.top + rect.height / 2, member);
     });
   });
 }
@@ -2603,6 +2693,7 @@ async function joinVoiceChannel(channelName) {
     livekitRoom?.state === 'connected' &&
     livekitRoom.name === getLiveKitRoomName(channelName)
   ) {
+    stageContent?.classList.add('has-voice-channel');
     switchView('voice');
     return;
   }
@@ -2621,6 +2712,7 @@ async function joinVoiceChannel(channelName) {
   currentChannel = channelName;
   currentChannelTitle.textContent = channelName;
   switchView('voice');
+  stageContent?.classList.add('has-voice-channel');
 
   document.querySelectorAll('.channel-item[data-type="voice"]').forEach(i => {
     i.classList.toggle('active', i.dataset.channel === channelName);
@@ -2659,6 +2751,10 @@ async function joinVoiceChannel(channelName) {
       showToast('Você pode ouvir o canal, mas está silenciado neste servidor.', '🔇');
     }
     if (localVoiceCanPublish) await publishSoundboardTrack();
+    syncGameVoiceOverlay({
+      id: `joined-self-${Date.now()}`,
+      text: 'Você entrou na call'
+    });
     refreshVoiceParticipantViews();
     if (localVoiceCanPublish) showToast(`Conectado a ${channelName}; microfone ${isMuted ? 'mutado' : 'ativo'}.`, '🎧');
   } catch (err) {
@@ -3887,7 +3983,11 @@ async function toggleCamera() {
   }
 
   if (dockBtnCam) dockBtnCam.classList.toggle('active', isCamActive);
-  if (btnShareCam) btnShareCam.classList.toggle('active', isCamActive);
+  if (btnShareCam) {
+    btnShareCam.classList.toggle('active', isCamActive);
+    btnShareCam.setAttribute('aria-pressed', String(isCamActive));
+    btnShareCam.title = isCamActive ? 'Desativar câmera' : 'Ativar câmera';
+  }
   refreshVoiceParticipantViews();
 }
 
@@ -3926,6 +4026,73 @@ if (btnStageMic) {
   });
 }
 
+function closeCallControlMenus() {
+  callControlMenus.forEach((menu) => {
+    menu.hidden = true;
+    menu.closest('.voice-control-group')?.querySelector('[aria-haspopup="menu"]')?.setAttribute('aria-expanded', 'false');
+    menu.closest('.voice-control-more')?.querySelector('[aria-haspopup="menu"]')?.setAttribute('aria-expanded', 'false');
+  });
+}
+
+function toggleCallControlMenu(menuId, trigger) {
+  const menu = document.getElementById(menuId);
+  if (!menu || !trigger) return;
+  const shouldOpen = menu.hidden;
+  closeCallControlMenus();
+  menu.hidden = !shouldOpen;
+  trigger.setAttribute('aria-expanded', String(shouldOpen));
+}
+
+btnStageMicOptions?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  toggleCallControlMenu('stageMicMenu', btnStageMicOptions);
+});
+btnStageStreamOptions?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  toggleCallControlMenu('stageStreamMenu', btnStageStreamOptions);
+});
+btnStageMore?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  toggleCallControlMenu('stageMoreMenu', btnStageMore);
+});
+
+document.getElementById('btnStageMicSettings')?.addEventListener('click', () => {
+  closeCallControlMenus();
+  openSettingsTab('voice');
+});
+document.getElementById('btnStageStreamSettings')?.addEventListener('click', () => {
+  closeCallControlMenus();
+  openSettingsTab('stream');
+});
+document.getElementById('btnStageChangeStream')?.addEventListener('click', async () => {
+  closeCallControlMenus();
+  if (localScreenTrack || isNativeMobileStreamer) await stopCurrentStream();
+  btnShareScreen?.click();
+});
+btnStageStopStream?.addEventListener('click', () => {
+  closeCallControlMenus();
+  if (localScreenTrack || isNativeMobileStreamer) void stopCurrentStream();
+});
+btnStageDeafen?.addEventListener('click', () => {
+  closeCallControlMenus();
+  btnToggleDeaf?.click();
+});
+document.getElementById('btnStageVoiceSettings')?.addEventListener('click', () => {
+  closeCallControlMenus();
+  openSettingsTab('voice');
+});
+
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.voice-control-group, .voice-control-more')) closeCallControlMenus();
+});
+document.querySelectorAll('.voice-control-btn:not([aria-haspopup="menu"])').forEach((button) => {
+  button.addEventListener('click', closeCallControlMenus);
+});
+btnDisconnectVoice?.addEventListener('click', closeCallControlMenus);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeCallControlMenus();
+});
+
 // ==========================================
 // DETECÇÃO DE JOGOS EM TEMPO REAL
 // ==========================================
@@ -3937,6 +4104,7 @@ async function checkRunningGame() {
     const game = await window.electronAPI.getDetectedGame();
     const previousGameName = detectedGame?.name || '';
     detectedGame = game;
+    syncGameVoiceOverlay();
     if ((game?.name || '') !== previousGameName) {
       publishPresenceStatus();
       renderServerMembers();
@@ -5262,6 +5430,7 @@ document.getElementById('btnSaveMemberRole')?.addEventListener('click', async ()
     if (!response.ok) throw new Error(payload.error || 'Não foi possível atualizar o membro.');
     closeMemberRoleDialog();
     await loadServerMembers(activeServerId);
+    if (currentChannel) refreshVoiceParticipantViews();
     showToast(`Cargo e seção de ${member.name} atualizados.`, '✅');
   } catch (error) {
     showToast(error.message || 'Não foi possível atualizar o membro.', '⚠️');
@@ -6449,10 +6618,14 @@ function updateControlsUI() {
 
   if (btnStageMic) {
     btnStageMic.classList.toggle('muted', isMuted);
+    btnStageMic.setAttribute('aria-pressed', String(isMuted));
+    btnStageMic.setAttribute('aria-label', isMuted ? 'Ativar microfone' : 'Mutar microfone');
+    btnStageMic.title = isMuted ? 'Microfone mutado' : 'Microfone ativo';
   }
-  if (stageMicIcon) {
-    stageMicIcon.textContent = isMuted ? '🔇' : '🎙️';
+  if (btnStageDeafen) {
+    btnStageDeafen.textContent = isDeafened ? 'Ativar áudio' : 'Ensurdar áudio';
   }
+  updateStageStreamControl();
 
   const sidebarMic = document.getElementById('sidebarUserMic');
   if (sidebarMic) {
@@ -6469,6 +6642,18 @@ function updateControlsUI() {
   if (participantMic) {
     participantMic.textContent = isMuted ? '🔇' : (isDeafened ? '🚫🎧' : '🎤');
   }
+}
+
+function updateStageStreamControl() {
+  if (!btnShareScreen) return;
+  const isStreaming = Boolean(isLocalStreamer || isNativeMobileStreamer || localScreenTrack);
+  btnShareScreen.classList.toggle('live-active', isStreaming);
+  btnShareScreen.setAttribute('aria-pressed', String(isStreaming));
+  btnShareScreen.setAttribute('aria-label', isStreaming ? 'Parar transmissão de tela' : 'Iniciar transmissão de tela ou janela');
+  btnShareScreen.title = isStreaming ? 'Parar transmissão de tela ou janela' : 'Transmitir tela ou janela do jogo';
+  if (stageStreamStopIcon) stageStreamStopIcon.hidden = !isStreaming;
+  if (document.getElementById('stageStreamIcon')) document.getElementById('stageStreamIcon').hidden = isStreaming;
+  if (btnStageStopStream) btnStageStopStream.hidden = !isStreaming;
 }
 
 // Event Listeners dos Botões de Mudo e Fone
@@ -6532,6 +6717,8 @@ async function disconnectVoice(playSound = true) {
   }
 
   currentChannel = null;
+  stageContent?.classList.remove('has-voice-channel');
+  syncGameVoiceOverlay();
   updateVoiceSelfCard();
   currentChannelTitle.textContent = 'Nenhum canal conectado';
   connectionBadge.style.display = 'none';
@@ -6724,8 +6911,8 @@ function setCaptureTab(tab) {
   if (gamePrivacyBanner) {
     gamePrivacyBanner.className = 'game-privacy-banner';
     gamePrivacyBanner.innerHTML = tab === 'games'
-      ? '<span class="privacy-shield-icon">🛡️</span><div class="privacy-text"><strong>Detecção privada:</strong> jogos reconhecidos pelo título ou executável aparecem automaticamente. Se seu jogo não for reconhecido, procure-o manualmente em <strong>Outras janelas</strong>; navegadores não aparecem nesta aba.</div>'
-      : '<span class="privacy-shield-icon">🛡️</span><div class="privacy-text"><strong>Escolha manual:</strong> selecione uma janela específica, como seu navegador para transmitir um vídeo do YouTube. O monitor inteiro nunca é compartilhado.</div>';
+      ? '<span class="privacy-shield-icon">ⓘ</span><div class="privacy-text"><strong>Jogos detectados automaticamente.</strong> Se o seu jogo não aparecer, procure-o na aba Janelas.</div>'
+      : '<span class="privacy-shield-icon">ⓘ</span><div class="privacy-text"><strong>Escolha uma janela específica.</strong> Monitores inteiros não aparecem nesta lista por privacidade.</div>';
   }
   renderSourcesFiltered();
 }
@@ -6764,7 +6951,7 @@ async function fetchAndRenderSources() {
 function resetSelectedTarget() {
   selectedSourceId = null;
   btnConfirmShare.disabled = true;
-  btnConfirmShare.innerHTML = '<span class="live-dot-pulse"></span> Iniciar Transmissão do Jogo';
+  btnConfirmShare.innerHTML = '<span class="live-dot-pulse"></span> Iniciar transmissão';
   if (selectedTargetName) {
     selectedTargetName.textContent = 'Nenhuma janela escolhida ainda';
   }
@@ -7203,9 +7390,7 @@ async function stopCurrentStream() {
   refreshVoiceParticipantViews();
 
   if (btnShareScreen) {
-    btnShareScreen.classList.remove('live-active');
-    const configuredResolution = localStorage.getItem('badiscord_stream_res') || '1080';
-    btnShareScreen.innerHTML = `<span>🖥️</span> Transmitir Tela (${configuredResolution === '1440' ? '2K' : `${configuredResolution}p`})`;
+    updateStageStreamControl();
   }
 
   const panel = document.getElementById('gameActivityPanel');
@@ -7238,10 +7423,7 @@ window.onAndroidScreenShareStateChanged = (active, message = '') => {
   isLocalStreamer = true;
   localStreamResolution = '1080';
   localStreamFps = '30';
-  if (btnShareScreen) {
-    btnShareScreen.classList.add('live-active');
-    btnShareScreen.innerHTML = '<span>⏹️</span> Parar Transmissão';
-  }
+  updateStageStreamControl();
   if (btnStopStreamDirect) btnStopStreamDirect.style.display = 'inline-flex';
   if (btnGameQuickStream) {
     btnGameQuickStream.innerHTML = '⏹️';
@@ -7607,10 +7789,7 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
 
     if (participantsGrid) participantsGrid.style.display = 'grid';
 
-    if (btnShareScreen) {
-      btnShareScreen.classList.add('live-active');
-      btnShareScreen.innerHTML = `<span>⏹️</span> Parar Transmissão (${targetRes === 1440 ? '2K' : `${targetRes}p`})`;
-    }
+    updateStageStreamControl();
 
     const panel = document.getElementById('gameActivityPanel');
     if (panel) panel.classList.add('is-live');
@@ -7672,6 +7851,20 @@ if (btnTestGameSelect) {
 
 const prefResolution = document.getElementById('prefResolution');
 const prefFps = document.getElementById('prefFps');
+if (selectResolution) {
+  selectResolution.value = localStorage.getItem('badiscord_stream_res') || '1080';
+  selectResolution.addEventListener('change', () => {
+    localStorage.setItem('badiscord_stream_res', selectResolution.value);
+    if (prefResolution) prefResolution.value = selectResolution.value;
+  });
+}
+if (selectFps) {
+  selectFps.value = localStorage.getItem('badiscord_stream_fps') || '60';
+  selectFps.addEventListener('change', () => {
+    localStorage.setItem('badiscord_stream_fps', selectFps.value);
+    if (prefFps) prefFps.value = selectFps.value;
+  });
+}
 if (prefResolution) {
   prefResolution.value = localStorage.getItem('badiscord_stream_res') || '1080';
   prefResolution.addEventListener('change', () => {
@@ -9454,7 +9647,15 @@ initializeFreeProfileCustomization();
   let vctxTargetUser = null; // { name, tag, ... }
 
   function openVoiceUserContextMenu(x, y, userData) {
-    vctxTargetUser = userData;
+    const serverMember = userData?.id && userData.id !== 'self'
+      ? (serverMembersByServer.get(activeServerId) || []).find((member) => String(member.id) === String(userData.id))
+      : null;
+    vctxTargetUser = {
+      ...(serverMember || {}),
+      ...(userData || {}),
+      roleId: userData?.roleId || serverMember?.roleId || '',
+      groupName: userData?.groupName || serverMember?.groupName || 'Disponíveis'
+    };
 
     voiceUserContextMenu.style.left = '8px';
     voiceUserContextMenu.style.top = '8px';
@@ -9488,6 +9689,12 @@ initializeFreeProfileCustomization();
 
     const muteCheckbox = document.getElementById('vctxCheckMute');
     if (muteCheckbox) muteCheckbox.classList.toggle('checked', isUserMuted(userData.id));
+    const soundboardCheckbox = document.getElementById('vctxCheckSoundboard');
+    if (soundboardCheckbox) soundboardCheckbox.classList.toggle('checked', isSoundboardUserMuted(userData.id));
+    const muteItem = voiceUserContextMenu.querySelector('[data-action="mute-user"]');
+    const soundboardMuteItem = voiceUserContextMenu.querySelector('[data-action="mute-soundboard"]');
+    if (muteItem) muteItem.style.display = canAdjustVolume ? '' : 'none';
+    if (soundboardMuteItem) soundboardMuteItem.style.display = canAdjustVolume ? '' : 'none';
     const videoCheckbox = document.getElementById('vctxCheckVideo');
     if (videoCheckbox) videoCheckbox.classList.toggle('checked', locallyDisabledVideoIdentities.has(userData.id));
     const videoItem = voiceUserContextMenu.querySelector('[data-action="disable-video"]');
@@ -9507,6 +9714,19 @@ initializeFreeProfileCustomization();
     if (blockItem) blockItem.style.display = userData.id && userData.id !== 'self' ? '' : 'none';
     const nicknameItem = voiceUserContextMenu.querySelector('[data-action="nickname"]');
     if (nicknameItem) nicknameItem.style.display = canAdjustVolume ? '' : 'none';
+    const addFriendItem = voiceUserContextMenu.querySelector('[data-action="add-friend"]');
+    if (addFriendItem) {
+      const alreadyFriend = friendsList.some((friend) => String(friend.id) === String(userData.id));
+      const hasHandle = Boolean(getProfileFriendRequestHandle(userData));
+      addFriendItem.style.display = userData.id && userData.id !== 'self' && !alreadyFriend && hasHandle ? '' : 'none';
+    }
+    const roleItem = voiceUserContextMenu.querySelector('[data-action="role"]');
+    if (roleItem) {
+      const canManageRole = userData.id && userData.id !== 'self'
+        && userData.id !== authenticatedAccount?.id
+        && canManageActiveServerMembers();
+      roleItem.style.display = canManageRole ? '' : 'none';
+    }
   }
 
   // Close on outside click
@@ -9615,6 +9835,16 @@ initializeFreeProfileCustomization();
         return; // Don't close
       }
 
+      case 'mute-soundboard': {
+        if (!vctxTargetUser?.id || vctxTargetUser.id === 'self') break;
+        const muted = !isSoundboardUserMuted(vctxTargetUser.id);
+        setSoundboardUserMuted(vctxTargetUser.id, muted);
+        const cb = document.getElementById('vctxCheckSoundboard');
+        if (cb) cb.classList.toggle('checked', muted);
+        showToast(muted ? `Efeitos sonoros de ${userName} silenciados para você.` : `Efeitos sonoros de ${userName} ativados.`, muted ? '🔇' : '🔊');
+        return;
+      }
+
       case 'disable-video': {
         if (!vctxTargetUser?.id || !livekitRoom) break;
         const participant = livekitRoom.remoteParticipants.get(vctxTargetUser.id);
@@ -9645,6 +9875,46 @@ initializeFreeProfileCustomization();
         voiceUserContextMenu.style.display = 'none';
         openInviteModal();
         break;
+
+      case 'add-friend': {
+        voiceUserContextMenu.style.display = 'none';
+        const handle = getProfileFriendRequestHandle(vctxTargetUser);
+        if (!handle) {
+          showToast('Não foi possível identificar o nome de usuário para enviar o pedido.', '⚠️');
+          break;
+        }
+        await sendFriendRequest(handle);
+        break;
+      }
+
+      case 'role': {
+        voiceUserContextMenu.style.display = 'none';
+        if (!canManageActiveServerMembers()) {
+          showToast('Você não tem permissão para gerenciar cargos neste servidor.', '⚠️');
+          break;
+        }
+        if (!serverRolesByServer.has(activeServerId)) await loadServerMembers(activeServerId);
+        if (!serverRolesByServer.has(activeServerId)) {
+          showToast('Não foi possível carregar os cargos do servidor. Tente novamente.', '⚠️');
+          break;
+        }
+        let member = (serverMembersByServer.get(activeServerId) || [])
+          .find((entry) => String(entry.id) === String(vctxTargetUser?.id || ''));
+        if (!member) {
+          await loadServerMembers(activeServerId);
+          member = (serverMembersByServer.get(activeServerId) || [])
+            .find((entry) => String(entry.id) === String(vctxTargetUser?.id || ''));
+        }
+        if (!member) {
+          showToast('Este usuário não é membro do servidor ativo.', '⚠️');
+          break;
+        }
+        openMemberRoleDialog({
+          ...member,
+          name: vctxTargetUser.name || member.name
+        });
+        break;
+      }
 
       case 'unfriend':
         voiceUserContextMenu.style.display = 'none';

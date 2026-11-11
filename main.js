@@ -1,7 +1,7 @@
 if (!process.versions.electron) {
   require('./server/server');
 } else {
-const { app, BrowserWindow, ipcMain, desktopCapturer, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, shell, screen } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -171,6 +171,8 @@ process.on('uncaughtException', (err) => {
 
 let mainWindow;
 let updateWindow;
+let gameOverlayWindow;
+let gameOverlayState = { visible: false, participants: [], activity: null };
 let processAudioCapture = null;
 let cameraPermissionGranted = false;
 let updateState = { status: 'available', version: '' };
@@ -505,9 +507,119 @@ function createWindow() {
   mainWindow.setMenuBarVisibility(false);
   mainWindow.on('closed', () => {
     mainWindow = null;
+    if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) gameOverlayWindow.close();
+    gameOverlayWindow = null;
     stopProcessAudioCapture();
   });
 }
+
+function normalizeGameOverlayState(value) {
+  if (!value || typeof value !== 'object') return { visible: false, participants: [], activity: null };
+  const participants = Array.isArray(value.participants)
+    ? value.participants.slice(0, 20).map((participant) => ({
+      id: String(participant?.id || '').slice(0, 128),
+      name: String(participant?.name || 'Usuário').slice(0, 48),
+      avatarUrl: typeof participant?.avatarUrl === 'string' && participant.avatarUrl.length <= 100_000
+        && /^(https:\/\/|data:image\/(?:png|jpeg|webp|gif);base64,)/i.test(participant.avatarUrl)
+        ? participant.avatarUrl
+        : '',
+      isMuted: Boolean(participant?.isMuted),
+      isSpeaking: Boolean(participant?.isSpeaking),
+      isStreaming: Boolean(participant?.isStreaming)
+    })).filter((participant) => participant.id)
+    : [];
+  const activity = value.activity && typeof value.activity === 'object'
+    ? {
+      id: String(value.activity.id || '').slice(0, 128),
+      text: String(value.activity.text || '').slice(0, 100)
+    }
+    : null;
+  return {
+    visible: value.visible === true,
+    gameName: String(value.gameName || '').slice(0, 80),
+    channelName: String(value.channelName || '').slice(0, 80),
+    participants,
+    activity: activity?.id && activity.text ? activity : null
+  };
+}
+
+function sendGameOverlayState() {
+  if (!gameOverlayWindow || gameOverlayWindow.isDestroyed() || gameOverlayWindow.webContents.isLoading()) return;
+  gameOverlayWindow.webContents.send('game-overlay:state', gameOverlayState);
+  if (gameOverlayState.visible) {
+    const display = screen.getPrimaryDisplay();
+    const activityHeight = gameOverlayState.activity ? 94 : 0;
+    const participantHeight = Math.min(gameOverlayState.participants.length, 8) * 44;
+    const height = Math.min(Math.round(display.workArea.height * 0.75), 76 + participantHeight + activityHeight);
+    gameOverlayWindow.setBounds({
+      x: display.workArea.x + 10,
+      y: display.workArea.y + 84,
+      width: 196,
+      height: Math.max(100, height)
+    });
+  }
+}
+
+function createGameOverlayWindow() {
+  if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) return gameOverlayWindow;
+  gameOverlayWindow = new BrowserWindow({
+    width: 196,
+    height: 100,
+    x: screen.getPrimaryDisplay().workArea.x + 10,
+    y: screen.getPrimaryDisplay().workArea.y + 84,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    focusable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'game-overlay-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  gameOverlayWindow.setMenuBarVisibility(false);
+  gameOverlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  gameOverlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  gameOverlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  gameOverlayWindow.webContents.on('will-navigate', (event, url) => {
+    if (url !== `${APP_ORIGIN}/game-overlay.html`) event.preventDefault();
+  });
+  gameOverlayWindow.on('closed', () => {
+    gameOverlayWindow = null;
+  });
+  gameOverlayWindow.loadURL(`${APP_ORIGIN}/game-overlay.html`).catch((error) => {
+    console.error('Não foi possível carregar o mini perfil de voz no jogo:', error);
+  });
+  gameOverlayWindow.webContents.on('did-finish-load', () => {
+    sendGameOverlayState();
+    if (gameOverlayState.visible && !gameOverlayWindow.isVisible()) gameOverlayWindow.showInactive();
+  });
+  return gameOverlayWindow;
+}
+
+ipcMain.on('game-overlay:update', (event, value) => {
+  if (!isTrustedRenderer(event)) return;
+  const nextState = normalizeGameOverlayState(value);
+  if (nextState.visible && !nextState.activity) nextState.activity = gameOverlayState.activity;
+  gameOverlayState = nextState;
+  if (!gameOverlayState.visible) {
+    if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) gameOverlayWindow.hide();
+    return;
+  }
+  const overlay = createGameOverlayWindow();
+  if (overlay.webContents.isLoading()) return;
+  sendGameOverlayState();
+  if (!overlay.isVisible()) overlay.showInactive();
+});
 
 ipcMain.handle('stream-fullscreen:set', (event, enabled) => {
   if (!isTrustedRenderer(event) || typeof enabled !== 'boolean') {

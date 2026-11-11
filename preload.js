@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   setStreamFullscreen: (enabled) => ipcRenderer.invoke('stream-fullscreen:set', enabled),
+  updateGameOverlay: (state) => ipcRenderer.send('game-overlay:update', state),
   onStreamFullscreenChanged: (callback) => {
     const listener = (event, enabled) => callback(enabled);
     ipcRenderer.on('stream-fullscreen:changed', listener);

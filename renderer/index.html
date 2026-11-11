@@ -317,6 +317,9 @@
           <span class="game-activity-title" id="gameActivityTitle">Detectando jogos...</span>
           <span class="game-activity-status" id="gameActivityStatus">Não Compartilhando</span>
         </div>
+        <button type="button" class="game-activity-share-btn game-overlay-toggle-btn" id="btnToggleGameOverlay" title="Ativar mini perfil no jogo" aria-label="Ativar mini perfil no jogo" aria-pressed="true">
+          ◉
+        </button>
         <button class="game-activity-share-btn" id="btnGameQuickStream" title="Selecionar janela para transmitir">
           🖥️
         </button>
@@ -535,21 +538,60 @@
 
         <!-- Barra Flutuante de Controles da Chamada (Estilo Discord - Foto 1) -->
         <div class="voice-floating-bar" id="voiceFloatingBar" style="display: none;">
-          <button id="btnStageMic" class="dock-circle-btn" title="Microfone (Ativar / Mutar)">
-            <span id="stageMicIcon">🎙️</span>
+          <div class="voice-control-group voice-control-mic">
+            <button type="button" id="btnStageMic" class="voice-control-btn" title="Microfone: ativar ou mutar" aria-label="Ativar ou mutar microfone" aria-pressed="false">
+              <svg id="stageMicIcon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21H9a1 1 0 0 0 0 2h6a1 1 0 0 0 0-2h-2v-3.08A7 7 0 0 0 19 11Z"/>
+              </svg>
+            </button>
+            <button type="button" id="btnStageMicOptions" class="voice-control-chevron" title="Configurações do microfone" aria-label="Abrir configurações do microfone" aria-haspopup="menu" aria-expanded="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+            </button>
+            <div class="voice-control-menu" id="stageMicMenu" role="menu" aria-label="Opções do microfone" hidden>
+              <button type="button" role="menuitem" id="btnStageMicSettings">Configurações do microfone</button>
+            </div>
+          </div>
+          <button type="button" id="btnShareCam" class="voice-control-btn voice-camera-btn" title="Ativar câmera" aria-label="Ativar ou desativar câmera" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Zm14 4 4-3v10l-4-3v-4Z"/>
+              <path class="camera-slash" d="m3 3 18 18"/>
+            </svg>
           </button>
-          <button id="btnShareCam" class="dock-circle-btn" title="Câmera">
-            <span>📹</span>
+          <div class="voice-control-group voice-control-stream">
+            <button type="button" id="btnShareScreen" class="voice-control-btn voice-stream-btn" title="Transmitir tela ou janela do jogo" aria-label="Iniciar transmissão de tela ou janela" aria-pressed="false">
+              <svg id="stageStreamIcon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6v2h3v2H7v-2h3v-2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 2v10h16V6H4Zm7 1 5 4-5 4V7Z"/>
+              </svg>
+              <span id="stageStreamStopIcon" hidden>■</span>
+            </button>
+            <button type="button" id="btnStageStreamOptions" class="voice-control-chevron" title="Opções de transmissão" aria-label="Opções de transmissão" aria-haspopup="menu" aria-expanded="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+            </button>
+            <div class="voice-control-menu" id="stageStreamMenu" role="menu" aria-label="Opções de transmissão" hidden>
+              <button type="button" role="menuitem" id="btnStageStreamSettings">Configurações de transmissão</button>
+              <button type="button" role="menuitem" id="btnStageChangeStream">Escolher outra janela</button>
+              <button type="button" role="menuitem" id="btnStageStopStream" class="voice-control-menu-danger" hidden>Parar transmissão</button>
+            </div>
+          </div>
+          <button type="button" id="btnStageActivities" class="voice-control-btn" title="Atividades" aria-label="Abrir atividades">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m12 2 1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8L12 2Zm7 12 .9 3.1L23 18l-3.1.9L19 22l-.9-3.1L15 18l3.1-.9L19 14ZM5 15l1.2 3.8L10 20l-3.8 1.2L5 25l-1.2-3.8L0 20l3.8-1.2L5 15Z" transform="translate(0 -1)"/>
+            </svg>
           </button>
-          <button id="btnShareScreen" class="dock-btn live-btn" title="Transmitir tela ou janela do jogo" aria-label="Transmitir tela ou janela do jogo">
-            <span>🖥️</span> Transmitir Tela (1080p)
+          <button type="button" id="btnStageSoundboard" class="voice-control-btn" title="Painel de efeitos sonoros" aria-label="Abrir painel de efeitos sonoros">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 9v6h4l5 4V5L7 9H3Zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4Zm-2.5-9v2.1a7 7 0 0 1 0 13.8V21a9 9 0 0 0 0-18Z"/>
+            </svg>
           </button>
-          <button id="btnStageActivities" class="dock-circle-btn" title="Atividades / Mini-jogos">
-            <span>🚀</span>
-          </button>
-          <button id="btnStageSoundboard" class="dock-circle-btn" title="Painel de Efeitos Sonoros">
-            <span>🔊</span>
-          </button>
+          <div class="voice-control-group voice-control-more">
+            <button type="button" id="btnStageMore" class="voice-control-btn" title="Mais controles" aria-label="Mais controles da chamada" aria-haspopup="menu" aria-expanded="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+            </button>
+            <div class="voice-control-menu voice-control-menu-right" id="stageMoreMenu" role="menu" aria-label="Mais controles da chamada" hidden>
+              <button type="button" role="menuitem" id="btnStageDeafen">Ensurdar áudio</button>
+              <button type="button" role="menuitem" id="btnStageVoiceSettings">Configurações de voz</button>
+            </div>
+          </div>
           <button id="btnDisconnectVoice" class="dock-circle-btn disconnect-circle-btn" title="Desconectar da Chamada">
             <svg class="disconnect-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M6.6 10.8c1.5 1.4 3.2 2.5 5.1 3.3l1.7-1.7c.2-.2.5-.3.8-.2 1 .3 2 .4 3 .4.5 0 .8.4.8.8v2.7c0 .5-.3.8-.8.8C10.5 16.9 7.1 13.5 7.1 9.3c0-.5.4-.8.8-.8h2.7c.5 0 .8.3.8.8 0 1 .1 2 .4 3 .1.3 0 .6-.2.8l-1.7 1.7c.8 1.9 1.9 3.6 3.3 5.1l-1.6 1.6C8.8 18.9 5.1 15.2 2.5 10.4l1.6-1.6 2.5 2z" transform="rotate(-45 12 12)"/>
@@ -805,37 +847,36 @@
     <div class="modal-card modal-stream-card">
       <header class="modal-header">
         <div class="modal-header-info">
-          <div class="modal-header-icon">🎮</div>
+          <div class="modal-header-icon">▣</div>
           <div>
-            <h3>Transmitir jogo ou janela</h3>
-            <p class="modal-subtitle">Jogos são detectados automaticamente. Escolha manualmente outra janela para transmitir um vídeo ou aplicativo. Monitores inteiros não são compartilhados.</p>
+            <h3>Escolha o que compartilhar</h3>
+            <p class="modal-subtitle">Selecione um jogo ou uma janela aberta para transmitir.</p>
           </div>
         </div>
-        <button class="close-modal" id="btnCloseModal">✕</button>
+        <button type="button" class="close-modal" id="btnCloseModal" aria-label="Fechar seletor">✕</button>
       </header>
 
       <div class="modal-tabs-bar">
         <div class="modal-tabs">
-          <button class="tab-btn active" id="tabGames">
-            <span class="tab-icon">🎮</span> Jogos detectados
-            <span class="tab-badge-rec">Recomendado</span>
+          <button type="button" class="tab-btn active" id="tabGames">
+            <span class="tab-icon">▣</span> Jogos
           </button>
-          <button class="tab-btn" id="tabWindows">
-            <span class="tab-icon">🪟</span> Outras janelas
+          <button type="button" class="tab-btn" id="tabWindows">
+            <span class="tab-icon">▤</span> Janelas
           </button>
         </div>
         <div class="modal-search-wrapper">
-          <input type="text" id="inputSearchSources" class="source-search-input" placeholder="🔍 Buscar nesta aba...">
+          <input type="text" id="inputSearchSources" class="source-search-input" placeholder="Buscar jogo ou janela..." aria-label="Buscar jogo ou janela">
         </div>
-        <button class="refresh-sources-btn" id="btnRefreshSources" title="Recarregar Janelas e Jogos Abertos">
-          <span class="refresh-icon">🔄</span> Atualizar
+        <button type="button" class="refresh-sources-btn" id="btnRefreshSources" title="Recarregar jogos e janelas">
+          <span class="refresh-icon" aria-hidden="true">↻</span> Atualizar
         </button>
       </div>
 
       <div class="game-privacy-banner" id="gamePrivacyBanner">
-        <span class="privacy-shield-icon">🛡️</span>
+        <span class="privacy-shield-icon" aria-hidden="true">ⓘ</span>
         <div class="privacy-text">
-          <strong>Detecção privada:</strong> jogos reconhecidos pelo título ou executável aparecem automaticamente. Navegadores e outras janelas ficam ocultos nesta aba.
+          <strong>Sua privacidade:</strong> somente a janela selecionada será compartilhada. O monitor inteiro não é transmitido.
         </div>
       </div>
 
@@ -859,7 +900,7 @@
 
       <div class="stream-quality-settings">
         <div class="quality-item">
-          <label>QUALIDADE DE VÍDEO:</label>
+          <label for="selectResolution">Qualidade</label>
           <select id="selectResolution" class="discord-select-sm">
             <option value="720">720p (HD)</option>
             <option value="1080" selected>1080p (Full HD)</option>
@@ -867,7 +908,7 @@
           </select>
         </div>
         <div class="quality-item">
-          <label>TAXA DE QUADROS:</label>
+          <label for="selectFps">Taxa de quadros</label>
           <select id="selectFps" class="discord-select-sm">
             <option value="120">120 FPS (máximo)</option>
             <option value="60" selected>60 FPS</option>
@@ -877,9 +918,9 @@
       </div>
 
       <footer class="modal-footer">
-        <button class="cancel-btn" id="btnCancelShare">Cancelar</button>
-        <button class="confirm-btn live-confirm-btn" id="btnConfirmShare" disabled>
-          <span class="live-dot-pulse"></span> Iniciar Transmissão do Jogo
+        <button type="button" class="cancel-btn" id="btnCancelShare">Cancelar</button>
+        <button type="button" class="confirm-btn live-confirm-btn" id="btnConfirmShare" disabled>
+          <span class="live-dot-pulse"></span> Iniciar transmissão
         </button>
       </footer>
     </div>
@@ -1357,6 +1398,10 @@
         <span>Silenciar para mim</span>
         <div class="vctx-checkbox" id="vctxCheckMute"></div>
       </div>
+      <div class="vctx-item vctx-toggle" data-action="mute-soundboard">
+        <span>Silenciar efeitos sonoros</span>
+        <div class="vctx-checkbox" id="vctxCheckSoundboard"></div>
+      </div>
       <div class="vctx-item vctx-toggle" data-action="disable-video">
         <span>Ocultar vídeo para mim</span>
         <div class="vctx-checkbox" id="vctxCheckVideo"></div>
@@ -1373,8 +1418,18 @@
     <div class="vctx-divider"></div>
 
     <div class="vctx-section">
+      <div class="vctx-item" data-action="add-friend">Adicionar amigo</div>
       <div class="vctx-item" data-action="unfriend">Desfazer amizade</div>
       <div class="vctx-item vctx-danger" data-action="block">Bloquear usuário</div>
+    </div>
+
+    <div class="vctx-divider"></div>
+
+    <div class="vctx-section">
+      <div class="vctx-item vctx-has-sub" data-action="role">
+        <span>Cargo</span>
+        <span class="vctx-arrow">❯</span>
+      </div>
     </div>
   </div>
 

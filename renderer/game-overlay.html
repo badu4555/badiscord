@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BADISCORD • Voz no jogo</title>
+  <link rel="stylesheet" href="game-overlay.css">
+</head>
+<body>
+  <main class="voice-overlay" id="voiceOverlay" aria-label="Participantes do canal de voz">
+    <header class="overlay-header">
+      <span class="overlay-status-dot" aria-hidden="true"></span>
+      <div class="overlay-heading">
+        <strong id="overlayChannel">Voz conectada</strong>
+        <span id="overlayParticipantCount">0 na call</span>
+      </div>
+    </header>
+    <section class="overlay-members" id="overlayMembers" aria-live="polite"></section>
+    <section class="overlay-activity" id="overlayActivity" aria-live="polite" hidden>
+      <strong>Atividade da call</strong>
+      <div id="overlayActivityList"></div>
+    </section>
+  </main>
+  <script src="game-overlay.js"></script>
+</body>
+</html>
