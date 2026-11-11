@@ -2341,8 +2341,9 @@ async function watchLiveStream(participantId, channelName = currentChannel, serv
     const viewerCount = document.getElementById('liveViewerCount');
     if (viewerCount) viewerCount.textContent = `👁 ${getVoiceViewerCount()}`;
     if (btnStopStreamDirect) btnStopStreamDirect.style.display = 'none';
-    if (participantsGrid) participantsGrid.style.display = 'none';
+    if (participantsGrid) participantsGrid.style.display = 'grid';
     watchingLiveParticipantId = participantId;
+    stageContent?.classList.add('has-live-stream');
     showStreamOverlayControls();
     switchView('voice');
     remoteVideoPlayer.play().catch((error) => {
@@ -2372,6 +2373,7 @@ function stopWatchingLive() {
   watchingLiveParticipantId = '';
   if (remoteVideoPlayer && !isLocalStreamer) remoteVideoPlayer.srcObject = null;
   if (streamViewerWrapper && !isLocalStreamer) streamViewerWrapper.style.display = 'none';
+  if (!isLocalStreamer) stageContent?.classList.remove('has-live-stream');
   if (streamControlsHideTimeout) clearTimeout(streamControlsHideTimeout);
   streamViewerWrapper?.classList.remove('controls-hidden');
   const viewerCount = document.getElementById('liveViewerCount');
@@ -6537,6 +6539,7 @@ async function disconnectVoice(playSound = true) {
   participantsGrid.style.display = 'none';
   participantsGrid.innerHTML = '';
   streamViewerWrapper.style.display = 'none';
+  stageContent.classList.remove('has-live-stream');
   voiceFloatingBar.style.display = 'none';
   document.querySelectorAll('.channel-item[data-type="voice"]').forEach(i => i.classList.remove('active'));
 
@@ -7179,6 +7182,7 @@ async function stopCurrentStream() {
     streamViewerWrapper.style.display = 'none';
     streamViewerWrapper.classList.remove('controls-hidden');
   }
+  stageContent?.classList.remove('has-live-stream');
   if (participantsGrid && currentChannel) {
     participantsGrid.style.display = 'grid';
   }
@@ -7598,12 +7602,10 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     remoteVideoPlayer.muted = true;
     remoteVideoPlayer.defaultMuted = true;
     streamViewerWrapper.style.display = 'flex';
+    stageContent?.classList.add('has-live-stream');
     showStreamOverlayControls();
 
-    // Oculta temporariamente o grid de participantes enquanto transmite para focar a live centralizada
-    if (participantsGrid) {
-      participantsGrid.style.display = 'none';
-    }
+    if (participantsGrid) participantsGrid.style.display = 'grid';
 
     if (btnShareScreen) {
       btnShareScreen.classList.add('live-active');
