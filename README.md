@@ -35,7 +35,7 @@ O comando compila o helper nativo de áudio antes de abrir o aplicativo. A captu
 
 No desktop, o botão de transmitir abre a lista de janelas; jogos são reconhecidos pelo título ou executável, e os demais podem ser escolhidos em **Outras janelas**. Selecionar uma janela não inicia nem abre o jogo, e a captura começa somente após confirmar a transmissão. O indicador de latência usa o RTT ICE da conexão com o servidor LiveKit. Participantes conectados compartilham essa medição para que ela apareça ao lado de cada pessoa; ela representa a rota até o servidor de voz (não uma conexão direta entre participantes). Se não houver estatísticas disponíveis, o app mostra `--` em vez de inventar um valor.
 
-Com um jogo detectado e conectado a um canal de voz no app desktop, o mini perfil fica escondido enquanto ninguém estiver falando. Ele aparece quando alguém fala, destaca o participante ativo e desaparece pouco depois do fim da fala. Use o botão no painel do jogo para desativar ou reativar esse comportamento; a escolha fica salva. Jogos em tela cheia exclusiva podem ocultá-lo, então prefira janela sem bordas.
+Com um jogo detectado e conectado a um canal de voz no app desktop, o mini perfil aparece como avatares circulares discretos e transparentes. Quem estiver falando fica destacado em verde, com o nome visível; o overlay desaparece pouco depois que todos param de falar. Use o botão no painel do jogo para desativar ou reativar esse comportamento; a escolha fica salva. Jogos em tela cheia exclusiva podem ocultá-lo, então prefira janela sem bordas.
 
 ---
 
