@@ -2414,7 +2414,7 @@ function refreshVoiceParticipantViews() {
   renderVoiceParticipants();
 }
 
-let gameOverlayEnabled = localStorage.getItem('badiscord_game_overlay_enabled') !== 'false';
+let gameOverlayEnabled = localStorage.getItem('badiscord_game_overlay_enabled') === 'true';
 
 function updateGameOverlayToggleButton() {
   const button = document.getElementById('btnToggleGameOverlay');
