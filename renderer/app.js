@@ -2414,7 +2414,9 @@ function refreshVoiceParticipantViews() {
   renderVoiceParticipants();
 }
 
-let gameOverlayEnabled = localStorage.getItem('badiscord_game_overlay_enabled') === 'true';
+let gameOverlayEnabled = localStorage.getItem('badiscord_game_overlay_enabled') !== 'false';
+let gameOverlayHideTimeout = null;
+let gameOverlayWasShown = false;
 
 function updateGameOverlayToggleButton() {
   const button = document.getElementById('btnToggleGameOverlay');
@@ -2428,13 +2430,13 @@ function updateGameOverlayToggleButton() {
 
 function syncGameVoiceOverlay(activity = null) {
   if (!window.electronAPI?.updateGameOverlay) return;
-  const isVisible = Boolean(
+  const canShowOverlay = Boolean(
     gameOverlayEnabled &&
     detectedGame?.name &&
     currentChannel &&
     livekitRoom?.state === 'connected'
   );
-  const participants = isVisible ? getVoiceChannelParticipants().map((participant) => ({
+  const participants = canShowOverlay ? getVoiceChannelParticipants().map((participant) => ({
     id: participant.id,
     name: participant.name,
     avatarUrl: participant.avatarUrl || '',
@@ -2442,11 +2444,33 @@ function syncGameVoiceOverlay(activity = null) {
     isSpeaking: Boolean(participant.isSpeaking),
     isStreaming: Boolean(participant.isStreaming)
   })) : [];
+  const hasActiveSpeaker = participants.some((participant) => participant.isSpeaking);
+  if (!canShowOverlay) {
+    if (gameOverlayHideTimeout) clearTimeout(gameOverlayHideTimeout);
+    gameOverlayHideTimeout = null;
+    gameOverlayWasShown = false;
+  } else if (hasActiveSpeaker) {
+    if (gameOverlayHideTimeout) clearTimeout(gameOverlayHideTimeout);
+    gameOverlayHideTimeout = null;
+    gameOverlayWasShown = true;
+  } else if (gameOverlayWasShown && !gameOverlayHideTimeout) {
+    gameOverlayHideTimeout = setTimeout(() => {
+      gameOverlayHideTimeout = null;
+      gameOverlayWasShown = false;
+      window.electronAPI.updateGameOverlay({
+        visible: false,
+        gameName: detectedGame?.name || '',
+        channelName: currentChannel || '',
+        participants: [],
+        activity: null
+      });
+    }, 1400);
+  }
   window.electronAPI.updateGameOverlay({
-    visible: isVisible,
+    visible: canShowOverlay && (hasActiveSpeaker || gameOverlayWasShown),
     gameName: detectedGame?.name || '',
     channelName: currentChannel || '',
-    participants,
+    participants: canShowOverlay && gameOverlayWasShown ? participants : [],
     activity
   });
 }
@@ -2644,7 +2668,9 @@ function updateVoiceSelfCard() {
 }
 
 function updateLocalSpeakingState(isSpeaking) {
+  const speakingChanged = isLocalSpeaking !== isSpeaking;
   isLocalSpeaking = isSpeaking;
+  if (speakingChanged) syncGameVoiceOverlay();
   const participantCard = document.getElementById('localParticipantCard');
   const sidebarUser = document.getElementById('sidebarLocalUser');
   [participantCard, sidebarUser, voiceSelfCard].forEach((element) => {
