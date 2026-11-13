@@ -310,23 +310,23 @@
         <div id="voiceChannelsContainer" class="channels-group"></div>
       </div>
 
-      <!-- 4. PAINEL DE ATIVIDADE DE JOGO DINÂMICO (Atualiza em tempo real com o jogo aberto) -->
-      <div class="game-activity-panel" id="gameActivityPanel">
-        <div class="game-activity-icon-box" id="gameActivityIconBox">🎮</div>
-        <div class="game-activity-info">
-          <span class="game-activity-title" id="gameActivityTitle">Detectando jogos...</span>
-          <span class="game-activity-status" id="gameActivityStatus">Não Compartilhando</span>
+      <section class="activity-voice-card" aria-label="Atividade do jogo e conexão de voz">
+        <div class="game-activity-panel" id="gameActivityPanel">
+          <div class="game-activity-icon-box" id="gameActivityIconBox">🎮</div>
+          <div class="game-activity-info">
+            <span class="game-activity-title" id="gameActivityTitle">Detectando jogos...</span>
+            <span class="game-activity-status" id="gameActivityStatus">Não Compartilhando</span>
+          </div>
+          <button type="button" class="game-activity-share-btn game-overlay-toggle-btn" id="btnToggleGameOverlay" title="Ativar mini perfil no jogo" aria-label="Ativar mini perfil no jogo" aria-pressed="false">
+            ◉
+          </button>
+          <button type="button" class="game-activity-share-btn" id="btnGameQuickStream" title="Selecionar janela para transmitir" aria-label="Selecionar janela para transmitir">
+            🖥️
+          </button>
         </div>
-        <button type="button" class="game-activity-share-btn game-overlay-toggle-btn" id="btnToggleGameOverlay" title="Ativar mini perfil no jogo" aria-label="Ativar mini perfil no jogo" aria-pressed="false">
-          ◉
-        </button>
-        <button class="game-activity-share-btn" id="btnGameQuickStream" title="Selecionar janela para transmitir">
-          🖥️
-        </button>
-      </div>
 
-      <!-- 5. PAINEL DE VOZ CONECTADA COM ATALHOS RÁPIDOS FUNCIONAIS (Idêntico à Imagem) -->
-      <div class="voice-connection-panel" id="voiceConnectionPanel" style="display: none;">
+        <!-- Atalhos da chamada e controles da conta -->
+        <div class="voice-connection-panel" id="voiceConnectionPanel" style="display: none;">
         <div class="vc-top-row">
           <div class="vc-left-wrap">
             <div class="vc-signal-box" id="vcSignalBox" title="Status de Voz">
@@ -383,10 +383,9 @@
             </svg>
           </button>
         </div>
-      </div>
+        </div>
 
-      <!-- 6. RODAPÉ DO USUÁRIO (Idêntico à Imagem) -->
-      <footer class="user-panel">
+        <footer class="user-panel">
         <div class="user-panel-left" id="userPanelLeft" title="Abrir menu de status e perfil">
           <div class="user-avatar-wrapper">
             <div class="user-avatar" id="myAvatar">B</div>
@@ -433,7 +432,8 @@
             </svg>
           </button>
         </div>
-      </footer>
+        </footer>
+      </section>
     </aside>
 
     <!-- Palco Principal (Voz, Chat de Texto e Amigos) -->
@@ -460,9 +460,19 @@
         <!-- Área de Vídeo / Streaming 1080p -->
         <section class="stage-content" id="stageContent">
           <div class="empty-state" id="emptyState">
-            <div class="empty-icon">🎧</div>
-            <h3>Você ainda não está em um canal</h3>
-            <p>Clique em qualquer canal de voz à esquerda para conversar e transmitir sua tela.</p>
+            <div class="empty-state-copy" id="emptyStateCopy">
+              <div class="empty-icon">🎧</div>
+              <h3>Você ainda não está em um canal</h3>
+              <p>Clique em qualquer canal de voz à esquerda para conversar e transmitir sua tela.</p>
+            </div>
+            <div class="voice-channel-preview" id="voiceChannelPreview" hidden>
+              <div class="voice-preview-participants" id="voicePreviewParticipants" aria-hidden="true"></div>
+              <h3 id="voicePreviewTitle"></h3>
+              <p id="voicePreviewDescription"></p>
+              <button type="button" class="voice-preview-join-button" id="btnJoinPreviewVoice">
+                Entrar na chamada de voz
+              </button>
+            </div>
           </div>
 
           <!-- Player de Live -->
@@ -1249,14 +1259,7 @@
       </div>
 
       <!-- Fileira de Insígnias -->
-      <div class="presence-badges-row">
-        <span class="presence-badge" title="Desenvolvedor Ativo">💻</span>
-        <span class="presence-badge" title="Gamer">🎮</span>
-        <span class="presence-badge" title="Lutador">🗡️</span>
-        <span class="presence-badge" title="HypeSquad">🐍</span>
-        <span class="presence-badge" title="BADISCORD Early Supporter">#</span>
-        <span class="presence-badge" title="Impulso de Servidor">🛡️</span>
-      </div>
+      <div class="presence-badges-row" id="presenceBadgesRow" aria-label="Insígnias selecionadas"></div>
     </div>
 
     <!-- Atalhos para personalizações gratuitas -->
@@ -1355,6 +1358,74 @@
         <span class="item-arrow">❯</span>
       </div>
     </div>
+  </div>
+
+  <div class="modal-overlay badges-modal-overlay" id="badgesModal" style="display: none;">
+    <section class="badges-modal" role="dialog" aria-modal="true" aria-labelledby="badgesModalTitle">
+      <aside class="badges-sidebar">
+        <header class="badges-sidebar-header">
+          <h2 id="badgesModalTitle">Suas insígnias</h2>
+          <p>Navegue pelas suas conquistas e acompanhe seu progresso.</p>
+        </header>
+        <nav class="badge-category-nav" aria-label="Categorias de insígnias">
+          <button type="button" class="badge-category-button active" data-badge-category="stream">
+            <span aria-hidden="true">🖥️</span><span class="badge-category-label">Transmissão</span>
+          </button>
+          <button type="button" class="badge-category-button" data-badge-category="game">
+            <span aria-hidden="true">🎮</span><span class="badge-category-label">Jogos</span>
+          </button>
+          <button type="button" class="badge-category-button" data-badge-category="voice">
+            <span aria-hidden="true">🎧</span><span class="badge-category-label">Voz</span>
+          </button>
+        </nav>
+        <div class="badge-collection-group">
+          <h3>Desbloqueadas</h3>
+          <div class="badge-collection-grid" id="unlockedBadgesGrid"></div>
+        </div>
+        <div class="badge-collection-group">
+          <h3>Disponíveis para desbloquear</h3>
+          <div class="badge-collection-grid" id="lockedBadgesGrid"></div>
+        </div>
+        <footer class="badges-sidebar-footer">
+          <button type="button" class="badge-customize-button" id="btnCustomizeBadges">Personalize suas insígnias</button>
+        </footer>
+      </aside>
+      <main class="badge-detail-panel">
+        <button type="button" class="badges-modal-close" id="btnCloseBadgesModal" aria-label="Fechar insígnias">×</button>
+        <div class="badge-detail-scroll">
+          <div class="badge-detail-hero" id="badgeDetailHero">
+            <div class="badge-detail-art" id="badgeDetailArt" aria-hidden="true">🖥️</div>
+            <span class="badge-detail-category" id="badgeDetailCategory">Transmissão</span>
+            <h2 id="badgeDetailTitle">Nos holofotes</h2>
+            <p id="badgeDetailSummary">Some horas transmitindo para outras pessoas.</p>
+            <span class="badge-detail-rarity" id="badgeDetailRarity">EM PROGRESSO</span>
+          </div>
+          <section class="badge-progress-card">
+            <div class="badge-progress-heading">
+              <strong>Seu progresso</strong>
+              <span id="badgeProgressText">0 de 1 hora</span>
+            </div>
+            <div class="badge-progress-row">
+              <span class="badge-progress-current" id="badgeProgressCurrent" aria-hidden="true">🖥️</span>
+              <div class="badge-progress-track" role="progressbar" id="badgeProgressBar" aria-label="Progresso da insígnia" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <span id="badgeProgressFill"></span>
+              </div>
+              <span class="badge-progress-next" id="badgeProgressNext" aria-hidden="true">🏆</span>
+            </div>
+            <p id="badgeProgressDescription">Continue usando o BADISCORD para desbloquear esta insígnia.</p>
+            <section class="badge-game-breakdown" id="badgeGameBreakdown" hidden>
+              <h3>Jogos registrados</h3>
+              <div id="badgeGameBreakdownList"></div>
+            </section>
+            <div class="badge-milestone-list" id="badgeMilestoneList"></div>
+          </section>
+          <div class="badge-save-row" id="badgeSaveRow" hidden>
+            <span id="badgeSelectionCount">0 de 6 insígnias selecionadas</span>
+            <button type="button" class="badge-save-button" id="btnSaveBadges">Salvar seleção</button>
+          </div>
+        </div>
+      </main>
+    </section>
   </div>
 
   <!-- Menu de Contexto do Usuário no Canal de Voz (Idêntico ao Discord) -->
@@ -1467,7 +1538,7 @@
         <div class="settings-nav-item" data-tab="decorations">Decorações de perfil</div>
 
         <div class="settings-nav-header">RECURSOS DA COMUNIDADE</div>
-        <div class="settings-nav-item" data-tab="nitro">Temas e perfil</div>
+        <div class="settings-nav-item" data-tab="nitro">Personalização</div>
         <div class="settings-nav-item" data-tab="boost">Identidade do servidor</div>
         <div class="settings-nav-item" data-tab="subscriptions">Loja comunitária</div>
         <div class="settings-nav-item" data-tab="gift-inventory">Itens disponíveis</div>
@@ -1876,18 +1947,64 @@
           <div class="color-theme-grid" id="colorThemeOptions" aria-label="Temas coloridos"></div>
         </div>
 
-        <!-- Personalizações próprias do BADISCORD -->
+        <!-- Personalização da interface e do perfil -->
         <div class="settings-tab-pane" id="pane-nitro" style="display: none;">
-          <div class="nitro-banner-card">
-            <div class="nitro-badge-pill">INCLUSO PARA TODA A COMUNIDADE</div>
-            <h2>Personalize. Compartilhe. De graça.</h2>
-            <p>Explore 20 paletas coloridas, animações e ícones originais de perfil. Seus amigos também veem a decoração que você escolher — sem assinatura ou pagamento.</p>
-            <div class="free-customization-highlights">
-              <span>🎨 24 temas</span>
-              <span>✨ Animações</span>
-              <span>👥 Ícones compartilhados</span>
+          <div class="customization-hub">
+            <section class="customization-feature customization-profile-feature">
+              <div class="customization-feature-copy">
+                <span class="customization-eyebrow">SEU PERFIL, SEU ESTILO</span>
+                <h2>Mostre sua personalidade</h2>
+                <p>Escolha uma moldura, um efeito animado e um ícone para deixar seu perfil com a sua cara.</p>
+                <button type="button" class="customization-action" id="btnOpenFreeDecorations">
+                  Ver molduras e efeitos <span aria-hidden="true">→</span>
+                </button>
+              </div>
+              <div class="customization-profile-art" aria-hidden="true">
+                <div class="customization-profile-card">
+                  <div class="customization-profile-banner"></div>
+                  <div class="customization-profile-avatar" id="customizationHubAvatar">
+                    <span id="customizationHubInitial">B</span>
+                    <img id="customizationHubAvatarImg" alt="" hidden>
+                  </div>
+                  <strong id="customizationHubName">Bads</strong>
+                  <span class="customization-profile-handle" id="customizationHubHandle">@bads</span>
+                  <div class="customization-profile-tags"><i></i><i></i><i></i></div>
+                  <div class="customization-profile-about">
+                    <span></span><span></span><span></span>
+                  </div>
+                </div>
+                <span class="customization-art-orbit customization-art-orbit-one"></span>
+                <span class="customization-art-orbit customization-art-orbit-two"></span>
+              </div>
+            </section>
+
+            <section class="customization-feature customization-theme-feature">
+              <div class="customization-theme-art" aria-hidden="true">
+                <div class="customization-app-preview">
+                  <div class="customization-app-rail"><i></i><i></i><i></i><i></i></div>
+                  <div class="customization-app-channels"><span></span><span></span><span></span><span></span><span></span></div>
+                  <div class="customization-app-content">
+                    <div class="customization-app-heading"></div>
+                    <div class="customization-app-message"><i></i><span></span><span></span></div>
+                    <div class="customization-app-message"><i></i><span></span><span></span></div>
+                    <div class="customization-app-composer"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="customization-feature-copy">
+                <span class="customization-eyebrow">CORES PARA O SEU ESPAÇO</span>
+                <h2>Deixe o app com a sua cara</h2>
+                <p>Alterne entre temas e paletas de cores. A mudança aparece na hora e fica salva no seu dispositivo.</p>
+                <button type="button" class="customization-action" id="btnOpenAppearance">
+                  Explorar temas <span aria-hidden="true">→</span>
+                </button>
+              </div>
+            </section>
+
+            <div class="customization-hub-footer">
+              <span>✨ Opções para personalizar seu BADISCORD</span>
+              <button type="button" class="customization-footer-link" id="btnOpenCustomizationItems">Ver itens disponíveis</button>
             </div>
-            <button type="button" class="discord-btn-primary" id="btnOpenFreeDecorations">Personalizar meu perfil</button>
           </div>
         </div>
 

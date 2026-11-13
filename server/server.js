@@ -123,6 +123,7 @@ const databasePath = process.env.DB_PATH || path.join(__dirname, 'data', 'badisc
 fs.mkdirSync(path.dirname(databasePath), { recursive: true });
 const db = new Database(databasePath);
 db.pragma('journal_mode = WAL');
+const activityReportTimes = new Map();
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -284,6 +285,15 @@ db.exec(`
     content_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS user_activity_stats (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    game_seconds INTEGER NOT NULL DEFAULT 0,
+    stream_seconds INTEGER NOT NULL DEFAULT 0,
+    voice_seconds INTEGER NOT NULL DEFAULT 0,
+    game_seconds_json TEXT NOT NULL DEFAULT '{}',
+    selected_badges_json TEXT NOT NULL DEFAULT '[]',
+    updated_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS custom_sounds (
     id TEXT PRIMARY KEY,
@@ -1670,6 +1680,141 @@ app.put('/api/profile/customization', requireAuth, (req, res) => {
       updated_at = excluded.updated_at`)
     .run(req.user.id, profileDecoration, profileWidget, profileIcon, now);
   return res.json({ customization: { profileDecoration, profileWidget, profileIcon } });
+});
+
+const activityBadgeThresholds = {
+  game: [1, 5, 20, 75, 150],
+  stream: [1, 5, 20, 75, 150],
+  voice: [1, 5, 20, 75, 150]
+};
+const activityBadgeIds = new Set(
+  Object.entries(activityBadgeThresholds).flatMap(([category, thresholds]) => (
+    thresholds.map((hours) => `${category}-${hours}`)
+  ))
+);
+
+function getActivityStats(userId) {
+  const row = db.prepare(`SELECT game_seconds, stream_seconds, voice_seconds, game_seconds_json, selected_badges_json
+    FROM user_activity_stats WHERE user_id = ?`).get(userId);
+  const gameSeconds = Number(row?.game_seconds) || 0;
+  const streamSeconds = Number(row?.stream_seconds) || 0;
+  const voiceSeconds = Number(row?.voice_seconds) || 0;
+  const gameSecondsByName = parseJsonValue(row?.game_seconds_json, {});
+  const selectedBadgeIds = parseJsonValue(row?.selected_badges_json, []);
+  return {
+    gameSeconds,
+    streamSeconds,
+    voiceSeconds,
+    games: Object.entries(gameSecondsByName)
+      .filter(([name, seconds]) => typeof name === 'string' && Number.isFinite(seconds) && seconds > 0)
+      .map(([name, seconds]) => ({ name, seconds: Math.floor(seconds) }))
+      .sort((a, b) => b.seconds - a.seconds)
+      .slice(0, 100),
+    selectedBadgeIds: Array.isArray(selectedBadgeIds)
+      ? selectedBadgeIds.filter((id) => activityBadgeIds.has(id)).slice(0, 6)
+      : []
+  };
+}
+
+app.get('/api/profile/activity', requireAuth, (req, res) => {
+  return res.json({ stats: getActivityStats(req.user.id) });
+});
+
+app.post('/api/profile/activity', requireAuth, (req, res) => {
+  const gameEntries = Array.isArray(req.body?.games) ? req.body.games : [];
+  if (gameEntries.length > 10) return res.status(400).json({ error: 'Muitas sessões de jogo no mesmo registro.' });
+
+  const games = [];
+  let gameSeconds = 0;
+  for (const entry of gameEntries) {
+    const name = normalize(entry?.name).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 100);
+    const seconds = entry?.seconds;
+    if (!name || !Number.isInteger(seconds) || seconds < 0 || seconds > 300) {
+      return res.status(400).json({ error: 'Registro de tempo de jogo inválido.' });
+    }
+    if (seconds > 0) {
+      games.push({ name, seconds });
+      gameSeconds += seconds;
+    }
+  }
+
+  const streamSeconds = req.body?.streamSeconds ?? 0;
+  const voiceSeconds = req.body?.voiceSeconds ?? 0;
+  if (
+    !Number.isInteger(streamSeconds) || streamSeconds < 0 || streamSeconds > 300 ||
+    !Number.isInteger(voiceSeconds) || voiceSeconds < 0 || voiceSeconds > 300 ||
+    gameSeconds > 300 ||
+    gameSeconds + streamSeconds + voiceSeconds === 0
+  ) {
+    return res.status(400).json({ error: 'Registro de atividade inválido.' });
+  }
+
+  const now = Date.now();
+  const previousReportAt = activityReportTimes.get(req.user.id);
+  const elapsedSeconds = previousReportAt ? Math.max(0, (now - previousReportAt) / 1000) : 15;
+  const maximumReportedSeconds = Math.ceil((elapsedSeconds + 5) * 3);
+  if (gameSeconds + streamSeconds + voiceSeconds > maximumReportedSeconds) {
+    return res.status(429).json({ error: 'O registro de atividade chegou antes do intervalo permitido.' });
+  }
+  activityReportTimes.set(req.user.id, now);
+  if (activityReportTimes.size > 2000) {
+    for (const [userId, reportedAt] of activityReportTimes) {
+      if (now - reportedAt > 60 * 60 * 1000) activityReportTimes.delete(userId);
+    }
+  }
+
+  db.transaction(() => {
+    const existing = db.prepare(`SELECT game_seconds_json FROM user_activity_stats WHERE user_id = ?`)
+      .get(req.user.id);
+    const gameSecondsByName = Object.assign(
+      Object.create(null),
+      parseJsonValue(existing?.game_seconds_json, {})
+    );
+    games.forEach(({ name, seconds }) => {
+      if (Object.hasOwn(gameSecondsByName, name) || Object.keys(gameSecondsByName).length < 100) {
+        gameSecondsByName[name] = (Number(gameSecondsByName[name]) || 0) + seconds;
+      }
+    });
+    db.prepare(`INSERT INTO user_activity_stats
+      (user_id, game_seconds, stream_seconds, voice_seconds, game_seconds_json, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        game_seconds = user_activity_stats.game_seconds + excluded.game_seconds,
+        stream_seconds = user_activity_stats.stream_seconds + excluded.stream_seconds,
+        voice_seconds = user_activity_stats.voice_seconds + excluded.voice_seconds,
+        game_seconds_json = excluded.game_seconds_json,
+        updated_at = excluded.updated_at`)
+      .run(req.user.id, gameSeconds, streamSeconds, voiceSeconds, JSON.stringify(gameSecondsByName), now);
+  })();
+
+  return res.json({ stats: getActivityStats(req.user.id) });
+});
+
+app.put('/api/profile/badges', requireAuth, (req, res) => {
+  const selectedBadgeIds = req.body?.selectedBadgeIds;
+  const stats = getActivityStats(req.user.id);
+  if (
+    !Array.isArray(selectedBadgeIds) ||
+    selectedBadgeIds.length > 6 ||
+    selectedBadgeIds.some((id) => typeof id !== 'string' || !activityBadgeIds.has(id)) ||
+    selectedBadgeIds.some((id) => {
+      const [category, hoursText] = id.split('-');
+      const hours = Number(hoursText);
+      const statKey = category === 'game' ? 'gameSeconds' : category === 'stream' ? 'streamSeconds' : 'voiceSeconds';
+      return stats[statKey] < hours * 3600;
+    }) ||
+    new Set(selectedBadgeIds).size !== selectedBadgeIds.length
+  ) {
+    return res.status(400).json({ error: 'Selecione até seis insígnias válidas.' });
+  }
+
+  db.prepare(`INSERT INTO user_activity_stats (user_id, selected_badges_json, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      selected_badges_json = excluded.selected_badges_json,
+      updated_at = excluded.updated_at`)
+    .run(req.user.id, JSON.stringify(selectedBadgeIds), Date.now());
+  return res.json({ selectedBadgeIds });
 });
 
 app.get('/api/friends', requireAuth, (req, res) => {

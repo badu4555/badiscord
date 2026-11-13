@@ -9,6 +9,8 @@ const LIVEKIT_URL = LIVEKIT_FALLBACK_URL;
 // Estado da Aplicação
 let currentRoom = null;
 let currentChannel = null;
+let previewVoiceChannel = null;
+let previewVoiceServerId = '';
 let localAudioTrack = null;
 let localScreenTrack = null;
 let localScreenAudioTrack = null;
@@ -841,7 +843,7 @@ async function resumeRemoteAudioPlayback() {
 document.addEventListener('pointerdown', resumeRemoteAudioPlayback);
 document.addEventListener('keydown', resumeRemoteAudioPlayback);
 
-async function connectToLiveKitRoom(channelName) {
+async function connectToLiveKitRoom(channelName, onCredentials = null) {
   if (!hasAuthenticatedSession()) {
     throw new Error('Faça login para entrar em um canal de voz.');
   }
@@ -900,9 +902,22 @@ async function connectToLiveKitRoom(channelName) {
       });
 
       livekitRoom.on(window.LivekitClient.RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-        if (topic !== 'badiscord-voice-rtt' || !participant) return;
+        if (!participant) return;
         try {
           const report = JSON.parse(new TextDecoder().decode(payload));
+          if (topic === 'badiscord-voice-presence-sound') {
+            if (
+              report.type !== 'badiscord-voice-presence-sound' ||
+              !['joined', 'left'].includes(report.action) ||
+              participant.identity === livekitRoom?.localParticipant?.identity ||
+              livekitRoom?.state !== 'connected' ||
+              !currentChannel
+            ) return;
+            if (report.action === 'joined') playConnectSound();
+            else playDisconnectSound();
+            return;
+          }
+          if (topic !== 'badiscord-voice-rtt') return;
           const sentAt = Number(report.sentAt);
           const rttMs = Number(report.rttMs);
           if (
@@ -1025,11 +1040,28 @@ async function connectToLiveKitRoom(channelName) {
       requestLiveKitToken(roomName, participantName)
     ]);
     localVoiceCanPublish = credentials.canPublish;
+    onCredentials?.(credentials);
     await livekitRoom.prepareConnection(livekitUrl, credentials.token);
     await livekitRoom.connect(livekitUrl, credentials.token);
     return livekitRoom;
   } finally {
     livekitConnectionInFlight = false;
+  }
+}
+
+async function publishVoicePresenceSound(action) {
+  const room = livekitRoom;
+  if (!['joined', 'left'].includes(action) || room?.state !== 'connected' || !room.localParticipant) return;
+  try {
+    await room.localParticipant.publishData(
+      new TextEncoder().encode(JSON.stringify({
+        type: 'badiscord-voice-presence-sound',
+        action
+      })),
+      { reliable: true, topic: 'badiscord-voice-presence-sound' }
+    );
+  } catch (error) {
+    console.warn('Não foi possível avisar o canal sobre a entrada ou saída:', error);
   }
 }
 
@@ -1236,7 +1268,7 @@ document.getElementById('btnAcceptCall')?.addEventListener('click', async () => 
   }
 });
 
-async function publishMicToLiveKit() {
+async function publishMicToLiveKit(preparedTrackPromise = null) {
   if (!localVoiceCanPublish || !livekitRoom || livekitRoom.state !== 'connected' || !window.LivekitClient || !window.LivekitClient.createLocalAudioTrack) {
     return null;
   }
@@ -1246,12 +1278,15 @@ async function publishMicToLiveKit() {
   }
 
   try {
-    livekitAudioTrack = await window.LivekitClient.createLocalAudioTrack({
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      sampleRate: 48000
-    });
+    livekitAudioTrack = preparedTrackPromise
+      ? await preparedTrackPromise
+      : await window.LivekitClient.createLocalAudioTrack({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 48000
+      });
+    if (!livekitAudioTrack) return null;
 
     await livekitRoom.localParticipant.publishTrack(livekitAudioTrack, {
       source: window.LivekitClient.Track.Source.Microphone
@@ -1579,6 +1614,12 @@ const vcPingBadge = document.getElementById('vcPingBadge');
 const pingDot = document.getElementById('pingDot');
 const vcSignalIcon = document.getElementById('vcSignalIcon');
 const emptyState = document.getElementById('emptyState');
+const emptyStateCopy = document.getElementById('emptyStateCopy');
+const voiceChannelPreview = document.getElementById('voiceChannelPreview');
+const voicePreviewParticipants = document.getElementById('voicePreviewParticipants');
+const voicePreviewTitle = document.getElementById('voicePreviewTitle');
+const voicePreviewDescription = document.getElementById('voicePreviewDescription');
+const btnJoinPreviewVoice = document.getElementById('btnJoinPreviewVoice');
 const stageContent = document.getElementById('stageContent');
 const streamViewerWrapper = document.getElementById('streamViewerWrapper');
 const remoteVideoPlayer = document.getElementById('remoteVideoPlayer');
@@ -1816,6 +1857,10 @@ function renderGuilds() {
 }
 
 function selectServer(serverId) {
+  if (previewVoiceServerId && previewVoiceServerId !== serverId) {
+    clearVoiceChannelPreview();
+    if (!currentChannel) currentChannelTitle.textContent = 'Nenhum canal conectado';
+  }
   activeServerId = serverId;
   renderGuilds();
 
@@ -1881,7 +1926,9 @@ function renderChannels(server) {
     block.dataset.channel = chan;
 
     const item = document.createElement('div');
-    item.className = `channel-item voice-channel-item ${currentChannel === chan ? 'active' : ''}`;
+    item.className = `channel-item voice-channel-item ${
+      currentChannel === chan || (!currentChannel && previewVoiceServerId === server.id && previewVoiceChannel === chan) ? 'active' : ''
+    }`;
     item.dataset.channel = chan;
     item.dataset.type = 'voice';
 
@@ -1918,13 +1965,91 @@ function renderChannels(server) {
     if (voiceChannelsContainer) voiceChannelsContainer.appendChild(block);
 
     item.addEventListener('click', () => {
-      joinVoiceChannel(chan);
+      if (currentChannel) {
+        joinVoiceChannel(chan);
+      } else {
+        showVoiceChannelPreview(chan);
+      }
     });
   });
 
   (server.voiceChannels || []).forEach((channelName) => updateSidebarChannelUsers(channelName));
   applyProfileCustomization();
 }
+
+function showVoiceChannelPreview(channelName) {
+  previewVoiceChannel = channelName;
+  previewVoiceServerId = activeServerId;
+  currentChannelTitle.textContent = channelName;
+  switchView('voice');
+  stageContent?.classList.remove('has-voice-channel', 'has-live-stream');
+  if (emptyState) emptyState.style.display = 'flex';
+  if (emptyStateCopy) emptyStateCopy.hidden = true;
+  if (voiceChannelPreview) voiceChannelPreview.hidden = false;
+  if (participantsGrid) participantsGrid.style.display = 'none';
+  if (streamViewerWrapper) streamViewerWrapper.style.display = 'none';
+  if (voiceFloatingBar) voiceFloatingBar.style.display = 'none';
+  if (connectionBadge) connectionBadge.style.display = 'none';
+  if (voiceConnectionPanel) voiceConnectionPanel.style.display = 'none';
+  updateVoiceChannelPreview();
+  document.querySelectorAll('.channel-item[data-type="voice"]').forEach((item) => {
+    item.classList.toggle('active', item.dataset.channel === channelName);
+  });
+}
+
+function clearVoiceChannelPreview() {
+  previewVoiceChannel = null;
+  previewVoiceServerId = '';
+  if (voiceChannelPreview) voiceChannelPreview.hidden = true;
+  if (emptyStateCopy) emptyStateCopy.hidden = false;
+}
+
+function updateVoiceChannelPreview() {
+  if (!previewVoiceChannel || previewVoiceServerId !== activeServerId || currentChannel) return;
+  const participants = getVoiceChannelParticipants(previewVoiceChannel, previewVoiceServerId);
+  if (voicePreviewTitle) voicePreviewTitle.textContent = previewVoiceChannel;
+  if (voicePreviewDescription) {
+    voicePreviewDescription.textContent = participants.length
+      ? `${participants.length} ${participants.length === 1 ? 'pessoa está' : 'pessoas estão'} nesta chamada`
+      : 'Ninguém está nesta chamada ainda. Entre para começar.';
+  }
+  if (!voicePreviewParticipants) return;
+  voicePreviewParticipants.replaceChildren();
+  const visibleParticipants = participants.slice(0, 8);
+  if (!visibleParticipants.length) {
+    const emptyAvatar = document.createElement('span');
+    emptyAvatar.className = 'voice-preview-empty-avatar';
+    emptyAvatar.textContent = '🔊';
+    voicePreviewParticipants.appendChild(emptyAvatar);
+    return;
+  }
+  visibleParticipants.forEach((member) => {
+    const avatar = document.createElement('span');
+    avatar.className = 'voice-preview-avatar';
+    avatar.title = member.name;
+    if (member.avatarUrl) {
+      const image = document.createElement('img');
+      image.src = member.avatarUrl;
+      image.alt = '';
+      avatar.appendChild(image);
+    } else {
+      avatar.style.backgroundColor = member.color || '#5865F2';
+      avatar.textContent = member.initial || (member.name || 'U')[0].toUpperCase();
+    }
+    applyProfileAvatarCustomization(avatar, member);
+    voicePreviewParticipants.appendChild(avatar);
+  });
+  if (participants.length > visibleParticipants.length) {
+    const overflow = document.createElement('span');
+    overflow.className = 'voice-preview-avatar voice-preview-overflow';
+    overflow.textContent = `+${participants.length - visibleParticipants.length}`;
+    voicePreviewParticipants.appendChild(overflow);
+  }
+}
+
+btnJoinPreviewVoice?.addEventListener('click', () => {
+  if (previewVoiceChannel) joinVoiceChannel(previewVoiceChannel);
+});
 
 async function refreshServerVoiceRoster(serverId = activeServerId) {
   if (!authenticatedAccount || !serverId || voiceRosterRequestInProgress) return;
@@ -1949,6 +2074,7 @@ async function refreshServerVoiceRoster(serverId = activeServerId) {
     serverVoiceRosterSignatures.set(serverId, rosterSignature);
     const server = servers.find((item) => item.id === serverId);
     (server?.voiceChannels || []).forEach((channelName) => updateSidebarChannelUsers(channelName, serverId));
+    if (previewVoiceServerId === serverId) updateVoiceChannelPreview();
   } finally {
     voiceRosterRequestInProgress = false;
   }
@@ -2733,6 +2859,7 @@ async function joinVoiceChannel(channelName) {
     await disconnectVoice(false);
   }
 
+  clearVoiceChannelPreview();
   playConnectSound();
 
   currentChannel = channelName;
@@ -2761,11 +2888,24 @@ async function joinVoiceChannel(channelName) {
   startPingMonitor();
   renderVoiceParticipants();
 
+  let microphoneTrackPromise = null;
   try {
-    const room = await connectToLiveKitRoom(channelName);
+    const room = await connectToLiveKitRoom(channelName, (credentials) => {
+      if (!credentials.canPublish) return;
+      microphoneTrackPromise = window.LivekitClient.createLocalAudioTrack({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        sampleRate: 48000
+      }).catch((error) => {
+        console.warn('Não foi possível acessar o microfone:', error);
+        return null;
+      });
+    });
     if (!room || room.state !== 'connected') throw new Error('Não foi possível conectar ao canal de voz.');
+    await publishVoicePresenceSound('joined');
     void measurePing();
-    const microphoneTrack = await publishMicToLiveKit();
+    const microphoneTrack = await publishMicToLiveKit(microphoneTrackPromise);
     if (microphoneTrack?.mediaStreamTrack) {
       localAudioTrack = microphoneTrack.mediaStreamTrack;
       await setupAudioLevelMeter(new MediaStream([localAudioTrack]));
@@ -2785,6 +2925,10 @@ async function joinVoiceChannel(channelName) {
     if (localVoiceCanPublish) showToast(`Conectado a ${channelName}; microfone ${isMuted ? 'mutado' : 'ativo'}.`, '🎧');
   } catch (err) {
     console.warn('Microfone não acessível ou sem permissão:', err);
+    if (microphoneTrackPromise) {
+      const preparedTrack = await microphoneTrackPromise;
+      if (preparedTrack && preparedTrack !== livekitAudioTrack) preparedTrack.stop();
+    }
     isMuted = true;
     updateControlsUI();
     await disconnectVoice(false);
@@ -4123,6 +4267,79 @@ document.addEventListener('keydown', (event) => {
 // DETECÇÃO DE JOGOS EM TEMPO REAL
 // ==========================================
 let detectedGame = null;
+const ACTIVITY_PROGRESS_INTERVAL_MS = 15_000;
+let lastActivityProgressTick = Date.now();
+let activityProgressRequestInFlight = false;
+let pendingGameActivitySeconds = new Map();
+let pendingStreamActivitySeconds = 0;
+let pendingVoiceActivitySeconds = 0;
+
+function takePendingActivityBatch() {
+  const games = [];
+  let gameSeconds = 0;
+  for (const [name, pendingSeconds] of pendingGameActivitySeconds) {
+    const seconds = Math.min(300 - gameSeconds, pendingSeconds);
+    if (seconds > 0) {
+      games.push({ name, seconds });
+      gameSeconds += seconds;
+    }
+    if (gameSeconds >= 300) break;
+  }
+  const streamSeconds = Math.min(300, pendingStreamActivitySeconds);
+  const voiceSeconds = Math.min(300, pendingVoiceActivitySeconds);
+  if (!games.length && !streamSeconds && !voiceSeconds) return null;
+
+  games.forEach(({ name, seconds }) => {
+    const remaining = (pendingGameActivitySeconds.get(name) || 0) - seconds;
+    if (remaining > 0) pendingGameActivitySeconds.set(name, remaining);
+    else pendingGameActivitySeconds.delete(name);
+  });
+  pendingStreamActivitySeconds -= streamSeconds;
+  pendingVoiceActivitySeconds -= voiceSeconds;
+  return { games, streamSeconds, voiceSeconds };
+}
+
+async function flushActivityProgress() {
+  if (!hasAuthenticatedSession() || activityProgressRequestInFlight) return;
+  const batch = takePendingActivityBatch();
+  if (!batch) return;
+  activityProgressRequestInFlight = true;
+  try {
+    const response = await fetch('/api/profile/activity', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(batch)
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível salvar o progresso das insígnias.');
+    applyBadgeStats(payload.stats);
+  } catch (error) {
+    batch.games.forEach(({ name, seconds }) => {
+      pendingGameActivitySeconds.set(name, (pendingGameActivitySeconds.get(name) || 0) + seconds);
+    });
+    pendingStreamActivitySeconds += batch.streamSeconds;
+    pendingVoiceActivitySeconds += batch.voiceSeconds;
+    console.warn('Não foi possível atualizar o progresso das insígnias:', error);
+  } finally {
+    activityProgressRequestInFlight = false;
+  }
+}
+
+async function trackActivityProgress() {
+  const now = Date.now();
+  const elapsedSeconds = Math.min(30, Math.max(0, Math.floor((now - lastActivityProgressTick) / 1000)));
+  lastActivityProgressTick = now;
+  if (!elapsedSeconds || !hasAuthenticatedSession()) return;
+
+  if (detectedGame?.name && detectedGame.isGame === true) {
+    const gameName = String(detectedGame.name).trim().slice(0, 100);
+    if (gameName) pendingGameActivitySeconds.set(gameName, (pendingGameActivitySeconds.get(gameName) || 0) + elapsedSeconds);
+  }
+  if (isLocalStreamer || isNativeMobileStreamer) pendingStreamActivitySeconds += elapsedSeconds;
+  if (currentChannel) pendingVoiceActivitySeconds += elapsedSeconds;
+  await flushActivityProgress();
+}
 
 async function checkRunningGame() {
   if (!window.electronAPI || !window.electronAPI.getDetectedGame) return;
@@ -4189,6 +4406,7 @@ async function checkRunningGame() {
 // Verificação de jogo em segundo plano com menor custo para evitar lag no canal de voz
 setInterval(checkRunningGame, 10000);
 setTimeout(checkRunningGame, 600);
+setInterval(trackActivityProgress, ACTIVITY_PROGRESS_INTERVAL_MS);
 
 if (btnGameQuickStream) {
   btnGameQuickStream.addEventListener('click', async () => {
@@ -6724,6 +6942,24 @@ async function disconnectVoice(playSound = true) {
     playDisconnectSound();
   }
 
+  currentChannel = null;
+  clearVoiceChannelPreview();
+  stageContent?.classList.remove('has-voice-channel', 'has-live-stream');
+  syncGameVoiceOverlay();
+  updateVoiceSelfCard();
+  currentChannelTitle.textContent = 'Nenhum canal conectado';
+  connectionBadge.style.display = 'none';
+  emptyState.style.display = 'flex';
+  participantsGrid.style.display = 'none';
+  participantsGrid.innerHTML = '';
+  streamViewerWrapper.style.display = 'none';
+  voiceFloatingBar.style.display = 'none';
+  document.querySelectorAll('.channel-item[data-type="voice"]').forEach((item) => item.classList.remove('active'));
+  if (voiceConnectionPanel) voiceConnectionPanel.style.display = 'none';
+  if (voiceConnectedStrip) voiceConnectedStrip.style.display = 'none';
+  stopPingMonitor();
+
+  await publishVoicePresenceSound('left');
   if (isNativeMobileStreamer || isNativeMobileSharePending) await stopCurrentStream();
   await disconnectLiveKitRoom();
 
@@ -6742,30 +6978,9 @@ async function disconnectVoice(playSound = true) {
     await stopCurrentStream();
   }
 
-  currentChannel = null;
-  stageContent?.classList.remove('has-voice-channel');
-  syncGameVoiceOverlay();
-  updateVoiceSelfCard();
-  currentChannelTitle.textContent = 'Nenhum canal conectado';
-  connectionBadge.style.display = 'none';
-  emptyState.style.display = 'flex';
-  participantsGrid.style.display = 'none';
-  participantsGrid.innerHTML = '';
-  streamViewerWrapper.style.display = 'none';
-  stageContent.classList.remove('has-live-stream');
-  voiceFloatingBar.style.display = 'none';
-  document.querySelectorAll('.channel-item[data-type="voice"]').forEach(i => i.classList.remove('active'));
-
   updateSidebarChannelUsers(null);
 
-  // Ocultar painel de ping e faixa de conexão
-  if (voiceConnectionPanel) {
-    voiceConnectionPanel.style.display = 'none';
-  }
-  if (voiceConnectedStrip) {
-    voiceConnectedStrip.style.display = 'none';
-  }
-  stopPingMonitor();
+  stageContent?.classList.remove('has-voice-channel', 'has-live-stream');
 }
 
 // Monitoramento de Ping e Latência RTC
@@ -8228,12 +8443,27 @@ function applyUserProfile() {
 
   const previewDisplayName = document.getElementById('previewDisplayName');
   const previewUsername = document.getElementById('previewUsername');
+  const customizationHubName = document.getElementById('customizationHubName');
+  const customizationHubHandle = document.getElementById('customizationHubHandle');
+  const customizationHubInitial = document.getElementById('customizationHubInitial');
+  const customizationHubAvatarImg = document.getElementById('customizationHubAvatarImg');
   const profileAvatarInitial = document.getElementById('profileAvatarInitial');
   const profileAvatarImg = document.getElementById('profileAvatarImg');
   const profileBannerPreview = document.getElementById('profileBannerPreview');
 
   if (previewDisplayName) previewDisplayName.textContent = userProfile.displayName;
   if (previewUsername) previewUsername.textContent = `@${userProfile.username}`;
+  if (customizationHubName) customizationHubName.textContent = userProfile.displayName || 'Bads';
+  if (customizationHubHandle) customizationHubHandle.textContent = `@${userProfile.username || 'bads'}`;
+  if (customizationHubInitial) {
+    customizationHubInitial.textContent = (userProfile.displayName || 'B')[0].toUpperCase();
+    customizationHubInitial.hidden = Boolean(userProfile.avatarUrl);
+  }
+  if (customizationHubAvatarImg) {
+    customizationHubAvatarImg.hidden = !userProfile.avatarUrl;
+    if (userProfile.avatarUrl) customizationHubAvatarImg.src = userProfile.avatarUrl;
+    else customizationHubAvatarImg.removeAttribute('src');
+  }
   if (profileBannerPreview) profileBannerPreview.style.backgroundColor = userProfile.bannerColor;
 
   if (profileAvatarInitial && profileAvatarImg) {
@@ -8384,7 +8614,7 @@ function switchSettingsTab(tabName) {
     soundboard: 'Painel de Efeitos Sonoros',
     appearance: 'Aparência',
     notifications: 'Notificações',
-    nitro: 'Personalização BADISCORD',
+    nitro: 'Personalização',
     subscriptions: 'Loja gratuita',
     advanced: 'Avançado'
   };
@@ -8430,7 +8660,8 @@ function applyProfileCustomization() {
     document.querySelector('.user-avatar-wrapper'),
     document.getElementById('voiceSelfAvatarFrame'),
     document.getElementById('presenceAvatarImg'),
-    document.getElementById('profileAvatarPreview')
+    document.getElementById('profileAvatarPreview'),
+    document.getElementById('customizationHubAvatar')
   ].filter(Boolean);
   targets.forEach((target) => applyProfileAvatarCustomization(target, userProfile));
 }
@@ -8549,6 +8780,8 @@ document.getElementById('dmMenuNitro')?.addEventListener('click', () => openSett
 document.getElementById('dmMenuShop')?.addEventListener('click', () => openSettingsTab('subscriptions'));
 document.getElementById('btnOpenFreeDecorations')?.addEventListener('click', () => openSettingsTab('decorations'));
 document.getElementById('btnOpenShopDecorations')?.addEventListener('click', () => openSettingsTab('decorations'));
+document.getElementById('btnOpenAppearance')?.addEventListener('click', () => openSettingsTab('appearance'));
+document.getElementById('btnOpenCustomizationItems')?.addEventListener('click', () => openSettingsTab('subscriptions'));
 
 const btnEditProfileLink = document.getElementById('btnEditProfileLink');
 const btnSidebarProfileHeader = document.getElementById('btnSidebarProfileHeader');
@@ -9440,6 +9673,279 @@ applyUserProfile();
 initializeFreeProfileCustomization();
 
 
+const BADGE_CATEGORIES = {
+  stream: {
+    label: 'Transmissão',
+    icon: '🖥️',
+    stat: 'streamSeconds',
+    title: ['Primeira transmissão', 'Em exibição', 'Na galera', 'Na vitrine', 'Nos holofotes'],
+    description: 'Transmita sua tela para outras pessoas e acompanhe suas horas ao vivo.'
+  },
+  game: {
+    label: 'Jogos',
+    icon: '🎮',
+    stat: 'gameSeconds',
+    title: ['Primeira partida', 'Jogador frequente', 'Veterano', 'Lenda dos jogos', 'Mestre dos jogos'],
+    description: 'Jogue com o BADISCORD aberto. O tempo é registrado para cada jogo detectado.'
+  },
+  voice: {
+    label: 'Voz',
+    icon: '🎧',
+    stat: 'voiceSeconds',
+    title: ['Chegou para conversar', 'Boa companhia', 'Presença constante', 'Voz da galera', 'Lenda da call'],
+    description: 'Some tempo conectado aos canais de voz da comunidade.'
+  }
+};
+const BADGE_THRESHOLDS = [1, 5, 20, 75, 150];
+let badgeStats = { gameSeconds: 0, streamSeconds: 0, voiceSeconds: 0, games: [], selectedBadgeIds: [] };
+let activeBadgeCategory = 'stream';
+let activeBadgeId = 'stream-1';
+let customizingBadges = false;
+let selectedBadgeIds = new Set();
+
+function badgeId(category, hours) {
+  return `${category}-${hours}`;
+}
+
+function badgeCategorySeconds(category) {
+  return Math.max(0, Number(badgeStats[BADGE_CATEGORIES[category]?.stat]) || 0);
+}
+
+function formatBadgeHours(seconds) {
+  const hours = Math.max(0, seconds) / 3600;
+  if (hours < 1) return 'menos de 1 hora';
+  return `${Math.floor(hours).toLocaleString('pt-BR')} ${Math.floor(hours) === 1 ? 'hora' : 'horas'}`;
+}
+
+function isBadgeUnlocked(category, hours) {
+  return badgeCategorySeconds(category) >= hours * 3600;
+}
+
+function renderPresenceBadges() {
+  const container = document.getElementById('presenceBadgesRow');
+  if (!container) return;
+  container.replaceChildren();
+  Array.from(selectedBadgeIds).slice(0, 6).forEach((id) => {
+    const [category, hoursText] = id.split('-');
+    const hours = Number(hoursText);
+    const categoryInfo = BADGE_CATEGORIES[category];
+    if (!categoryInfo || !isBadgeUnlocked(category, hours)) return;
+    const badge = document.createElement('button');
+    badge.type = 'button';
+    badge.className = 'presence-badge';
+    badge.title = `${categoryInfo.title[BADGE_THRESHOLDS.indexOf(hours)]} — ${hours} ${hours === 1 ? 'hora' : 'horas'}`;
+    badge.setAttribute('aria-label', badge.title);
+    badge.textContent = categoryInfo.icon;
+    badge.addEventListener('click', openBadgesModal);
+    container.appendChild(badge);
+  });
+  container.hidden = container.childElementCount === 0;
+}
+
+function applyBadgeStats(stats) {
+  if (!stats || typeof stats !== 'object') return;
+  badgeStats = {
+    gameSeconds: Number(stats.gameSeconds) || 0,
+    streamSeconds: Number(stats.streamSeconds) || 0,
+    voiceSeconds: Number(stats.voiceSeconds) || 0,
+    games: Array.isArray(stats.games) ? stats.games : [],
+    selectedBadgeIds: Array.isArray(stats.selectedBadgeIds) ? stats.selectedBadgeIds : []
+  };
+  if (!customizingBadges) selectedBadgeIds = new Set(badgeStats.selectedBadgeIds);
+  renderPresenceBadges();
+  if (document.getElementById('badgesModal')?.style.display === 'flex') renderBadgeGallery();
+}
+
+function renderBadgeGallery() {
+  const category = BADGE_CATEGORIES[activeBadgeCategory];
+  if (!category) return;
+  document.querySelectorAll('.badge-category-button').forEach((button) => {
+    const active = button.dataset.badgeCategory === activeBadgeCategory;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+
+  const unlockedGrid = document.getElementById('unlockedBadgesGrid');
+  const lockedGrid = document.getElementById('lockedBadgesGrid');
+  if (!unlockedGrid || !lockedGrid) return;
+  unlockedGrid.replaceChildren();
+  lockedGrid.replaceChildren();
+
+  BADGE_THRESHOLDS.forEach((hours, index) => {
+    const unlocked = isBadgeUnlocked(activeBadgeCategory, hours);
+    const id = badgeId(activeBadgeCategory, hours);
+    const tile = document.createElement('button');
+    tile.type = 'button';
+    tile.className = `badge-tile${unlocked ? ' unlocked' : ' locked'}${id === activeBadgeId ? ' active' : ''}${selectedBadgeIds.has(id) ? ' selected' : ''}`;
+    tile.dataset.badgeId = id;
+    tile.setAttribute('aria-label', `${category.title[index]}, ${hours} ${hours === 1 ? 'hora' : 'horas'}${unlocked ? ', desbloqueada' : ', bloqueada'}`);
+    tile.innerHTML = `<span class="badge-tile-icon" aria-hidden="true">${category.icon}</span>`;
+    tile.addEventListener('click', () => {
+      if (customizingBadges && unlocked) {
+        if (selectedBadgeIds.has(id)) {
+          selectedBadgeIds.delete(id);
+        } else if (selectedBadgeIds.size < 6) {
+          selectedBadgeIds.add(id);
+        } else {
+          showToast('Você pode exibir até seis insígnias no perfil.', '🎖️');
+        }
+      }
+      activeBadgeId = id;
+      renderBadgeGallery();
+    });
+    (unlocked ? unlockedGrid : lockedGrid).appendChild(tile);
+  });
+
+  const [, selectedHoursText] = activeBadgeId.split('-');
+  const selectedHours = Number(selectedHoursText);
+  const selectedIndex = BADGE_THRESHOLDS.indexOf(selectedHours);
+  const activeBadgeIndex = Math.max(0, selectedIndex);
+  const selectedUnlocked = isBadgeUnlocked(activeBadgeCategory, selectedHours);
+  const currentSeconds = badgeCategorySeconds(activeBadgeCategory);
+  const previousHours = selectedIndex > 0 ? BADGE_THRESHOLDS[selectedIndex - 1] : 0;
+  const progressSeconds = Math.max(0, currentSeconds - previousHours * 3600);
+  const requiredSeconds = Math.max(1, (selectedHours - previousHours) * 3600);
+  const progressPercent = selectedUnlocked ? 100 : Math.min(100, (progressSeconds / requiredSeconds) * 100);
+  const remainingHours = Math.max(0, selectedHours - currentSeconds / 3600);
+
+  document.getElementById('badgeDetailCategory').textContent = category.label;
+  document.getElementById('badgeDetailTitle').textContent = category.title[activeBadgeIndex];
+  document.getElementById('badgeDetailSummary').textContent = `${Math.floor(currentSeconds / 3600).toLocaleString('pt-BR')} ${Math.floor(currentSeconds / 3600) === 1 ? 'hora registrada' : 'horas registradas'} ${activeBadgeCategory === 'game' ? 'jogando' : activeBadgeCategory === 'stream' ? 'transmitindo' : 'em canais de voz'}.`;
+  document.getElementById('badgeDetailRarity').textContent = selectedUnlocked ? 'DESBLOQUEADA' : 'EM PROGRESSO';
+  document.getElementById('badgeDetailArt').textContent = category.icon;
+  document.getElementById('badgeDetailHero').dataset.category = activeBadgeCategory;
+  document.getElementById('badgeProgressText').textContent = `${formatBadgeHours(currentSeconds)} de ${selectedHours} ${selectedHours === 1 ? 'hora' : 'horas'}`;
+  document.getElementById('badgeProgressBar').setAttribute('aria-valuenow', String(Math.round(progressPercent)));
+  document.getElementById('badgeProgressFill').style.width = `${progressPercent}%`;
+  document.getElementById('badgeProgressCurrent').textContent = category.icon;
+  document.getElementById('badgeProgressNext').textContent = selectedUnlocked ? '✓' : '🏆';
+  document.getElementById('badgeProgressDescription').textContent = selectedUnlocked
+    ? 'Insígnia desbloqueada! Você pode escolhê-la para exibir no seu perfil.'
+    : `Faltam aproximadamente ${formatBadgeHours(remainingHours * 3600)} para desbloquear esta insígnia.`;
+
+  const milestones = document.getElementById('badgeMilestoneList');
+  milestones.replaceChildren();
+  BADGE_THRESHOLDS.forEach((hours, index) => {
+    const item = document.createElement('div');
+    item.className = `badge-milestone${isBadgeUnlocked(activeBadgeCategory, hours) ? ' complete' : ''}${hours === selectedHours ? ' current' : ''}`;
+    item.innerHTML = `<span class="badge-milestone-icon" aria-hidden="true">${category.icon}</span><strong>${category.title[index]}</strong><span>${hours} ${hours === 1 ? 'hora' : 'horas'}</span>`;
+    milestones.appendChild(item);
+  });
+
+  const gameBreakdown = document.getElementById('badgeGameBreakdown');
+  const gameBreakdownList = document.getElementById('badgeGameBreakdownList');
+  gameBreakdown.hidden = activeBadgeCategory !== 'game' || !badgeStats.games.length;
+  if (activeBadgeCategory === 'game' && badgeStats.games.length) {
+    gameBreakdownList.replaceChildren();
+    badgeStats.games.slice(0, 6).forEach((game) => {
+      const row = document.createElement('div');
+      row.className = 'badge-game-breakdown-row';
+      const name = document.createElement('span');
+      name.textContent = game.name;
+      const time = document.createElement('strong');
+      time.textContent = formatBadgeHours(game.seconds);
+      row.append(name, time);
+      gameBreakdownList.appendChild(row);
+    });
+  }
+
+  const customizeButton = document.getElementById('btnCustomizeBadges');
+  customizeButton.textContent = customizingBadges ? 'Cancelar personalização' : 'Personalize suas insígnias';
+  document.getElementById('badgeSaveRow').hidden = !customizingBadges;
+  document.getElementById('badgeSelectionCount').textContent = `${selectedBadgeIds.size} de 6 insígnias selecionadas`;
+}
+
+async function refreshBadgeStats(showError = false) {
+  if (!hasAuthenticatedSession()) return false;
+  try {
+    const response = await fetch('/api/profile/activity', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível carregar as insígnias.');
+    applyBadgeStats(payload.stats);
+    return true;
+  } catch (error) {
+    console.error('Não foi possível carregar as insígnias:', error);
+    if (showError) showToast(error.message || 'Não foi possível carregar as insígnias.', '⚠️');
+    return false;
+  }
+}
+
+async function openBadgesModal() {
+  if (!hasAuthenticatedSession()) {
+    showAuthOverlay();
+    openAuthView('viewAuthLogin');
+    showToast('Entre na sua conta para ver suas insígnias.', '🔒');
+    return;
+  }
+  const modal = document.getElementById('badgesModal');
+  modal.style.display = 'flex';
+  activeBadgeCategory = activeBadgeCategory || 'stream';
+  activeBadgeId = badgeId(activeBadgeCategory, 1);
+  customizingBadges = false;
+  renderBadgeGallery();
+  await refreshBadgeStats(true);
+  document.getElementById('btnCloseBadgesModal')?.focus();
+}
+
+function closeBadgesModal() {
+  document.getElementById('badgesModal').style.display = 'none';
+  customizingBadges = false;
+  renderBadgeGallery();
+}
+
+document.querySelectorAll('.badge-category-button').forEach((button) => {
+  button.addEventListener('click', () => {
+    activeBadgeCategory = button.dataset.badgeCategory;
+    activeBadgeId = badgeId(activeBadgeCategory, 1);
+    renderBadgeGallery();
+  });
+});
+document.getElementById('btnCloseBadgesModal')?.addEventListener('click', closeBadgesModal);
+document.getElementById('badgesModal')?.addEventListener('click', (event) => {
+  if (event.target.id === 'badgesModal') closeBadgesModal();
+});
+document.getElementById('btnCustomizeBadges')?.addEventListener('click', () => {
+  customizingBadges = !customizingBadges;
+  selectedBadgeIds = new Set(badgeStats.selectedBadgeIds);
+  renderBadgeGallery();
+});
+document.getElementById('btnSaveBadges')?.addEventListener('click', async () => {
+  const button = document.getElementById('btnSaveBadges');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/profile/badges', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ selectedBadgeIds: Array.from(selectedBadgeIds).filter((id) => {
+        const [category, hoursText] = id.split('-');
+        return isBadgeUnlocked(category, Number(hoursText));
+      }).slice(0, 6) })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível salvar as insígnias.');
+    badgeStats.selectedBadgeIds = payload.selectedBadgeIds;
+    selectedBadgeIds = new Set(payload.selectedBadgeIds);
+    customizingBadges = false;
+    renderBadgeGallery();
+    renderPresenceBadges();
+    showToast('Insígnias do perfil atualizadas.', '🎖️');
+  } catch (error) {
+    console.error('Não foi possível salvar as insígnias do perfil:', error);
+    showToast(error.message || 'Não foi possível salvar as insígnias.', '⚠️');
+  } finally {
+    button.disabled = false;
+  }
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && document.getElementById('badgesModal')?.style.display === 'flex') {
+    closeBadgesModal();
+  }
+});
+
 // ==========================================
 // MENU DE PRESENÇA DO USUÁRIO
 // ==========================================
@@ -9479,6 +9985,7 @@ initializeFreeProfileCustomization();
   };
 
   function populatePresenceMenu() {
+    void refreshBadgeStats();
     const presenceAvatarImg = document.getElementById('presenceAvatarImg');
     const presenceDisplayName = document.getElementById('presenceDisplayName');
     const presenceHandle = document.getElementById('presenceHandle');
@@ -9647,9 +10154,7 @@ initializeFreeProfileCustomization();
   // Badges
   document.getElementById('menuItemBadges')?.addEventListener('click', () => {
     userPresenceMenu.style.display = 'none';
-    if (typeof openSettings === 'function') openSettings();
-    if (typeof switchSettingsTab === 'function') switchSettingsTab('account');
-    showToast('Insígnias disponíveis no seu perfil.', '🎖️');
+    openBadgesModal();
   });
 
   // Initialize status on load
