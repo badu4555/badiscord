@@ -45,6 +45,8 @@ Baixe o instalador `.exe` ou a versão portátil `.zip` na [página de releases 
 
 O aplicativo desktop precisa de conexão com a internet para abrir o BADISCORD e entrar na conta. Ele usa o domínio oficial HTTPS para que o login, os cookies de sessão e o reCAPTCHA funcionem corretamente.
 
+Na tela de login, também é possível entrar com o QR Code. No celular, entre primeiro na sua conta BADISCORD, abra o perfil e escolha **Entrar no PC com QR Code**. Permita o acesso à câmera, escaneie o código mostrado no computador e confirme ou recuse o pedido. O código expira em dois minutos e só pode ser usado uma vez; marque **Manter conectado neste dispositivo** no computador se quiser uma sessão de 30 dias.
+
 A versão instalada pelo `.exe` procura atualizações automaticamente ao abrir e periodicamente enquanto estiver em execução. Quando uma nova versão estiver disponível, uma janela mostrará a versão e permitirá baixar e instalar agora ou adiar; depois do download, é possível reiniciar para concluir. A primeira versão com atualização automática precisa ser instalada manualmente; as seguintes poderão ser atualizadas pelo próprio aplicativo. A versão portátil `.zip` continua sendo atualizada por download manual.
 
 Durante uma live, use o botão de tela cheia no player para expandir a janela do BADISCORD; pressione `Esc` ou o botão novamente para voltar.

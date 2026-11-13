@@ -505,6 +505,7 @@ function showAuthOverlay() {
 }
 
 function hideAuthOverlay() {
+  window.stopAuthQrLogin?.();
   const authOverlay = document.getElementById('authOverlay');
   const appLayout = document.querySelector('.app-layout');
   if (authOverlay) authOverlay.style.display = 'none';
@@ -521,6 +522,9 @@ function openAuthView(viewId) {
     const pane = document.getElementById(id);
     if (pane) pane.style.display = id === viewId ? 'block' : 'none';
   });
+  document.querySelector('.auth-modal-card')?.classList.toggle('is-login-view', viewId === 'viewAuthLogin');
+  if (viewId === 'viewAuthLogin') window.startAuthQrLogin?.();
+  else window.stopAuthQrLogin?.();
 }
 
 async function registerAccount({ email, username, password, recaptchaToken = '' }) {
@@ -1659,6 +1663,7 @@ const btnQuickDisconnect = document.getElementById('btnQuickDisconnect');
 
 // Painel de Atividade de Jogo (Counter-Strike 2 - Foto 1 & 2)
 const gameActivityPanel = document.getElementById('gameActivityPanel');
+const activityVoiceCard = document.querySelector('.activity-voice-card');
 const gameActivityTitle = document.getElementById('gameActivityTitle');
 const gameActivityStatus = document.getElementById('gameActivityStatus');
 const btnGameQuickStream = document.getElementById('btnGameQuickStream');
@@ -1979,6 +1984,7 @@ function renderChannels(server) {
 
 function showVoiceChannelPreview(channelName) {
   previewVoiceChannel = channelName;
+  activityVoiceCard?.classList.remove('is-voice-connected');
   previewVoiceServerId = activeServerId;
   currentChannelTitle.textContent = channelName;
   switchView('voice');
@@ -2863,6 +2869,7 @@ async function joinVoiceChannel(channelName) {
   playConnectSound();
 
   currentChannel = channelName;
+  activityVoiceCard?.classList.add('is-voice-connected');
   currentChannelTitle.textContent = channelName;
   switchView('voice');
   stageContent?.classList.add('has-voice-channel');
@@ -6943,6 +6950,7 @@ async function disconnectVoice(playSound = true) {
   }
 
   currentChannel = null;
+  activityVoiceCard?.classList.remove('is-voice-connected');
   clearVoiceChannelPreview();
   stageContent?.classList.remove('has-voice-channel', 'has-live-stream');
   syncGameVoiceOverlay();
@@ -9953,8 +9961,22 @@ window.addEventListener('keydown', (event) => {
   const userPanelLeft = document.getElementById('userPanelLeft');
   const userPresenceMenu = document.getElementById('userPresenceMenu');
   const presenceStatusSubmenu = document.getElementById('presenceStatusSubmenu');
+  let presenceSubmenuHideTimer = null;
 
   if (!userPanelLeft || !userPresenceMenu) return;
+
+  function hidePresenceStatusSubmenu() {
+    if (presenceSubmenuHideTimer) {
+      clearTimeout(presenceSubmenuHideTimer);
+      presenceSubmenuHideTimer = null;
+    }
+    if (presenceStatusSubmenu) presenceStatusSubmenu.style.display = 'none';
+  }
+
+  function schedulePresenceStatusSubmenuHide() {
+    if (presenceSubmenuHideTimer) clearTimeout(presenceSubmenuHideTimer);
+    presenceSubmenuHideTimer = setTimeout(hidePresenceStatusSubmenu, 180);
+  }
 
   // Toggle menu
   userPanelLeft.addEventListener('click', (e) => {
@@ -9962,9 +9984,10 @@ window.addEventListener('keydown', (event) => {
     const isOpen = userPresenceMenu.style.display !== 'none';
     if (isOpen) {
       userPresenceMenu.style.display = 'none';
-      if (presenceStatusSubmenu) presenceStatusSubmenu.style.display = 'none';
+      hidePresenceStatusSubmenu();
     } else {
       userPresenceMenu.style.display = 'block';
+      hidePresenceStatusSubmenu();
       populatePresenceMenu();
     }
   });
@@ -9973,7 +9996,7 @@ window.addEventListener('keydown', (event) => {
   document.addEventListener('click', (e) => {
     if (!userPresenceMenu.contains(e.target) && !userPanelLeft.contains(e.target)) {
       userPresenceMenu.style.display = 'none';
-      if (presenceStatusSubmenu) presenceStatusSubmenu.style.display = 'none';
+      hidePresenceStatusSubmenu();
     }
   });
 
@@ -10063,10 +10086,43 @@ window.addEventListener('keydown', (event) => {
     menuItemStatusTrigger.addEventListener('click', (e) => {
       e.stopPropagation();
       if (presenceStatusSubmenu) {
+        if (presenceSubmenuHideTimer) {
+          clearTimeout(presenceSubmenuHideTimer);
+          presenceSubmenuHideTimer = null;
+        }
         const isOpen = presenceStatusSubmenu.style.display !== 'none';
         presenceStatusSubmenu.style.display = isOpen ? 'none' : 'block';
         if (!isOpen) positionPresenceSubmenu();
       }
+    });
+
+    menuItemStatusTrigger.addEventListener('pointerenter', (event) => {
+      if (event.pointerType === 'touch' || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+      if (presenceSubmenuHideTimer) {
+        clearTimeout(presenceSubmenuHideTimer);
+        presenceSubmenuHideTimer = null;
+      }
+      if (presenceStatusSubmenu && userPresenceMenu.style.display !== 'none') {
+        presenceStatusSubmenu.style.display = 'block';
+        positionPresenceSubmenu();
+      }
+    });
+
+    menuItemStatusTrigger.addEventListener('pointerleave', (event) => {
+      if (event.pointerType !== 'touch') schedulePresenceStatusSubmenuHide();
+    });
+  }
+
+  if (presenceStatusSubmenu) {
+    presenceStatusSubmenu.addEventListener('pointerenter', (event) => {
+      if (event.pointerType === 'touch') return;
+      if (presenceSubmenuHideTimer) {
+        clearTimeout(presenceSubmenuHideTimer);
+        presenceSubmenuHideTimer = null;
+      }
+    });
+    presenceStatusSubmenu.addEventListener('pointerleave', (event) => {
+      if (event.pointerType !== 'touch') schedulePresenceStatusSubmenuHide();
     });
   }
 
@@ -11024,6 +11080,268 @@ window.addEventListener('keydown', (event) => {
 
   let active2FACode = null;
   let targetRecoveryEmail = null;
+  let qrPollTimer = null;
+  let qrPollToken = '';
+  let qrExpiresAt = 0;
+  let qrGeneration = 0;
+  let qrScannerStream = null;
+  let qrScanTimer = null;
+  let scannedQrToken = '';
+
+  function setAuthQrStatus(message, state = '') {
+    const status = document.getElementById('authQrStatus');
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle('is-error', state === 'error');
+    status.classList.toggle('is-success', state === 'success');
+  }
+
+  window.stopAuthQrLogin = () => {
+    qrGeneration += 1;
+    clearInterval(qrPollTimer);
+    qrPollTimer = null;
+    qrPollToken = '';
+  };
+
+  async function pollAuthQrLogin(generation) {
+    if (!qrPollToken || generation !== qrGeneration) return;
+    try {
+      const response = await fetch('/api/auth/qr/poll', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          pollToken: qrPollToken,
+          rememberMe: document.getElementById('keepConnectedCheckbox')?.checked === true
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (generation !== qrGeneration) return;
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível verificar o QR Code.');
+
+      if (payload.status === 'approved' && payload.user) {
+        window.stopAuthQrLogin();
+        setAuthQrStatus('Login autorizado. Entrando...', 'success');
+        await finalizeAuthSession(payload.user);
+        showToast('Login realizado pelo celular!', '✅');
+        return;
+      }
+      if (payload.status === 'expired' || payload.status === 'denied' || payload.status === 'consumed') {
+        window.stopAuthQrLogin();
+        setAuthQrStatus(
+          payload.status === 'denied' ? 'O login foi recusado no celular.' : 'Este código expirou. Gere um novo para continuar.',
+          payload.status === 'denied' ? 'error' : ''
+        );
+        return;
+      }
+
+      const remainingSeconds = Math.max(0, Math.ceil((qrExpiresAt - Date.now()) / 1000));
+      setAuthQrStatus(`Aguardando confirmação no celular · ${remainingSeconds}s`);
+    } catch (error) {
+      if (generation !== qrGeneration) return;
+      console.error('Não foi possível verificar o login por QR Code:', error);
+      setAuthQrStatus(error.message || 'Falha ao verificar o QR Code. Tentando novamente...', 'error');
+    }
+  }
+
+  window.startAuthQrLogin = async () => {
+    if (viewAuthLogin?.style.display === 'none' || authOverlay?.style.display === 'none') return;
+    window.stopAuthQrLogin();
+    const generation = qrGeneration;
+    const image = document.getElementById('authQrImage');
+    if (image) image.removeAttribute('src');
+    setAuthQrStatus('Gerando código seguro...');
+
+    try {
+      const response = await fetch('/api/auth/qr/start', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Accept: 'application/json' }
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível criar o QR Code.');
+      if (generation !== qrGeneration) return;
+
+      qrPollToken = payload.pollToken;
+      qrExpiresAt = Number(payload.expiresAt) || Date.now();
+      if (image) image.src = payload.qrDataUrl;
+      await pollAuthQrLogin(generation);
+      if (qrPollToken && generation === qrGeneration) {
+        qrPollTimer = setInterval(() => void pollAuthQrLogin(generation), 2000);
+      }
+    } catch (error) {
+      if (generation !== qrGeneration) return;
+      console.error('Não foi possível iniciar o login por QR Code:', error);
+      setAuthQrStatus(error.message || 'Não foi possível gerar o QR Code.', 'error');
+    }
+  };
+
+  const btnRefreshAuthQr = document.getElementById('btnRefreshAuthQr');
+  btnRefreshAuthQr?.addEventListener('click', () => void window.startAuthQrLogin());
+
+  const qrScannerModal = document.getElementById('qrLoginScannerModal');
+  const qrScannerVideo = document.getElementById('qrScannerVideo');
+  const qrScannerStatus = document.getElementById('qrScannerStatus');
+  const qrApprovalPanel = document.getElementById('qrApprovalPanel');
+  const btnApproveQrLogin = document.getElementById('btnApproveQrLogin');
+  const btnDenyQrLogin = document.getElementById('btnDenyQrLogin');
+  const qrScannerCanvas = document.createElement('canvas');
+  const qrScannerCanvasContext = qrScannerCanvas.getContext('2d', { willReadFrequently: true });
+
+  function stopQrScannerCamera() {
+    clearTimeout(qrScanTimer);
+    qrScanTimer = null;
+    qrScannerStream?.getTracks().forEach((track) => track.stop());
+    qrScannerStream = null;
+    if (qrScannerVideo) qrScannerVideo.srcObject = null;
+  }
+
+  function closeQrLoginScanner() {
+    stopQrScannerCamera();
+    scannedQrToken = '';
+    if (qrScannerModal) qrScannerModal.style.display = 'none';
+    if (qrApprovalPanel) qrApprovalPanel.hidden = true;
+  }
+
+  async function scanQrCameraFrame(detector) {
+    if (!qrScannerStream || !qrScannerVideo) return;
+    try {
+      let rawValue = '';
+      if (qrScannerVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        if (detector) {
+          const codes = await detector.detect(qrScannerVideo);
+          rawValue = codes.find((code) => /^BADISCORD_LOGIN:[A-Za-z0-9_-]{43}$/.test(code.rawValue || ''))?.rawValue || '';
+        } else if (qrScannerVideo.videoWidth && qrScannerVideo.videoHeight) {
+          qrScannerCanvas.width = Math.min(qrScannerVideo.videoWidth, 640);
+          qrScannerCanvas.height = Math.round(qrScannerVideo.videoHeight * qrScannerCanvas.width / qrScannerVideo.videoWidth);
+          if (qrScannerCanvasContext && qrScannerCanvas.width && qrScannerCanvas.height) {
+            qrScannerCanvasContext.drawImage(qrScannerVideo, 0, 0, qrScannerCanvas.width, qrScannerCanvas.height);
+            rawValue = window.jsQR(qrScannerCanvasContext.getImageData(0, 0, qrScannerCanvas.width, qrScannerCanvas.height).data, qrScannerCanvas.width, qrScannerCanvas.height, {
+              inversionAttempts: 'dontInvert'
+            })?.data || '';
+          }
+        }
+        if (/^BADISCORD_LOGIN:[A-Za-z0-9_-]{43}$/.test(rawValue)) {
+          scannedQrToken = rawValue.slice('BADISCORD_LOGIN:'.length);
+          stopQrScannerCamera();
+          document.getElementById('qrApprovalAccount').textContent =
+            authenticatedAccount?.displayName || authenticatedAccount?.username || 'sua conta';
+          if (qrApprovalPanel) qrApprovalPanel.hidden = false;
+          if (qrScannerStatus) qrScannerStatus.textContent = 'Código reconhecido. Confirme se você iniciou este login.';
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn('Não foi possível ler o QR Code pela câmera:', error);
+      if (qrScannerStatus) qrScannerStatus.textContent = 'Não foi possível ler a imagem. Ajuste a câmera e tente novamente.';
+      stopQrScannerCamera();
+      return;
+    }
+    qrScanTimer = setTimeout(() => void scanQrCameraFrame(detector), 250);
+  }
+
+  async function startQrScannerCamera() {
+    if (!('BarcodeDetector' in window) && typeof window.jsQR !== 'function') {
+      if (qrScannerStatus) qrScannerStatus.textContent = 'Este aparelho não oferece leitura de QR pela câmera. Atualize o BADISCORD ou o navegador.';
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      if (qrScannerStatus) qrScannerStatus.textContent = 'A câmera não está disponível neste dispositivo.';
+      return;
+    }
+    try {
+      qrScannerStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: 'environment' } }
+      });
+      if (!qrScannerModal || qrScannerModal.style.display === 'none') {
+        stopQrScannerCamera();
+        return;
+      }
+      qrScannerVideo.srcObject = qrScannerStream;
+      await qrScannerVideo.play();
+      if (qrScannerStatus) qrScannerStatus.textContent = 'Aponte a câmera para o QR Code do computador.';
+      const detector = 'BarcodeDetector' in window
+        ? new BarcodeDetector({ formats: ['qr_code'] })
+        : null;
+      void scanQrCameraFrame(detector);
+    } catch (error) {
+      console.error('Não foi possível iniciar a câmera para ler o QR Code:', error);
+      if (qrScannerStatus) qrScannerStatus.textContent = 'Não foi possível acessar a câmera. Verifique a permissão do BADISCORD.';
+      stopQrScannerCamera();
+    }
+  }
+
+  window.openQrLoginScanner = async () => {
+    if (!hasAuthenticatedSession()) {
+      showToast('Entre na sua conta neste celular antes de autorizar outro dispositivo.', '🔒');
+      return;
+    }
+    if (!qrScannerModal) return;
+    scannedQrToken = '';
+    if (qrApprovalPanel) qrApprovalPanel.hidden = true;
+    qrScannerModal.style.display = 'grid';
+    if (qrScannerStatus) qrScannerStatus.textContent = 'Solicitando acesso à câmera...';
+    await startQrScannerCamera();
+  };
+
+  document.getElementById('btnCloseQrScanner')?.addEventListener('click', closeQrLoginScanner);
+  document.getElementById('btnCancelQrApproval')?.addEventListener('click', () => {
+    scannedQrToken = '';
+    if (qrApprovalPanel) qrApprovalPanel.hidden = true;
+    void startQrScannerCamera();
+  });
+  qrScannerModal?.addEventListener('click', (event) => {
+    if (event.target === qrScannerModal) closeQrLoginScanner();
+  });
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && qrScannerModal?.style.display === 'grid') closeQrLoginScanner();
+  });
+  btnApproveQrLogin?.addEventListener('click', async () => {
+    if (!scannedQrToken) return;
+    btnApproveQrLogin.disabled = true;
+    if (qrScannerStatus) qrScannerStatus.textContent = 'Confirmando login...';
+    try {
+      const response = await fetch('/api/auth/qr/approve', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ scanToken: scannedQrToken })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível autorizar este computador.');
+      scannedQrToken = '';
+      if (qrApprovalPanel) qrApprovalPanel.hidden = true;
+      if (qrScannerStatus) qrScannerStatus.textContent = 'Computador autorizado. Volte ao BADISCORD nele para concluir o login.';
+    } catch (error) {
+      console.error('Não foi possível autorizar o login por QR Code:', error);
+      if (qrScannerStatus) qrScannerStatus.textContent = error.message || 'Não foi possível autorizar este computador.';
+    } finally {
+      btnApproveQrLogin.disabled = false;
+    }
+  });
+  btnDenyQrLogin?.addEventListener('click', async () => {
+    if (!scannedQrToken) return;
+    btnDenyQrLogin.disabled = true;
+    try {
+      const response = await fetch('/api/auth/qr/deny', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ scanToken: scannedQrToken })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível recusar este login.');
+      scannedQrToken = '';
+      if (qrApprovalPanel) qrApprovalPanel.hidden = true;
+      if (qrScannerStatus) qrScannerStatus.textContent = 'Login recusado. O código foi invalidado.';
+    } catch (error) {
+      console.error('Não foi possível recusar o login por QR Code:', error);
+      if (qrScannerStatus) qrScannerStatus.textContent = error.message || 'Não foi possível recusar este login.';
+    } finally {
+      btnDenyQrLogin.disabled = false;
+    }
+  });
 
   try {
     if (keepConnectedCheckbox) {
@@ -11057,10 +11375,13 @@ window.addEventListener('keydown', (event) => {
   });
 
   function switchAuthView(viewName) {
-    if (viewAuthLogin) viewAuthLogin.style.display = viewName === 'login' ? 'block' : 'none';
-    if (viewAuthRegister) viewAuthRegister.style.display = viewName === 'register' ? 'block' : 'none';
-    if (viewAuthForgot) viewAuthForgot.style.display = viewName === 'forgot' ? 'block' : 'none';
-    if (viewAuth2FA) viewAuth2FA.style.display = viewName === '2fa' ? 'block' : 'none';
+    const viewIds = {
+      login: 'viewAuthLogin',
+      register: 'viewAuthRegister',
+      forgot: 'viewAuthForgot',
+      '2fa': 'viewAuth2FA'
+    };
+    openAuthView(viewIds[viewName] || 'viewAuthLogin');
   }
 
   if (btnGoToRegister) btnGoToRegister.addEventListener('click', () => switchAuthView('register'));
@@ -11161,6 +11482,16 @@ window.addEventListener('keydown', (event) => {
     menuItemSwitchAccount.addEventListener('click', () => {
       window.logoutBADISCORD();
     });
+  }
+
+  document.getElementById('menuItemQrLogin')?.addEventListener('click', () => {
+    const presenceMenu = document.getElementById('userPresenceMenu');
+    if (presenceMenu) presenceMenu.style.display = 'none';
+    void window.openQrLoginScanner?.();
+  });
+
+  if (viewAuthLogin?.style.display !== 'none' && authOverlay?.style.display !== 'none') {
+    void window.startAuthQrLogin();
   }
 })();
 

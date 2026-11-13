@@ -22,7 +22,7 @@
     <!-- Fundo estilizado do Discord com partículas sutis -->
     <div class="auth-bg-art"></div>
 
-    <div class="auth-modal-card">
+    <div class="auth-modal-card is-login-view">
       <div class="auth-brand" aria-label="BADISCORD logo">
         <div class="auth-brand-mark">B</div>
         <div class="auth-brand-text">
@@ -33,53 +33,65 @@
 
       <!-- 1. ABA DE LOGIN -->
       <div class="auth-view-pane" id="viewAuthLogin">
-        <div class="auth-header-wrap">
-          <h2 class="auth-title">Boas-vindas!</h2>
-          <p class="auth-subtitle">Conecte-se com seus amigos e aproveite a comunidade.</p>
-        </div>
-
-        <form class="auth-form" id="formLogin" autocomplete="on">
-          <div class="auth-field-group">
-            <label class="auth-field-label" for="loginEmail">E-MAIL OU NÚMERO DE TELEFONE <span class="auth-required">*</span></label>
-            <input type="email" class="auth-input" id="loginEmail" name="username" placeholder="seu-email@exemplo.com" autocomplete="username" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" required>
-          </div>
-
-          <div class="auth-field-group">
-            <label class="auth-field-label" for="loginPassword">SENHA <span class="auth-required">*</span></label>
-            <div class="password-input-wrap">
-              <input type="password" class="auth-input" id="loginPassword" name="password" placeholder="Sua senha" minlength="8" autocomplete="current-password" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false" required>
-              <button type="button" class="password-toggle" data-password-toggle="loginPassword" aria-label="Mostrar senha">👁</button>
+        <div class="auth-login-layout">
+          <div class="auth-login-form-column">
+            <div class="auth-header-wrap">
+              <h2 class="auth-title">Boas-vindas de volta!</h2>
+              <p class="auth-subtitle">Estamos felizes em ver você novamente.</p>
             </div>
-            <span class="auth-link-forgot" id="btnGoToForgot">Esqueceu sua senha?</span>
+
+            <form class="auth-form" id="formLogin" autocomplete="on">
+              <div class="auth-field-group">
+                <label class="auth-field-label" for="loginEmail">E-MAIL <span class="auth-required">*</span></label>
+                <input type="email" class="auth-input" id="loginEmail" name="username" placeholder="seu-email@exemplo.com" autocomplete="username" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+              </div>
+
+              <div class="auth-field-group">
+                <label class="auth-field-label" for="loginPassword">SENHA <span class="auth-required">*</span></label>
+                <div class="password-input-wrap">
+                  <input type="password" class="auth-input" id="loginPassword" name="password" placeholder="Sua senha" minlength="8" autocomplete="current-password" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+                  <button type="button" class="password-toggle" data-password-toggle="loginPassword" aria-label="Mostrar senha">👁</button>
+                </div>
+                <span class="auth-link-forgot" id="btnGoToForgot">Esqueceu sua senha?</span>
+              </div>
+
+              <div class="auth-options">
+                <label class="auth-option">
+                  <input type="checkbox" id="keepConnectedCheckbox">
+                  <span>Manter conectado neste dispositivo</span>
+                </label>
+                <label class="auth-option">
+                  <input type="checkbox" id="rememberLoginIdCheckbox">
+                  <span>Lembrar meu e-mail neste dispositivo</span>
+                </label>
+              </div>
+
+              <div class="auth-captcha" id="loginRecaptcha"></div>
+              <button type="submit" class="auth-submit-btn" id="btnLoginSubmit">Entrar</button>
+            </form>
+
+            <div class="auth-footer-prompt">
+              <span>Precisando de uma conta?</span>
+              <span class="auth-link-primary" id="btnGoToRegister">Registre-se</span>
+            </div>
+            <div class="auth-download-links">
+              <a class="auth-download-link" href="https://github.com/badu4555/badiscord/releases/latest" target="_blank" rel="noopener noreferrer">
+                BADISCORD para Windows
+              </a>
+              <a class="auth-download-link" href="https://github.com/badu4555/badiscord/releases/latest/download/BADISCORD-Android.apk">
+                BADISCORD para Android
+              </a>
+            </div>
           </div>
 
-          <div class="auth-options">
-            <label class="auth-option">
-              <input type="checkbox" id="keepConnectedCheckbox">
-              <span>Manter conectado neste celular</span>
-            </label>
-            <label class="auth-option">
-              <input type="checkbox" id="rememberLoginIdCheckbox">
-              <span>Lembrar meu ID e usar o gerenciador de senhas</span>
-            </label>
-            <small class="auth-option-hint">A senha fica salva com segurança pelo navegador ou aparelho, nunca pelo BADISCORD.</small>
-          </div>
-
-          <div class="auth-captcha" id="loginRecaptcha"></div>
-
-          <button type="submit" class="auth-submit-btn" id="btnLoginSubmit">Entrar</button>
-        </form>
-
-        <div class="auth-footer-prompt">
-          <span>Precisando de uma conta?</span>
-          <span class="auth-link-primary" id="btnGoToRegister">Registre-se</span>
+          <aside class="auth-qr-panel" aria-label="Login com QR code">
+            <img class="auth-qr-image" id="authQrImage" alt="QR code temporário para entrar no BADISCORD">
+            <h3>Entrar com QR Code</h3>
+            <p>Escaneie com o BADISCORD no celular e confirme o login para entrar no computador.</p>
+            <span class="auth-qr-status" id="authQrStatus" role="status" aria-live="polite">Preparando código seguro...</span>
+            <button type="button" class="auth-qr-refresh" id="btnRefreshAuthQr">Gerar novo código</button>
+          </aside>
         </div>
-        <a class="auth-download-link" href="https://github.com/badu4555/badiscord/releases/latest" target="_blank" rel="noopener noreferrer">
-          Baixar BADISCORD para Windows
-        </a>
-        <a class="auth-download-link" href="https://github.com/badu4555/badiscord/releases/latest/download/BADISCORD-Android.apk">
-          Baixar BADISCORD para Android (APK)
-        </a>
       </div>
 
       <!-- 2. ABA DE REGISTRO / CRIAR CONTA -->
@@ -1305,6 +1317,13 @@
         </div>
       </div>
 
+      <div class="presence-menu-item" id="menuItemQrLogin">
+        <div class="item-left">
+          <span class="item-icon">▦</span>
+          <span>Entrar no PC com QR Code</span>
+        </div>
+      </div>
+
       <div class="presence-divider"></div>
 
       <div class="presence-menu-item" id="menuItemSwitchAccount">
@@ -1358,6 +1377,27 @@
         <span class="item-arrow">❯</span>
       </div>
     </div>
+  </div>
+
+  <div class="qr-scanner-overlay" id="qrLoginScannerModal" style="display: none;">
+    <section class="qr-scanner-dialog" role="dialog" aria-modal="true" aria-labelledby="qrScannerTitle">
+      <button type="button" class="qr-scanner-close" id="btnCloseQrScanner" aria-label="Fechar leitor de QR Code">×</button>
+      <h2 id="qrScannerTitle">Entrar no computador</h2>
+      <p class="qr-scanner-description">Aponte a câmera para o QR Code exibido na tela de login do BADISCORD no computador.</p>
+      <div class="qr-camera-frame" id="qrCameraFrame">
+        <video id="qrScannerVideo" autoplay muted playsinline></video>
+        <div class="qr-camera-guide" aria-hidden="true"></div>
+      </div>
+      <p class="qr-scanner-status" id="qrScannerStatus" role="status" aria-live="polite">Aguardando câmera...</p>
+      <div class="qr-approval-panel" id="qrApprovalPanel" hidden>
+        <p>Autorizar login no computador usando a conta <strong id="qrApprovalAccount"></strong>?</p>
+        <div class="qr-approval-actions">
+          <button type="button" class="qr-approval-deny" id="btnDenyQrLogin">Recusar</button>
+          <button type="button" class="qr-approval-cancel" id="btnCancelQrApproval">Escanear outro</button>
+          <button type="button" class="qr-approval-confirm" id="btnApproveQrLogin">Autorizar login</button>
+        </div>
+      </div>
+    </section>
   </div>
 
   <div class="modal-overlay badges-modal-overlay" id="badgesModal" style="display: none;">
@@ -2448,6 +2488,7 @@
   </div>
 
   <!-- LiveKit Client SDK -->
+  <script src="../node_modules/jsqr/dist/jsQR.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

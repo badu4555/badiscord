@@ -1,7 +1,7 @@
 {
   "name": "badiscord",
   "productName": "BADISCORD",
-  "version": "1.0.31",
+  "version": "1.0.32",
   "description": "Aplicativo Desktop de Voz e Streaming até 2K",
   "main": "main.js",
   "scripts": {
@@ -20,9 +20,11 @@
     "dotenv": "^18.0.9",
     "electron-updater": "^6.8.11",
     "express": "^4.21.0",
+    "jsqr": "^1.4.0",
     "livekit-client": "^2.6.0",
     "livekit-server-sdk": "^2.9.0",
-    "nodemailer": "^10.3.1"
+    "nodemailer": "^10.3.1",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

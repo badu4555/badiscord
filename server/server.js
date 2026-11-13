@@ -8,12 +8,14 @@ const { promisify } = require('util');
 const cors = require('cors');
 const Database = require('better-sqlite3');
 const nodemailer = require('nodemailer');
+const QRCode = require('qrcode');
 const { AccessToken, RoomServiceClient, TrackSource } = require('livekit-server-sdk');
 
 const app = express();
 const scryptAsync = promisify(crypto.scrypt);
 const AUTH_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const AUTH_REMEMBERED_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const QR_LOGIN_CHALLENGE_MAX_AGE_MS = 2 * 60 * 1000;
 const PASSWORD_POLICY = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 const EMAIL_POLICY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_CUSTOM_SOUND_BYTES = 4 * 1024 * 1024;
@@ -124,6 +126,7 @@ fs.mkdirSync(path.dirname(databasePath), { recursive: true });
 const db = new Database(databasePath);
 db.pragma('journal_mode = WAL');
 const activityReportTimes = new Map();
+const qrLoginStartAttempts = new Map();
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -139,6 +142,14 @@ db.exec(`
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at INTEGER NOT NULL,
     created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS qr_login_challenges (
+    scan_token_hash TEXT PRIMARY KEY,
+    poll_token_hash TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'approved', 'denied', 'consumed')),
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS user_presence (
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -305,6 +316,7 @@ db.exec(`
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS qr_login_challenges_expires_idx ON qr_login_challenges(expires_at);
   CREATE INDEX IF NOT EXISTS friend_requests_receiver_idx ON friend_requests(receiver_id, status);
   CREATE INDEX IF NOT EXISTS friend_requests_sender_idx ON friend_requests(sender_id, status);
   CREATE INDEX IF NOT EXISTS server_members_user_id_idx ON server_members(user_id);
@@ -587,6 +599,100 @@ app.post('/api/auth/login', async (req, res) => {
     : AUTH_SESSION_MAX_AGE_MS;
   createSession(res, user.id, sessionMaxAge);
   return res.json({ user: publicUser(user) });
+});
+
+app.post('/api/auth/qr/start', async (req, res) => {
+  const now = Date.now();
+  const clientKey = req.ip || req.socket.remoteAddress || 'unknown';
+  const recentAttempts = (qrLoginStartAttempts.get(clientKey) || []).filter((timestamp) => now - timestamp < 60_000);
+  if (recentAttempts.length >= 120) {
+    qrLoginStartAttempts.set(clientKey, recentAttempts);
+    return res.status(429).json({ error: 'Muitos códigos foram solicitados. Aguarde um minuto e tente novamente.' });
+  }
+  recentAttempts.push(now);
+  qrLoginStartAttempts.set(clientKey, recentAttempts);
+  if (qrLoginStartAttempts.size > 2000) {
+    for (const [key, timestamps] of qrLoginStartAttempts) {
+      if (!timestamps.some((timestamp) => now - timestamp < 60_000)) qrLoginStartAttempts.delete(key);
+    }
+  }
+
+  db.prepare(`DELETE FROM qr_login_challenges WHERE expires_at <= ? OR state IN ('denied', 'consumed')`)
+    .run(now);
+  const scanToken = crypto.randomBytes(32).toString('base64url');
+  const pollToken = crypto.randomBytes(32).toString('base64url');
+  const expiresAt = now + QR_LOGIN_CHALLENGE_MAX_AGE_MS;
+  const qrDataUrl = await QRCode.toDataURL(`BADISCORD_LOGIN:${scanToken}`, {
+    errorCorrectionLevel: 'Q',
+    margin: 2,
+    width: 220,
+    color: { dark: '#111214', light: '#ffffff' }
+  });
+  db.prepare(`INSERT INTO qr_login_challenges
+    (scan_token_hash, poll_token_hash, state, expires_at, created_at)
+    VALUES (?, ?, 'pending', ?, ?)`)
+    .run(hashSessionToken(scanToken), hashSessionToken(pollToken), expiresAt, now);
+  res.set('Cache-Control', 'no-store');
+  return res.json({ pollToken, qrDataUrl, expiresAt });
+});
+
+app.post('/api/auth/qr/approve', requireAuth, (req, res) => {
+  const scanToken = normalize(req.body?.scanToken);
+  if (!/^[A-Za-z0-9_-]{43}$/.test(scanToken)) {
+    return res.status(400).json({ error: 'Código QR inválido.' });
+  }
+  const now = Date.now();
+  const challenge = db.prepare(`SELECT state, expires_at FROM qr_login_challenges
+    WHERE scan_token_hash = ?`).get(hashSessionToken(scanToken));
+  if (!challenge || challenge.expires_at <= now || challenge.state !== 'pending') {
+    return res.status(410).json({ error: 'Este código expirou ou já foi utilizado. Gere outro no computador.' });
+  }
+  const result = db.prepare(`UPDATE qr_login_challenges
+    SET state = 'approved', user_id = ?
+    WHERE scan_token_hash = ? AND state = 'pending' AND expires_at > ?`)
+    .run(req.user.id, hashSessionToken(scanToken), now);
+  if (!result.changes) return res.status(409).json({ error: 'Este código já foi confirmado em outro dispositivo.' });
+  return res.json({ user: publicUser(req.user) });
+});
+
+app.post('/api/auth/qr/deny', requireAuth, (req, res) => {
+  const scanToken = normalize(req.body?.scanToken);
+  if (!/^[A-Za-z0-9_-]{43}$/.test(scanToken)) {
+    return res.status(400).json({ error: 'Código QR inválido.' });
+  }
+  const result = db.prepare(`UPDATE qr_login_challenges SET state = 'denied'
+    WHERE scan_token_hash = ? AND state = 'pending' AND expires_at > ?`)
+    .run(hashSessionToken(scanToken), Date.now());
+  if (!result.changes) return res.status(410).json({ error: 'Este código expirou ou já foi utilizado.' });
+  return res.json({ ok: true });
+});
+
+app.post('/api/auth/qr/poll', (req, res) => {
+  const pollToken = normalize(req.body?.pollToken);
+  if (!/^[A-Za-z0-9_-]{43}$/.test(pollToken)) {
+    return res.status(400).json({ error: 'Código de verificação inválido.' });
+  }
+  const now = Date.now();
+  const challenge = db.prepare(`SELECT state, user_id, expires_at FROM qr_login_challenges
+    WHERE poll_token_hash = ?`).get(hashSessionToken(pollToken));
+  res.set('Cache-Control', 'no-store');
+  if (!challenge) return res.status(404).json({ error: 'Código de login não encontrado.' });
+  if (challenge.state === 'consumed') return res.json({ status: 'consumed' });
+  if (challenge.state === 'denied') return res.json({ status: 'denied' });
+  if (challenge.expires_at <= now) return res.json({ status: 'expired' });
+  if (challenge.state !== 'approved') return res.json({ status: 'pending' });
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(challenge.user_id);
+  if (!user) return res.status(410).json({ error: 'A conta autorizada não está mais disponível.' });
+  const consumed = db.prepare(`UPDATE qr_login_challenges SET state = 'consumed'
+    WHERE poll_token_hash = ? AND state = 'approved' AND expires_at > ?`)
+    .run(hashSessionToken(pollToken), now);
+  if (!consumed.changes) return res.json({ status: 'consumed' });
+  const sessionMaxAge = req.body?.rememberMe === true
+    ? AUTH_REMEMBERED_SESSION_MAX_AGE_MS
+    : AUTH_SESSION_MAX_AGE_MS;
+  createSession(res, user.id, sessionMaxAge);
+  return res.json({ status: 'approved', user: publicUser(user) });
 });
 
 app.get('/api/auth/me', (req, res) => {
