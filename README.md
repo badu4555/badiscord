@@ -3,7 +3,7 @@
 Aplicativo independente para comunidades, com clientes Web/Electron e backend Node.js. Recursos atuais:
 - **Canais de Voz** com cancelamento de eco, supressão de ruído e áudio Opus em 48 kHz.
 - **Detecção de Fala em Tempo Real** (borda verde iluminada no avatar quando você fala).
-- **Transmissão de tela em 720p, 1080p e 2K (1440p)** com seleção de FPS.
+- **Transmissão de tela em 720p, 1080p e 2K (1440p)** com seleção de FPS, iniciando em 720p/30 FPS para reduzir uso de memória.
 - **Áudio isolado da janela selecionada** no aplicativo desktop Windows, sem incluir o áudio dos demais aplicativos.
 - **Uso de memória otimizado** com menos prévias de vídeo redundantes e cache recente limitado a 100 mensagens por conversa.
 - **Lista de participantes por canal de voz**, atualizada sem precisar entrar no canal.
@@ -36,6 +36,8 @@ O comando compila o helper nativo de áudio antes de abrir o aplicativo. A captu
 No desktop, o botão de transmitir abre a lista de janelas; jogos são reconhecidos pelo título ou executável, e os demais podem ser escolhidos em **Outras janelas**. Selecionar uma janela não inicia nem abre o jogo, e a captura começa somente após confirmar a transmissão. O indicador de latência usa o RTT ICE da conexão com o servidor LiveKit. Participantes conectados compartilham essa medição para que ela apareça ao lado de cada pessoa; ela representa a rota até o servidor de voz (não uma conexão direta entre participantes). Se não houver estatísticas disponíveis, o app mostra `--` em vez de inventar um valor.
 
 Com um jogo detectado e conectado a um canal de voz no app desktop, o mini perfil aparece como avatares circulares discretos e transparentes. Quem estiver falando fica destacado em verde, com o nome visível; o overlay desaparece pouco depois que todos param de falar. Use o botão no painel do jogo para desativar ou reativar esse comportamento; a escolha fica salva. Jogos em tela cheia exclusiva podem ocultá-lo, então prefira janela sem bordas.
+
+As miniaturas das transmissões só decodificam vídeo quando o cursor está sobre elas; o seletor de janelas libera as capturas ao fechar, e o leitor QR alternativo só carrega em dispositivos sem leitor nativo. A qualidade padrão de 720p/30 FPS reduz o uso de memória ao transmitir; preferências de qualidade já salvas são mantidas e podem ser alteradas nas configurações.
 
 ---
 

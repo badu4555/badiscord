@@ -12206,3 +12206,104 @@ button.profile-tag-chip:hover {
     padding: 24px 18px 18px;
   }
 }
+
+@media (min-width: 701px) {
+  .channels-sidebar {
+    width: 376px;
+    min-width: 376px;
+    flex-basis: 376px;
+  }
+}
+
+.activity-voice-card {
+  width: auto;
+  min-width: 0;
+}
+
+.activity-voice-card.is-voice-connected .game-activity-panel {
+  display: flex;
+  min-height: 48px;
+  padding: 8px 10px;
+}
+
+.activity-voice-card .game-activity-info,
+.activity-voice-card .vc-info {
+  min-width: 0;
+}
+
+.activity-voice-card .game-activity-title,
+.activity-voice-card .game-activity-status,
+.activity-voice-card .vc-channel-text,
+.activity-voice-card .username,
+.activity-voice-card .user-status {
+  max-width: none;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.activity-voice-card .game-activity-title {
+  line-height: 16px;
+}
+
+.activity-voice-card.is-voice-connected .voice-connection-panel {
+  padding: 9px 10px 8px;
+  gap: 8px;
+}
+
+.activity-voice-card .vc-top-row {
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.activity-voice-card .vc-left-wrap {
+  min-width: 0;
+}
+
+.activity-voice-card .vc-info {
+  flex: 1 1 auto;
+}
+
+.activity-voice-card.is-voice-connected .vc-channel-text {
+  line-height: 14px;
+}
+
+.activity-voice-card .vc-actions-top {
+  gap: 4px;
+}
+
+.activity-voice-card.is-voice-connected .voice-actions-dock {
+  gap: 7px;
+}
+
+.activity-voice-card.is-voice-connected .dock-action-btn {
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.activity-voice-card .user-panel {
+  min-height: 60px;
+  height: auto;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.activity-voice-card .user-panel-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.activity-voice-card .user-actions {
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+@media (min-width: 701px) and (max-width: 1000px) {
+  .channels-sidebar {
+    width: 300px;
+    min-width: 300px;
+    flex-basis: 300px;
+  }
+}

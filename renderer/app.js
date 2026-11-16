@@ -89,6 +89,8 @@ const SOUNDBOARD_USER_VOLUMES_STORAGE_KEY = 'badiscord_soundboard_user_volumes';
 const SOUNDBOARD_USER_MUTES_STORAGE_KEY = 'badiscord_soundboard_muted_users';
 const MAX_CACHED_MESSAGES_PER_CONVERSATION = 100;
 const MAX_CACHED_CONVERSATIONS_PER_TYPE = 5;
+const DEFAULT_STREAM_RESOLUTION = '720';
+const DEFAULT_STREAM_FPS = '30';
 let userVolumes = {};
 let mutedUserIdentities = new Set();
 let soundboardUserVolumes = {};
@@ -2402,17 +2404,31 @@ function renderLiveIndicator(member, includePreview = true) {
     preview.appendChild(previewPlaceholder);
     const previewStream = remoteScreenTracks.get(member.screenShareParticipantId || member.id);
     if (previewStream) {
-      const video = document.createElement('video');
-      video.autoplay = true;
-      video.playsInline = true;
-      video.muted = true;
-      video._liveTrack = previewStream.track;
-      previewStream.track.attach(video);
-      video.play().catch((error) => {
-        console.warn('Não foi possível reproduzir a miniatura da transmissão:', error);
+      const attachPreview = () => {
+        if (preview.querySelector('video')) return;
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.playsInline = true;
+        video.muted = true;
+        video._liveTrack = previewStream.track;
+        previewStream.track.attach(video);
+        previewPlaceholder.hidden = true;
+        preview.appendChild(video);
+        video.play().catch((error) => {
+          console.warn('Não foi possível reproduzir a miniatura da transmissão:', error);
+        });
+      };
+      const detachPreview = () => {
+        const video = preview.querySelector('video');
+        if (!video) return;
+        video._liveTrack?.detach(video);
+        video.remove();
+        previewPlaceholder.hidden = false;
+      };
+      indicator.addEventListener('pointerenter', (event) => {
+        if (event.pointerType === 'mouse') attachPreview();
       });
-      previewPlaceholder.hidden = true;
-      preview.appendChild(video);
+      indicator.addEventListener('pointerleave', detachPreview);
     }
     indicator.appendChild(preview);
   }
@@ -2890,6 +2906,7 @@ async function joinVoiceChannel(channelName) {
     const activeSrv = servers.find(s => s.id === activeServerId);
     if (vcChannelText) {
       vcChannelText.textContent = `${channelName} / ${activeSrv?.name || 'Servidor'}`;
+      vcChannelText.title = vcChannelText.textContent;
     }
   }
   startPingMonitor();
@@ -4368,9 +4385,9 @@ async function checkRunningGame() {
 
     if (localScreenTrack || isNativeMobileStreamer) {
       if (panel) panel.classList.add('is-live');
-      const configuredResolution = isNativeMobileStreamer ? '1080' : (localStreamResolution || localStorage.getItem('badiscord_stream_res') || '1080');
+      const configuredResolution = isNativeMobileStreamer ? '1080' : (localStreamResolution || localStorage.getItem('badiscord_stream_res') || DEFAULT_STREAM_RESOLUTION);
       const resolutionLabel = configuredResolution === '1440' ? '2K (1440p)' : `${configuredResolution}p`;
-      const configuredFps = isNativeMobileStreamer ? '30' : (localStreamFps || localStorage.getItem('badiscord_stream_fps') || '60');
+      const configuredFps = isNativeMobileStreamer ? '30' : (localStreamFps || localStorage.getItem('badiscord_stream_fps') || DEFAULT_STREAM_FPS);
       if (statusEl) statusEl.textContent = `AO VIVO em ${resolutionLabel} ${configuredFps}FPS`;
       if (btnQuick) {
         btnQuick.innerHTML = '⏹️';
@@ -4382,11 +4399,14 @@ async function checkRunningGame() {
     if (panel) panel.classList.remove('is-live');
 
     if (game && game.name) {
-      if (titleEl) titleEl.textContent = game.name;
+      if (titleEl) {
+        titleEl.textContent = game.name;
+        titleEl.title = game.name;
+      }
       if (statusEl) statusEl.textContent = game.isGame ? 'Detectado • Pronto para transmitir' : 'Não Compartilhando';
       if (btnQuick) {
         btnQuick.innerHTML = '🖥️';
-        const configuredResolution = localStorage.getItem('badiscord_stream_res') || '1080';
+        const configuredResolution = localStorage.getItem('badiscord_stream_res') || DEFAULT_STREAM_RESOLUTION;
         btnQuick.title = `Selecionar ${game.name} para transmitir em ${configuredResolution === '1440' ? '2K' : `${configuredResolution}p`}`;
       }
       if (iconBox) {
@@ -4422,8 +4442,8 @@ if (btnGameQuickStream) {
       return;
     }
 
-    const savedRes = localStorage.getItem('badiscord_stream_res') || '1080';
-    const savedFps = localStorage.getItem('badiscord_stream_fps') || '60';
+    const savedRes = localStorage.getItem('badiscord_stream_res') || DEFAULT_STREAM_RESOLUTION;
+    const savedFps = localStorage.getItem('badiscord_stream_fps') || DEFAULT_STREAM_FPS;
     if (selectResolution) selectResolution.value = savedRes;
     if (selectFps) selectFps.value = savedFps;
 
@@ -7197,6 +7217,16 @@ async function fetchAndRenderSources() {
   renderSourcesFiltered();
 }
 
+function releaseCaptureSourceCache() {
+  cachedSources = [];
+  sourcesGrid?.replaceChildren();
+}
+
+function closeScreenShareModal() {
+  if (screenShareModal) screenShareModal.style.display = 'none';
+  releaseCaptureSourceCache();
+}
+
 function resetSelectedTarget() {
   selectedSourceId = null;
   btnConfirmShare.disabled = true;
@@ -7627,8 +7657,8 @@ async function stopCurrentStream() {
   localStreamFps = null;
   const resolutionBadge = document.querySelector('.res-pill');
   if (resolutionBadge) {
-    const configuredResolution = localStorage.getItem('badiscord_stream_res') || '1080';
-    const configuredFps = localStorage.getItem('badiscord_stream_fps') || '60';
+    const configuredResolution = localStorage.getItem('badiscord_stream_res') || DEFAULT_STREAM_RESOLUTION;
+    const configuredFps = localStorage.getItem('badiscord_stream_fps') || DEFAULT_STREAM_FPS;
     resolutionBadge.textContent = `${configuredResolution === '1440' ? '2K (1440p)' : `${configuredResolution}p`} ${configuredFps}FPS`;
   }
   const liveViewerCount = document.getElementById('liveViewerCount');
@@ -7646,7 +7676,7 @@ async function stopCurrentStream() {
   if (panel) panel.classList.remove('is-live');
   if (btnGameQuickStream) {
     btnGameQuickStream.innerHTML = '🖥️';
-    const configuredResolution = localStorage.getItem('badiscord_stream_res') || '1080';
+    const configuredResolution = localStorage.getItem('badiscord_stream_res') || DEFAULT_STREAM_RESOLUTION;
     const resolutionLabel = configuredResolution === '1440' ? '2K' : `${configuredResolution}p`;
     btnGameQuickStream.title = `Transmitir Jogo em ${resolutionLabel}`;
   }
@@ -7901,8 +7931,8 @@ btnShareScreen.addEventListener('click', async () => {
   await fetchAndRenderSources();
 });
 
-btnCloseModal.addEventListener('click', () => screenShareModal.style.display = 'none');
-btnCancelShare.addEventListener('click', () => screenShareModal.style.display = 'none');
+btnCloseModal.addEventListener('click', closeScreenShareModal);
+btnCancelShare.addEventListener('click', closeScreenShareModal);
 
 // Iniciar Live do Jogo (1080p 60FPS) - Função Modular Unificada
 async function startStreamWithSourceId(sourceId, sourceTitle) {
@@ -7920,8 +7950,8 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     return;
   }
 
-  const requestedRes = parseInt((selectResolution && selectResolution.value) || localStorage.getItem('badiscord_stream_res') || '1080', 10);
-  const requestedFps = parseInt((selectFps && selectFps.value) || localStorage.getItem('badiscord_stream_fps') || '60', 10);
+  const requestedRes = parseInt((selectResolution && selectResolution.value) || localStorage.getItem('badiscord_stream_res') || DEFAULT_STREAM_RESOLUTION, 10);
+  const requestedFps = parseInt((selectFps && selectFps.value) || localStorage.getItem('badiscord_stream_fps') || DEFAULT_STREAM_FPS, 10);
   const mobilePublisher = isMobileStreamDevice();
   const targetRes = mobilePublisher && requestedRes > 1080 ? 1080 : requestedRes;
   const targetFps = mobilePublisher ? Math.min(requestedFps, 30) : requestedFps;
@@ -7930,6 +7960,7 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
   localStorage.setItem('badiscord_stream_res', String(requestedRes));
   localStorage.setItem('badiscord_stream_fps', String(requestedFps));
   if (screenShareModal) screenShareModal.style.display = 'none';
+  releaseCaptureSourceCache();
   if (mobilePublisher && (targetRes !== requestedRes || targetFps !== requestedFps)) {
     showToast(`Modo otimizado para celular: transmissão em ${targetRes}p ${targetFps} FPS para reduzir travamentos.`, '⚡');
   }
@@ -8101,28 +8132,28 @@ if (btnTestGameSelect) {
 const prefResolution = document.getElementById('prefResolution');
 const prefFps = document.getElementById('prefFps');
 if (selectResolution) {
-  selectResolution.value = localStorage.getItem('badiscord_stream_res') || '1080';
+  selectResolution.value = localStorage.getItem('badiscord_stream_res') || DEFAULT_STREAM_RESOLUTION;
   selectResolution.addEventListener('change', () => {
     localStorage.setItem('badiscord_stream_res', selectResolution.value);
     if (prefResolution) prefResolution.value = selectResolution.value;
   });
 }
 if (selectFps) {
-  selectFps.value = localStorage.getItem('badiscord_stream_fps') || '60';
+  selectFps.value = localStorage.getItem('badiscord_stream_fps') || DEFAULT_STREAM_FPS;
   selectFps.addEventListener('change', () => {
     localStorage.setItem('badiscord_stream_fps', selectFps.value);
     if (prefFps) prefFps.value = selectFps.value;
   });
 }
 if (prefResolution) {
-  prefResolution.value = localStorage.getItem('badiscord_stream_res') || '1080';
+  prefResolution.value = localStorage.getItem('badiscord_stream_res') || DEFAULT_STREAM_RESOLUTION;
   prefResolution.addEventListener('change', () => {
     localStorage.setItem('badiscord_stream_res', prefResolution.value);
     if (selectResolution) selectResolution.value = prefResolution.value;
   });
 }
 if (prefFps) {
-  prefFps.value = localStorage.getItem('badiscord_stream_fps') || '60';
+  prefFps.value = localStorage.getItem('badiscord_stream_fps') || DEFAULT_STREAM_FPS;
   prefFps.addEventListener('change', () => {
     localStorage.setItem('badiscord_stream_fps', prefFps.value);
     if (selectFps) selectFps.value = prefFps.value;
@@ -11187,6 +11218,31 @@ window.addEventListener('keydown', (event) => {
   const btnDenyQrLogin = document.getElementById('btnDenyQrLogin');
   const qrScannerCanvas = document.createElement('canvas');
   const qrScannerCanvasContext = qrScannerCanvas.getContext('2d', { willReadFrequently: true });
+  let qrScannerFallbackPromise = null;
+
+  async function loadQrScannerFallback() {
+    if (typeof window.jsQR === 'function') return;
+    if (!qrScannerFallbackPromise) {
+      qrScannerFallbackPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = new URL('../node_modules/jsqr/dist/jsQR.js', document.baseURI).href;
+        script.async = true;
+        script.onload = () => {
+          if (typeof window.jsQR === 'function') resolve();
+          else reject(new Error('O leitor QR alternativo não foi carregado corretamente.'));
+        };
+        script.onerror = () => {
+          script.remove();
+          reject(new Error('Não foi possível carregar o leitor QR alternativo.'));
+        };
+        document.head.appendChild(script);
+      }).catch((error) => {
+        qrScannerFallbackPromise = null;
+        throw error;
+      });
+    }
+    await qrScannerFallbackPromise;
+  }
 
   function stopQrScannerCamera() {
     clearTimeout(qrScanTimer);
@@ -11241,9 +11297,14 @@ window.addEventListener('keydown', (event) => {
   }
 
   async function startQrScannerCamera() {
-    if (!('BarcodeDetector' in window) && typeof window.jsQR !== 'function') {
-      if (qrScannerStatus) qrScannerStatus.textContent = 'Este aparelho não oferece leitura de QR pela câmera. Atualize o BADISCORD ou o navegador.';
-      return;
+    if (!('BarcodeDetector' in window)) {
+      try {
+        await loadQrScannerFallback();
+      } catch (error) {
+        console.error('Não foi possível carregar o leitor QR alternativo:', error);
+        if (qrScannerStatus) qrScannerStatus.textContent = error.message || 'Este aparelho não oferece leitura de QR pela câmera.';
+        return;
+      }
     }
     if (!navigator.mediaDevices?.getUserMedia) {
       if (qrScannerStatus) qrScannerStatus.textContent = 'A câmera não está disponível neste dispositivo.';

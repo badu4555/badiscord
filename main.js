@@ -637,14 +637,14 @@ ipcMain.handle('get-screen-sources', async (event) => {
     try {
       sources = await desktopCapturer.getSources({
         types: ['window'],
-        thumbnailSize: { width: 320, height: 180 },
+        thumbnailSize: { width: 240, height: 135 },
         fetchWindowIcons: true
       });
     } catch (e1) {
       console.warn('Fallback para getSources simplificado:', e1);
       sources = await desktopCapturer.getSources({
         types: ['window'],
-        thumbnailSize: { width: 240, height: 135 }
+        thumbnailSize: { width: 160, height: 90 }
       });
     }
 
