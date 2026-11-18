@@ -543,7 +543,10 @@
                 🔊 Áudio enviado somente para quem está assistindo
               </span>
               <button type="button" class="stream-leave-call-btn" id="btnLeaveStreamCall" title="Sair do canal de voz" aria-label="Sair do canal de voz">
-                ☎ Sair da call
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M2.9 9.3C8.4 5.1 15.6 5.1 21.1 9.3c.4.3.5.9.2 1.3l-2.2 2.8c-.3.4-.9.5-1.4.2l-2.1-1.2c-.3-.2-.5-.5-.5-.9v-1.7a11 11 0 0 0-6.2 0v1.7c0 .4-.2.7-.5.9l-2.1 1.2c-.5.3-1.1.2-1.4-.2l-2.2-2.8c-.3-.4-.2-1 .2-1.3Z"/>
+                </svg>
+                <span>Sair da call</span>
               </button>
             </div>
 
@@ -657,7 +660,7 @@
           </div>
           <button id="btnDisconnectVoice" class="dock-circle-btn disconnect-circle-btn" title="Desconectar da Chamada">
             <svg class="disconnect-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6.6 10.8c1.5 1.4 3.2 2.5 5.1 3.3l1.7-1.7c.2-.2.5-.3.8-.2 1 .3 2 .4 3 .4.5 0 .8.4.8.8v2.7c0 .5-.3.8-.8.8C10.5 16.9 7.1 13.5 7.1 9.3c0-.5.4-.8.8-.8h2.7c.5 0 .8.3.8.8 0 1 .1 2 .4 3 .1.3 0 .6-.2.8l-1.7 1.7c.8 1.9 1.9 3.6 3.3 5.1l-1.6 1.6C8.8 18.9 5.1 15.2 2.5 10.4l1.6-1.6 2.5 2z" transform="rotate(-45 12 12)"/>
+              <path d="M2.9 9.3C8.4 5.1 15.6 5.1 21.1 9.3c.4.3.5.9.2 1.3l-2.2 2.8c-.3.4-.9.5-1.4.2l-2.1-1.2c-.3-.2-.5-.5-.5-.9v-1.7a11 11 0 0 0-6.2 0v1.7c0 .4-.2.7-.5.9l-2.1 1.2c-.5.3-1.1.2-1.4-.2l-2.2-2.8c-.3-.4-.2-1 .2-1.3Z"/>
             </svg>
           </button>
         </div>
@@ -692,8 +695,43 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM20 8v6M23 11h-6" /></svg>
             </button>
             <div class="chat-search-box">
-              <input type="text" placeholder="Buscar no canal..." class="chat-search-input">
+              <input type="text" placeholder="Buscar no canal..." class="chat-search-input" id="chatSearchInput" aria-label="Buscar mensagens" aria-controls="chatSearchFilters" aria-expanded="false" autocomplete="off">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 5 5" /></svg>
+              <div class="chat-search-filters" id="chatSearchFilters" role="group" aria-label="Filtros de busca" hidden>
+                <div class="chat-search-filter-heading">Filtros</div>
+                <button type="button" class="chat-search-filter" data-search-token="from:">
+                  <span class="chat-search-filter-icon" aria-hidden="true">♟</span>
+                  <span class="chat-search-filter-copy"><strong>De um usuário específico</strong><small>de: usuário</small></span>
+                </button>
+                <button type="button" class="chat-search-filter" data-search-token="in:">
+                  <span class="chat-search-filter-icon" aria-hidden="true">#</span>
+                  <span class="chat-search-filter-copy"><strong>Enviado em um canal específico</strong><small>em: canal</small></span>
+                </button>
+                <button type="button" class="chat-search-filter" data-search-token="has:">
+                  <span class="chat-search-filter-icon" aria-hidden="true">↗</span>
+                  <span class="chat-search-filter-copy"><strong>Inclui um tipo específico de dados</strong><small>tem: link, anexo ou arquivo</small></span>
+                </button>
+                <button type="button" class="chat-search-filter" data-search-token="mentions:">
+                  <span class="chat-search-filter-icon" aria-hidden="true">@</span>
+                  <span class="chat-search-filter-copy"><strong>Menciona um usuário específico</strong><small>menciona: usuário</small></span>
+                </button>
+                <button type="button" class="chat-search-filter chat-search-more-filters" id="btnMoreSearchFilters" aria-expanded="false" aria-controls="chatSearchMoreFilters">
+                  <span class="chat-search-filter-icon" aria-hidden="true">☷</span>
+                  <span class="chat-search-filter-copy"><strong>Mais filtros</strong><small>datas, tipo de autor e muito mais</small></span>
+                  <span class="chat-search-filter-chevron" aria-hidden="true">›</span>
+                </button>
+                <div class="chat-search-extra-filters" id="chatSearchMoreFilters" hidden>
+                  <button type="button" class="chat-search-filter" data-search-token="after:">
+                    <span class="chat-search-filter-copy"><strong>Depois de uma data</strong><small>depois: AAAA-MM-DD</small></span>
+                  </button>
+                  <button type="button" class="chat-search-filter" data-search-token="before:">
+                    <span class="chat-search-filter-copy"><strong>Antes de uma data</strong><small>antes: AAAA-MM-DD</small></span>
+                  </button>
+                  <button type="button" class="chat-search-filter" data-search-token="has:">
+                    <span class="chat-search-filter-copy"><strong>Tipo de conteúdo</strong><small>link, imagem ou arquivo</small></span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </header>
@@ -771,8 +809,22 @@
         <header class="friends-header">
           <button type="button" class="mobile-back-button" aria-label="Voltar para servidores">☰</button>
           <div class="friends-header-left">
-            <span class="friends-header-icon">👥</span>
-            <h3>Amigos</h3>
+            <div class="friends-brand">
+              <span class="friends-brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 32 32">
+                  <path d="M8 16 16 8l8 8-8 8-8-8Z"></path>
+                  <path d="M16 8v16M8 16h16"></path>
+                  <circle cx="8" cy="16" r="2"></circle>
+                  <circle cx="16" cy="8" r="2"></circle>
+                  <circle cx="24" cy="16" r="2"></circle>
+                  <circle cx="16" cy="24" r="2"></circle>
+                </svg>
+              </span>
+              <span class="friends-brand-copy">
+                <span class="friends-brand-eyebrow">BADISCORD / SUA REDE</span>
+                <h3>Conexões</h3>
+              </span>
+            </div>
             <span class="friends-header-divider"></span>
             <div class="friends-tabs">
               <button class="friends-tab-btn active" data-tab="online">Online</button>
@@ -792,7 +844,9 @@
           <div class="friends-list-wrapper">
             <div class="friends-search-box" id="friendsSearchBox">
               <input type="text" id="inputFriendsSearch" placeholder="Buscar amigos..." class="friends-search-input">
-              <span>🔍</span>
+              <span class="friends-search-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg>
+              </span>
             </div>
             <div class="friends-count-label" id="friendsCountLabel">ONLINE — 0</div>
             <div class="friends-cards-list" id="friendsCardsList"></div>
@@ -816,7 +870,8 @@
 
           <!-- Coluna Direita: Ativo Agora (Foto 2) -->
           <aside class="active-now-column">
-            <h3 class="active-now-title">Ativo agora</h3>
+            <h3 class="active-now-title">Radar da galera</h3>
+            <p class="active-now-subtitle">Presenças da sua rede</p>
             <div class="active-now-list" id="activeNowList"></div>
           </aside>
         </div>
