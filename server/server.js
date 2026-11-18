@@ -306,6 +306,13 @@ db.exec(`
     selected_badges_json TEXT NOT NULL DEFAULT '[]',
     updated_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS user_game_activity (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    game_name TEXT NOT NULL,
+    seconds INTEGER NOT NULL DEFAULT 0,
+    last_played_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, game_name)
+  );
   CREATE TABLE IF NOT EXISTS custom_sounds (
     id TEXT PRIMARY KEY,
     server_id TEXT NOT NULL DEFAULT 'legacy',
@@ -944,6 +951,7 @@ function formatChannelMessage(row) {
     author: row.author_name,
     authorId: row.author_id,
     time: `Hoje às ${new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`,
+    createdAt: row.created_at,
     updatedAt: row.updated_at
   };
 }
@@ -1038,8 +1046,24 @@ function parseJsonValue(value, fallback) {
   }
 }
 
+function normalizeVoiceChannelCategories(value, voiceChannels) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const allowedChannels = new Set(
+    (Array.isArray(voiceChannels) ? voiceChannels : [])
+      .map((channel) => normalize(channel).slice(0, 80))
+      .filter(Boolean)
+  );
+  return Object.fromEntries(Object.entries(value).slice(0, 100).flatMap(([channel, category]) => {
+    const channelName = normalize(channel).slice(0, 80);
+    const categoryName = normalize(category).slice(0, 40);
+    if (!allowedChannels.has(channelName) || !categoryName || categoryName.toUpperCase() === 'SALAS DE VOZ') return [];
+    return [[channelName, categoryName]];
+  }));
+}
+
 function formatServer(server, userId) {
   const metadata = parseJsonValue(server.metadata_json, {});
+  const voiceChannels = parseJsonValue(server.voice_channels_json, ['Geral 🔊']);
   return {
     id: server.id,
     name: server.name,
@@ -1053,7 +1077,8 @@ function formatServer(server, userId) {
     serverTagColor: metadata.serverTagColor || '#eb459e',
     voiceSettings: metadata.voiceSettings && typeof metadata.voiceSettings === 'object' ? metadata.voiceSettings : {},
     textChannels: parseJsonValue(server.text_channels_json, ['geral']),
-    voiceChannels: parseJsonValue(server.voice_channels_json, ['Geral 🔊']),
+    voiceChannels,
+    voiceChannelCategories: normalizeVoiceChannelCategories(metadata.voiceChannelCategories, voiceChannels),
     isPublic: Boolean(server.is_public),
     isOwner: server.owner_id === userId,
     role: server.role || 'member',
@@ -1099,7 +1124,7 @@ app.get('/api/servers', requireAuth, (req, res) => {
 app.get('/api/servers/:serverId/members', requireAuth, (req, res) => {
   const serverId = normalize(req.params.serverId);
   if (!canAccessServer(req.user.id, serverId)) return res.status(403).json({ error: 'Você não faz parte deste servidor.' });
-  const members = db.prepare(`SELECT users.id, users.display_name AS name, users.username, users.tag,
+  const memberRows = db.prepare(`SELECT users.id, users.display_name AS name, users.username, users.tag,
       server_members.role AS base_role, server_members.role_id, server_members.group_name,
       server_members.joined_at, server_roles.name AS role_name, server_roles.color AS role_color,
       server_member_mutes.user_id AS muted_user_id,
@@ -1115,8 +1140,33 @@ app.get('/api/servers/:serverId/members', requireAuth, (req, res) => {
       AND (server_member_mutes.expires_at IS NULL OR server_member_mutes.expires_at > ?)
     LEFT JOIN user_presence ON user_presence.user_id = users.id
     WHERE server_members.server_id = ?
-    ORDER BY COALESCE(server_roles.position, 9999), users.display_name COLLATE NOCASE`).all(Date.now(), serverId)
-    .map((member) => {
+    ORDER BY COALESCE(server_roles.position, 9999), users.display_name COLLATE NOCASE`).all(Date.now(), serverId);
+  const activityByUser = new Map();
+  if (memberRows.length) {
+    const gameRows = db.prepare(`SELECT user_id, game_name, seconds, last_played_at
+      FROM (
+        SELECT user_game_activity.user_id, user_game_activity.game_name,
+          user_game_activity.seconds, user_game_activity.last_played_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY user_game_activity.user_id
+            ORDER BY user_game_activity.last_played_at DESC, user_game_activity.game_name COLLATE NOCASE
+          ) AS activity_rank
+        FROM user_game_activity
+        JOIN server_members ON server_members.user_id = user_game_activity.user_id
+        WHERE server_members.server_id = ?
+      )
+      WHERE activity_rank <= 3
+      ORDER BY last_played_at DESC`).all(serverId);
+    gameRows.forEach((game) => {
+      if (!activityByUser.has(game.user_id)) activityByUser.set(game.user_id, []);
+      activityByUser.get(game.user_id).push({
+        name: game.game_name,
+        seconds: Number(game.seconds) || 0,
+        lastPlayedAt: Number(game.last_played_at) || 0
+      });
+    });
+  }
+  const members = memberRows.map((member) => {
       const online = member.status && Date.now() - member.updated_at <= PRESENCE_STALE_AFTER_MS && member.status !== 'invisible';
       return {
         id: member.id,
@@ -1140,7 +1190,8 @@ app.get('/api/servers/:serverId/members', requireAuth, (req, res) => {
         activityType: online ? member.activity_type || '' : '',
         activityText: online ? member.activity_text || '' : '',
         activityArtwork: online ? member.activity_artwork || '' : '',
-        activityUrl: online ? member.activity_url || '' : ''
+        activityUrl: online ? member.activity_url || '' : '',
+        gameHistory: activityByUser.get(member.id) || []
       };
     });
   return res.json({ members });
@@ -1549,10 +1600,23 @@ app.patch('/api/servers/:id', requireAuth, (req, res) => {
   ]));
   const textChannels = Array.isArray(req.body?.textChannels) ? req.body.textChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['geral'];
   const voiceChannels = Array.isArray(req.body?.voiceChannels) ? req.body.voiceChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['Geral 🔊'];
+  const voiceChannelCategories = req.body?.voiceChannelCategories === undefined
+    ? normalizeVoiceChannelCategories(currentMetadata.voiceChannelCategories, voiceChannels)
+    : normalizeVoiceChannelCategories(req.body.voiceChannelCategories, voiceChannels);
   if (!name) return res.status(400).json({ error: 'Informe o nome do servidor.' });
 
   const isPublic = typeof req.body?.isPublic === 'boolean' ? Number(req.body.isPublic) : server.is_public;
-  const metadata = JSON.stringify({ iconUrl, bannerColor, description, traits, serverTag, serverTagBadge, serverTagColor, voiceSettings });
+  const metadata = JSON.stringify({
+    iconUrl,
+    bannerColor,
+    description,
+    traits,
+    serverTag,
+    serverTagBadge,
+    serverTagColor,
+    voiceSettings,
+    voiceChannelCategories
+  });
   db.prepare(`UPDATE servers SET name = ?, icon = ?, metadata_json = ?, text_channels_json = ?,
     voice_channels_json = ?, is_public = ? WHERE id = ?`)
     .run(name, icon, metadata, JSON.stringify(textChannels), JSON.stringify(voiceChannels), isPublic, server.id);
@@ -1585,7 +1649,7 @@ app.post('/api/servers/sync', requireAuth, (req, res) => {
     const icon = normalize(server?.icon).slice(0, 16) || '🎮';
     if (!SERVER_ID_POLICY.test(id) || !name || id === 'srv-1' || id === 'srv-2') return;
 
-    const existing = db.prepare('SELECT id, owner_id, is_public FROM servers WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT id, owner_id, is_public, metadata_json, voice_channels_json FROM servers WHERE id = ?').get(id);
     if (!existing) {
       const metadata = JSON.stringify({
         iconUrl: typeof server.iconUrl === 'string' ? server.iconUrl.slice(0, 5 * 1024 * 1024) : '',
@@ -1600,7 +1664,8 @@ app.post('/api/servers/sync', requireAuth, (req, res) => {
             normalize(channel).slice(0, 80),
             { bitrate: [64, 96, 128, 256].includes(Number(settings?.bitrate)) ? Number(settings.bitrate) : 96 }
           ]))
-          : {}
+          : {},
+        voiceChannelCategories: normalizeVoiceChannelCategories(server.voiceChannelCategories, server.voiceChannels)
       });
       const textChannels = Array.isArray(server.textChannels) ? server.textChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['geral'];
       const voiceChannels = Array.isArray(server.voiceChannels) ? server.voiceChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['Geral 🔊'];
@@ -1626,7 +1691,13 @@ app.post('/api/servers/sync', requireAuth, (req, res) => {
             normalize(channel).slice(0, 80),
             { bitrate: [64, 96, 128, 256].includes(Number(settings?.bitrate)) ? Number(settings.bitrate) : 96 }
           ]))
-          : {}
+          : {},
+        voiceChannelCategories: normalizeVoiceChannelCategories(
+          server.voiceChannelCategories === undefined
+            ? parseJsonValue(existing.metadata_json, {}).voiceChannelCategories
+            : server.voiceChannelCategories,
+          server.voiceChannels || parseJsonValue(existing.voice_channels_json, ['Geral 🔊'])
+        )
       });
       const textChannels = Array.isArray(server.textChannels) ? server.textChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['geral'];
       const voiceChannels = Array.isArray(server.voiceChannels) ? server.voiceChannels.slice(0, 100).map((channel) => normalize(channel).slice(0, 80)).filter(Boolean) : ['Geral 🔊'];
@@ -1880,6 +1951,12 @@ app.post('/api/profile/activity', requireAuth, (req, res) => {
       if (Object.hasOwn(gameSecondsByName, name) || Object.keys(gameSecondsByName).length < 100) {
         gameSecondsByName[name] = (Number(gameSecondsByName[name]) || 0) + seconds;
       }
+      db.prepare(`INSERT INTO user_game_activity (user_id, game_name, seconds, last_played_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, game_name) DO UPDATE SET
+          seconds = user_game_activity.seconds + excluded.seconds,
+          last_played_at = excluded.last_played_at`)
+        .run(req.user.id, name, seconds, now);
     });
     db.prepare(`INSERT INTO user_activity_stats
       (user_id, game_seconds, stream_seconds, voice_seconds, game_seconds_json, updated_at)

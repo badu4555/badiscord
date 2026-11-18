@@ -34,63 +34,99 @@
       <!-- 1. ABA DE LOGIN -->
       <div class="auth-view-pane" id="viewAuthLogin">
         <div class="auth-login-layout">
-          <div class="auth-login-form-column">
-            <div class="auth-header-wrap">
-              <h2 class="auth-title">Boas-vindas de volta!</h2>
-              <p class="auth-subtitle">Estamos felizes em ver você novamente.</p>
+          <section class="auth-login-hero" aria-labelledby="authHeroTitle">
+            <div class="auth-hero-brand">
+              <span class="auth-hero-mark" aria-hidden="true">
+                <svg viewBox="0 0 40 40" fill="none">
+                  <path d="M8 11.5c0-1.1.9-2 2-2h3.5c1.1 0 2 .9 2 2v17c0 1.1-.9 2-2 2H10c-1.1 0-2-.9-2-2v-17Z" fill="currentColor"/>
+                  <path d="M18 7h3.5c1.1 0 2 .9 2 2v22c0 1.1-.9 2-2 2H18V7Z" fill="currentColor" opacity=".72"/>
+                  <path d="M28 13.5c0-1.1.9-2 2-2h2c1.1 0 2 .9 2 2v9c0 1.1-.9 2-2 2h-2c-1.1 0-2-.9-2-2v-9Z" fill="currentColor" opacity=".42"/>
+                </svg>
+              </span>
+              <span class="auth-hero-wordmark">BADISCORD<span>VOZ. JOGO. GENTE.</span></span>
             </div>
 
-            <form class="auth-form" id="formLogin" autocomplete="on">
-              <div class="auth-field-group">
-                <label class="auth-field-label" for="loginEmail">E-MAIL <span class="auth-required">*</span></label>
-                <input type="email" class="auth-input" id="loginEmail" name="username" placeholder="seu-email@exemplo.com" autocomplete="username" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+            <div class="auth-hero-copy">
+              <span class="auth-hero-eyebrow"><span></span> SEU PONTO DE ENCONTRO</span>
+              <h1 id="authHeroTitle">A conversa<br>começa <em>aqui.</em></h1>
+              <p>Entre para encontrar sua galera, abrir a call e jogar junto.</p>
+            </div>
+
+            <div class="auth-hero-visual" aria-hidden="true">
+              <div class="auth-hero-orbit auth-hero-orbit-outer"></div>
+              <div class="auth-hero-orbit auth-hero-orbit-inner"></div>
+              <div class="auth-hero-core">
+                <span class="auth-hero-core-mark">B</span>
+                <span class="auth-hero-core-wave"><i></i><i></i><i></i><i></i><i></i></span>
+              </div>
+              <div class="auth-hero-signal auth-hero-signal-top"><span></span> VOZ ATIVA</div>
+              <div class="auth-hero-signal auth-hero-signal-bottom">FEITO PRA SUA COMUNIDADE <span>↗</span></div>
+            </div>
+
+            <div class="auth-hero-footer"><span>UMA COMUNIDADE</span><span>DO SEU JEITO</span></div>
+          </section>
+
+          <div class="auth-login-access">
+            <div class="auth-login-form-column">
+              <div class="auth-login-kicker"><span>B</span> ACESSO À COMUNIDADE</div>
+              <div class="auth-header-wrap">
+                <h2 class="auth-title">Que bom ter você de volta.</h2>
+                <p class="auth-subtitle">Entre na sua conta e continue de onde parou.</p>
               </div>
 
-              <div class="auth-field-group">
-                <label class="auth-field-label" for="loginPassword">SENHA <span class="auth-required">*</span></label>
-                <div class="password-input-wrap">
-                  <input type="password" class="auth-input" id="loginPassword" name="password" placeholder="Sua senha" minlength="8" autocomplete="current-password" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false" required>
-                  <button type="button" class="password-toggle" data-password-toggle="loginPassword" aria-label="Mostrar senha">👁</button>
+              <form class="auth-form" id="formLogin" autocomplete="on">
+                <div class="auth-field-group">
+                  <label class="auth-field-label" for="loginEmail">E-MAIL <span class="auth-required">*</span></label>
+                  <input type="email" class="auth-input" id="loginEmail" name="username" placeholder="seu-email@exemplo.com" autocomplete="username" inputmode="email" autocapitalize="none" autocorrect="off" spellcheck="false" required>
                 </div>
-                <span class="auth-link-forgot" id="btnGoToForgot">Esqueceu sua senha?</span>
+
+                <div class="auth-field-group">
+                  <label class="auth-field-label" for="loginPassword">SENHA <span class="auth-required">*</span></label>
+                  <div class="password-input-wrap">
+                    <input type="password" class="auth-input" id="loginPassword" name="password" placeholder="Sua senha" minlength="8" autocomplete="current-password" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+                    <button type="button" class="password-toggle" data-password-toggle="loginPassword" aria-label="Mostrar senha">👁</button>
+                  </div>
+                  <span class="auth-link-forgot" id="btnGoToForgot">Esqueceu sua senha?</span>
+                </div>
+
+                <div class="auth-options">
+                  <label class="auth-option">
+                    <input type="checkbox" id="keepConnectedCheckbox">
+                    <span>Manter conectado neste dispositivo</span>
+                  </label>
+                  <label class="auth-option">
+                    <input type="checkbox" id="rememberLoginIdCheckbox">
+                    <span>Lembrar meu e-mail neste dispositivo</span>
+                  </label>
+                </div>
+
+                <div class="auth-captcha" id="loginRecaptcha"></div>
+                <button type="submit" class="auth-submit-btn" id="btnLoginSubmit">Entrar</button>
+              </form>
+
+              <div class="auth-footer-prompt">
+                <span>Primeira vez por aqui?</span>
+                <span class="auth-link-primary" id="btnGoToRegister">Criar minha conta</span>
               </div>
-
-              <div class="auth-options">
-                <label class="auth-option">
-                  <input type="checkbox" id="keepConnectedCheckbox">
-                  <span>Manter conectado neste dispositivo</span>
-                </label>
-                <label class="auth-option">
-                  <input type="checkbox" id="rememberLoginIdCheckbox">
-                  <span>Lembrar meu e-mail neste dispositivo</span>
-                </label>
+              <div class="auth-download-links">
+                <a class="auth-download-link" href="https://github.com/badu4555/badiscord/releases/latest" target="_blank" rel="noopener noreferrer">
+                  BADISCORD para Windows
+                </a>
+                <a class="auth-download-link" href="https://github.com/badu4555/badiscord/releases/latest/download/BADISCORD-Android.apk">
+                  BADISCORD para Android
+                </a>
               </div>
-
-              <div class="auth-captcha" id="loginRecaptcha"></div>
-              <button type="submit" class="auth-submit-btn" id="btnLoginSubmit">Entrar</button>
-            </form>
-
-            <div class="auth-footer-prompt">
-              <span>Precisando de uma conta?</span>
-              <span class="auth-link-primary" id="btnGoToRegister">Registre-se</span>
             </div>
-            <div class="auth-download-links">
-              <a class="auth-download-link" href="https://github.com/badu4555/badiscord/releases/latest" target="_blank" rel="noopener noreferrer">
-                BADISCORD para Windows
-              </a>
-              <a class="auth-download-link" href="https://github.com/badu4555/badiscord/releases/latest/download/BADISCORD-Android.apk">
-                BADISCORD para Android
-              </a>
-            </div>
+
+            <aside class="auth-qr-panel" aria-label="Login com QR code">
+              <span class="auth-qr-kicker">SEM DIGITAR SENHA</span>
+              <img class="auth-qr-image" id="authQrImage" alt="QR code temporário para entrar no BADISCORD">
+              <h3>Entrar pelo celular</h3>
+              <p>Escaneie com o BADISCORD no celular e confirme o acesso por lá.</p>
+              <span class="auth-qr-status" id="authQrStatus" role="status" aria-live="polite">Preparando código seguro...</span>
+              <button type="button" class="auth-qr-refresh" id="btnRefreshAuthQr">Gerar novo código</button>
+            </aside>
           </div>
-
-          <aside class="auth-qr-panel" aria-label="Login com QR code">
-            <img class="auth-qr-image" id="authQrImage" alt="QR code temporário para entrar no BADISCORD">
-            <h3>Entrar com QR Code</h3>
-            <p>Escaneie com o BADISCORD no celular e confirme o login para entrar no computador.</p>
-            <span class="auth-qr-status" id="authQrStatus" role="status" aria-live="polite">Preparando código seguro...</span>
-            <button type="button" class="auth-qr-refresh" id="btnRefreshAuthQr">Gerar novo código</button>
-          </aside>
         </div>
       </div>
 
@@ -213,7 +249,10 @@
         <header class="guild-header" id="guildHeader">
           <div class="guild-header-left">
             <span class="guild-verified-badge" id="guildBadge">🍺</span>
-            <h2 id="guildTitle">Bar do BH</h2>
+            <div class="guild-title-stack">
+              <span class="server-header-eyebrow">SERVIDOR / COMUNIDADE</span>
+              <h2 id="guildTitle">Bar do BH</h2>
+            </div>
           </div>
           <span class="dropdown-icon" id="guildDropdownIcon">▼</span>
         </header>
@@ -302,20 +341,20 @@
       <!-- 3. ROLAGEM DE CANAIS DO SERVIDOR (Foto 1) -->
       <div class="channels-scroll" id="channelsScroll">
         <!-- SEÇÃO: CANAIS DE TEXTO -->
-        <div class="category-header">
+        <div class="category-header text-category-header">
           <div class="category-toggle-title">
             <span class="category-toggle">▼</span>
-            <span class="category-title">CANAIS DE TEXTO</span>
+            <span class="category-title">CONVERSAS</span>
           </div>
           <button class="add-channel-btn" id="btnAddTextChannel" title="Criar Canal de Texto">+</button>
         </div>
         <div id="textChannelsContainer" class="channels-group"></div>
 
         <!-- SEÇÃO: CANAIS DE VOZ -->
-        <div class="category-header">
+        <div class="category-header voice-category-header">
           <div class="category-toggle-title">
             <span class="category-toggle">▼</span>
-            <span class="category-title">CANAIS DE VOZ</span>
+            <span class="category-title">SALAS DE VOZ</span>
           </div>
           <button class="add-channel-btn" id="btnAddVoiceChannel" title="Criar Canal de Voz">+</button>
         </div>
@@ -324,7 +363,9 @@
 
       <section class="activity-voice-card" aria-label="Atividade do jogo e conexão de voz">
         <div class="game-activity-panel" id="gameActivityPanel">
-          <div class="game-activity-icon-box" id="gameActivityIconBox">🎮</div>
+          <div class="game-activity-icon-box" id="gameActivityIconBox">
+            <img src="icons/badiscord-192.png" alt="BADISCORD">
+          </div>
           <div class="game-activity-info">
             <span class="game-activity-title" id="gameActivityTitle">Detectando jogos...</span>
             <span class="game-activity-status" id="gameActivityStatus">Não Compartilhando</span>
@@ -627,18 +668,32 @@
         <header class="chat-header">
           <button type="button" class="mobile-back-button" aria-label="Voltar para canais">☰</button>
           <div class="chat-header-left">
-            <span class="chat-header-hash">#</span>
-            <h3 class="chat-channel-title" id="chatChannelTitle">regras-da-casa</h3>
+            <span class="chat-header-hash" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M5 5.75A2.75 2.75 0 0 1 7.75 3h8.5A2.75 2.75 0 0 1 19 5.75v7.5A2.75 2.75 0 0 1 16.25 16H11l-4.5 4v-4.25a2.75 2.75 0 0 1-1.5-2.5z" />
+                <path d="M8 8h8M8 11.5h5" />
+              </svg>
+            </span>
+            <div class="chat-channel-heading">
+              <span class="chat-channel-context" id="chatChannelContext">CONVERSA DO SERVIDOR</span>
+              <h3 class="chat-channel-title" id="chatChannelTitle">regras-da-casa</h3>
+            </div>
             <span class="chat-header-divider"></span>
             <span class="chat-channel-topic" id="chatChannelTopic">Regras da casa e avisos importantes</span>
           </div>
           <div class="chat-header-actions">
-            <button class="chat-header-btn" id="btnChatNotifications" title="Notificações do Canal">🔔</button>
-            <button class="chat-header-btn" id="btnChatPinned" title="Mensagens Fixadas">📌</button>
-            <button class="chat-header-btn" id="btnToggleMembers" title="Alternar Lista de Membros">👥</button>
+            <button class="chat-header-btn" id="btnChatNotifications" data-notification-mode="all" title="Notificações do Canal" aria-label="Notificações do canal">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+            </button>
+            <button class="chat-header-btn" id="btnChatPinned" title="Mensagens Fixadas" aria-label="Mensagens fixadas">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 8 0 1 5 2 2v2H5v-2l2-2 1-5ZM12 13v8" /></svg>
+            </button>
+            <button class="chat-header-btn" id="btnToggleMembers" title="Alternar Lista de Membros" aria-label="Alternar lista de membros">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM20 8v6M23 11h-6" /></svg>
+            </button>
             <div class="chat-search-box">
               <input type="text" placeholder="Buscar no canal..." class="chat-search-input">
-              <span>🔍</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 5 5" /></svg>
             </div>
           </div>
         </header>
@@ -655,9 +710,24 @@
         <!-- Área de Rolagem de Mensagens do Chat -->
         <div class="chat-messages-scroll" id="chatMessagesScroll">
           <div class="chat-welcome-box" id="chatWelcomeBox">
-            <div class="chat-welcome-icon">#</div>
-            <h2 id="chatWelcomeTitle">Bem-vindo a #regras-da-casa!</h2>
-            <p id="chatWelcomeDesc">Este é o início do canal #regras-da-casa.</p>
+            <div class="chat-welcome-content">
+              <div class="chat-welcome-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M5 5.75A2.75 2.75 0 0 1 7.75 3h8.5A2.75 2.75 0 0 1 19 5.75v7.5A2.75 2.75 0 0 1 16.25 16H11l-4.5 4v-4.25a2.75 2.75 0 0 1-1.5-2.5z" />
+                  <path d="M8 8h8M8 11.5h5" />
+                </svg>
+              </div>
+              <div class="chat-welcome-copy">
+                <span class="chat-welcome-kicker">BADISCORD <i></i> ESPAÇO DA COMUNIDADE</span>
+                <h2 id="chatWelcomeTitle">Você chegou ao canal regras-da-casa</h2>
+                <p id="chatWelcomeDesc">Um espaço para conversar, compartilhar ideias e ficar por dentro das novidades.</p>
+              </div>
+            </div>
+            <div class="chat-welcome-art" aria-hidden="true">
+              <div class="chat-welcome-orbit"></div>
+              <div class="chat-welcome-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <span>CONEXÃO ATIVA</span>
+            </div>
           </div>
           <div class="messages-list" id="messagesList"></div>
         </div>
@@ -756,12 +826,23 @@
     <!-- 4. BARRA LATERAL DIREITA: LISTA DE MEMBROS DO SERVIDOR (Foto 1) -->
     <aside class="members-sidebar" id="membersSidebar">
       <div class="members-panel-header">
-        <span>Disponíveis <strong id="availableMemberCount">0</strong></span>
+        <div class="members-panel-heading">
+          <span class="members-panel-eyebrow">BADISCORD / COMUNIDADE</span>
+          <span class="members-panel-title">Presença <strong id="availableMemberCount">0</strong></span>
+        </div>
         <div class="members-panel-actions">
           <button type="button" id="btnCreateMemberRole" title="Criar cargo" aria-label="Criar cargo" hidden>＋</button>
-          <button type="button" id="btnSpotifyConnect" title="Conectar Spotify" aria-label="Conectar Spotify">♫</button>
+          <button type="button" id="btnSpotifyConnect" data-connected="false" title="Conectar Spotify" aria-label="Conectar Spotify">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5c5.4-1.6 10.8-1 15.7 2M5.2 12c4.4-1.2 8.8-.7 12.8 1.6M6.3 15.4c3.4-.8 6.7-.4 9.7 1.2" /></svg>
+          </button>
           <button type="button" id="btnCloseMembers" class="members-close-button" title="Fechar lista de membros" aria-label="Fechar lista de membros">×</button>
         </div>
+      </div>
+      <div class="members-view-tabs" role="tablist" aria-label="Visualização da comunidade">
+        <button type="button" id="btnMembersPeopleTab" class="members-view-tab is-active" role="tab" aria-selected="true">Pessoas</button>
+        <button type="button" id="btnMembersActivityTab" class="members-view-tab" role="tab" aria-selected="false">
+          Atividade <span id="membersActivityCount">0</span>
+        </button>
       </div>
       <div class="members-scroll" id="membersScroll"></div>
     </aside>
