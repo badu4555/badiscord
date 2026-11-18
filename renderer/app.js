@@ -9,6 +9,7 @@ const LIVEKIT_URL = LIVEKIT_FALLBACK_URL;
 // Estado da Aplicação
 let currentRoom = null;
 let currentChannel = null;
+let connectedVoiceServerId = '';
 let previewVoiceChannel = null;
 let previewVoiceServerId = '';
 let localAudioTrack = null;
@@ -1706,11 +1707,10 @@ const currentChannelTitle = document.getElementById('currentChannelTitle');
 const connectionBadge = document.getElementById('connectionBadge');
 const voiceConnectionPanel = document.getElementById('voiceConnectionPanel');
 const vcChannelText = document.getElementById('vcChannelText');
-const vcPingValue = document.getElementById('vcPingValue');
-const stagePingPill = document.getElementById('stagePingPill');
+const vcSignalBox = document.getElementById('vcSignalBox');
+const vcReturnToVoice = document.getElementById('vcReturnToVoice');
 const vcPingBadge = document.getElementById('vcPingBadge');
 const pingDot = document.getElementById('pingDot');
-const vcSignalIcon = document.getElementById('vcSignalIcon');
 const emptyState = document.getElementById('emptyState');
 const emptyStateCopy = document.getElementById('emptyStateCopy');
 const voiceChannelPreview = document.getElementById('voiceChannelPreview');
@@ -1946,10 +1946,36 @@ function switchView(viewName) {
   if (voiceConnectedStrip) {
     if (currentChannel && viewName === 'chat') {
       voiceConnectedStrip.style.display = 'flex';
-      if (stripChannelName) stripChannelName.textContent = currentChannel;
+      updateVoiceConnectionLocation();
     } else {
       voiceConnectedStrip.style.display = 'none';
     }
+  }
+}
+
+function updateVoiceConnectionLocation() {
+  const server = servers.find((item) => item.id === connectedVoiceServerId);
+  const location = [currentChannel, server?.name].filter(Boolean).join(' / ');
+  if (vcChannelText) {
+    vcChannelText.textContent = location || 'Canal de voz';
+    vcChannelText.title = location ? `Voltar para ${location}` : 'Canal de voz';
+  }
+  if (vcReturnToVoice) {
+    vcReturnToVoice.setAttribute('aria-label', location ? `Voltar para ${location}` : 'Voltar ao canal de voz');
+  }
+  if (stripChannelName) stripChannelName.textContent = location || 'Canal de voz';
+}
+
+function returnToConnectedVoiceChannel() {
+  if (!currentChannel || !connectedVoiceServerId) return;
+  if (!servers.some((item) => item.id === connectedVoiceServerId)) {
+    showToast('O servidor do canal de voz não está mais disponível.', '⚠️');
+    return;
+  }
+  if (activeServerId !== connectedVoiceServerId || inHomeView) {
+    restoreServerView(connectedVoiceServerId);
+  } else {
+    switchView('voice');
   }
 }
 
@@ -2437,7 +2463,8 @@ function renderChannels(server) {
 
         const item = document.createElement('div');
         item.className = `channel-item voice-channel-item ${
-          currentChannel === chan || (!currentChannel && previewVoiceServerId === server.id && previewVoiceChannel === chan) ? 'active' : ''
+          (connectedVoiceServerId === server.id && currentChannel === chan) ||
+          (!currentChannel && previewVoiceServerId === server.id && previewVoiceChannel === chan) ? 'active' : ''
         }`;
         item.dataset.channel = chan;
         item.dataset.type = 'voice';
@@ -2483,9 +2510,9 @@ function renderChannels(server) {
           openChannelContextMenu(event, server, chan, 'voice', item);
         });
         item.addEventListener('click', () => {
-          if (currentChannel === chan && livekitRoom?.state === 'connected') {
+          if (connectedVoiceServerId === server.id && currentChannel === chan && livekitRoom?.state === 'connected') {
             switchView('voice');
-            const activeLive = getVoiceChannelParticipants(chan).find((member) => (
+            const activeLive = getVoiceChannelParticipants(chan, server.id).find((member) => (
               member.id !== 'self' && member.isStreaming
             ));
             const liveIdentity = activeLive?.screenShareParticipantId || activeLive?.id;
@@ -3011,7 +3038,7 @@ async function renameVoiceChannel(server, channelName, rawName) {
   }
   const updatedServer = servers.find((entry) => entry.id === server.id) || server;
   if (updatedServer.id === activeServerId) renderChannels(updatedServer);
-  if (currentChannel === channelName) await disconnectVoice(false);
+  if (connectedVoiceServerId === server.id && currentChannel === channelName) await disconnectVoice(false);
   showToast(`Canal renomeado para ${nextName}.`, '✅');
   return true;
 }
@@ -3054,7 +3081,7 @@ async function deleteVoiceChannel(server, channelName) {
     notificationMode: undefined,
     readAt: undefined
   });
-  if (currentChannel === channelName) await disconnectVoice(false);
+  if (connectedVoiceServerId === server.id && currentChannel === channelName) await disconnectVoice(false);
   closeChannelContextMenu();
   showToast(`Canal ${channelName} excluído.`, '🗑️');
   return true;
@@ -3385,6 +3412,8 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
         profileDecoration: profile.profileDecoration || 'none',
         profileWidget: profile.profileWidget || 'none',
         profileIcon: profile.profileIcon || 'none',
+        profileTags: profile.profileTags || [],
+        bannerColor: profile.bannerColor || '',
         game: profile.game || '',
         activityType: profile.activityType || (profile.game ? 'game' : ''),
         activityText: profile.activityText || profile.game || '',
@@ -3406,6 +3435,7 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
 
   const localMember = {
     id: 'self',
+    serverId,
     name: userProfile.displayName || 'Bads',
     tag: userProfile.tag || '0001',
     fullTag: `${userProfile.displayName || 'Bads'}#${userProfile.tag || '0001'}`,
@@ -3415,6 +3445,8 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
     profileDecoration: userProfile.profileDecoration || 'none',
     profileWidget: userProfile.profileWidget || 'none',
     profileIcon: userProfile.profileIcon || 'none',
+    profileTags: userProfile.profileTags || [],
+    bannerColor: userProfile.bannerColor || '',
     game: detectedGame?.name || '',
     activityType: detectedGame?.name ? 'game' : (spotifyActivity ? 'music' : ''),
     activityText: detectedGame?.name || spotifyActivity?.text || '',
@@ -3448,6 +3480,7 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
     const pingReport = voiceRttByIdentity.get(participant.identity);
     return applyUserNickname({
       id: participant.identity,
+      serverId,
       name,
       username: profile.username || '',
       tag: profile.tag || '0001',
@@ -3461,6 +3494,8 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
       profileDecoration: profile.profileDecoration || 'none',
       profileWidget: profile.profileWidget || 'none',
       profileIcon: profile.profileIcon || 'none',
+      profileTags: profile.profileTags || [],
+      bannerColor: profile.bannerColor || '',
       game: profile.game || '',
       activityType: profile.activityType || (profile.game ? 'game' : ''),
       activityText: profile.activityText || profile.game || '',
@@ -3673,7 +3708,8 @@ function syncGameVoiceOverlay(activity = null) {
     currentChannel &&
     livekitRoom?.state === 'connected'
   );
-  const participants = canShowOverlay ? getVoiceChannelParticipants().map((participant) => ({
+  const participants = canShowOverlay
+    ? getVoiceChannelParticipants(currentChannel, connectedVoiceServerId || activeServerId).map((participant) => ({
     id: participant.id,
     name: participant.name,
     avatarUrl: participant.avatarUrl || '',
@@ -3736,7 +3772,7 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
     userItem.dataset.channelName = channelName;
     userItem.dataset.serverId = serverId;
     userItem.id = member.id === 'self' ? 'sidebarLocalUser' : '';
-    if (member.id === 'self' && isLocalSpeaking) userItem.classList.add('speaking');
+    if (member.isSpeaking) userItem.classList.add('speaking');
 
     const avatar = document.createElement('div');
     avatar.className = 'channel-user-avatar';
@@ -3770,8 +3806,7 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
     targetList.appendChild(userItem);
     userItem.addEventListener('click', (event) => {
       event.stopPropagation();
-      const rect = userItem.getBoundingClientRect();
-      window.openVoiceUserContextMenu?.(rect.left + rect.width / 2, rect.top + rect.height / 2, member);
+      openMemberProfilePopover(member, event);
     });
     userItem.setAttribute('role', 'button');
     userItem.tabIndex = 0;
@@ -3779,8 +3814,7 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       event.stopPropagation();
-      const rect = userItem.getBoundingClientRect();
-      window.openVoiceUserContextMenu?.(rect.left + rect.width / 2, rect.top + rect.height / 2, member);
+      openMemberProfilePopover(member, event);
     });
   });
 }
@@ -3793,7 +3827,7 @@ function renderVoiceParticipants() {
   if (localCamTrack) localCamTrack.detach();
   participantsGrid.innerHTML = '';
 
-  const onlineMembers = getVoiceChannelParticipants();
+  const onlineMembers = getVoiceChannelParticipants(currentChannel, connectedVoiceServerId || activeServerId);
 
   onlineMembers.forEach((member) => {
     const card = document.createElement('div');
@@ -3801,7 +3835,7 @@ function renderVoiceParticipants() {
     card.dataset.participantIdentity = member.id;
     card.setAttribute('role', 'button');
     card.tabIndex = 0;
-    card.setAttribute('aria-label', `Opções para ${member.name}`);
+    card.setAttribute('aria-label', `Ver perfil de ${member.name}`);
     card.dataset.profileWidget = PROFILE_WIDGET_VALUES.has(member.profileWidget) ? member.profileWidget : 'none';
     if (typeof member.color === 'string' && /^#[\da-f]{6}$/i.test(member.color)) {
       card.style.setProperty('--participant-profile-accent', member.color);
@@ -3869,15 +3903,13 @@ function renderVoiceParticipants() {
     participantsGrid.appendChild(card);
     card.addEventListener('click', (event) => {
       event.stopPropagation();
-      const rect = card.getBoundingClientRect();
-      window.openVoiceUserContextMenu?.(event.clientX || rect.left + rect.width / 2, event.clientY || rect.top + rect.height / 2, member);
+      openMemberProfilePopover(member, event);
     });
     card.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       event.stopPropagation();
-      const rect = card.getBoundingClientRect();
-      window.openVoiceUserContextMenu?.(rect.left + rect.width / 2, rect.top + rect.height / 2, member);
+      openMemberProfilePopover(member, event);
     });
   });
 }
@@ -3957,17 +3989,19 @@ async function joinVoiceChannel(channelName) {
     return;
   }
 
+  const targetRoomName = getLiveKitRoomName(channelName, activeServerId);
   if (
     currentChannel === channelName &&
+    connectedVoiceServerId === activeServerId &&
     livekitRoom?.state === 'connected' &&
-    livekitRoom.name === getLiveKitRoomName(channelName)
+    livekitRoom.name === targetRoomName
   ) {
     stageContent?.classList.add('has-voice-channel');
     switchView('voice');
     return;
   }
 
-  if (currentChannel && currentChannel !== channelName) {
+  if (currentChannel && (currentChannel !== channelName || connectedVoiceServerId !== activeServerId)) {
     if (!suppressVoiceSwitchPrompt) {
       const shouldSwitch = await openVoiceSwitchConfirmation(channelName);
       if (!shouldSwitch) return;
@@ -3980,6 +4014,7 @@ async function joinVoiceChannel(channelName) {
   prepareVoiceNotificationAudio();
 
   currentChannel = channelName;
+  connectedVoiceServerId = activeServerId;
   activityVoiceCard?.classList.add('is-voice-connected');
   currentChannelTitle.textContent = channelName;
   switchView('voice');
@@ -3998,11 +4033,7 @@ async function joinVoiceChannel(channelName) {
 
   if (voiceConnectionPanel) {
     voiceConnectionPanel.style.display = 'flex';
-    const activeSrv = servers.find(s => s.id === activeServerId);
-    if (vcChannelText) {
-      vcChannelText.textContent = `${channelName} / ${activeSrv?.name || 'Servidor'}`;
-      vcChannelText.title = vcChannelText.textContent;
-    }
+    updateVoiceConnectionLocation();
   }
   startPingMonitor();
   renderVoiceParticipants();
@@ -5204,9 +5235,10 @@ if (btnChatEmoji && chatInputText) {
 
 if (btnJumpToVoice) {
   btnJumpToVoice.addEventListener('click', () => {
-    switchView('voice');
+    returnToConnectedVoiceChannel();
   });
 }
+vcReturnToVoice?.addEventListener('click', returnToConnectedVoiceChannel);
 
 // ==========================================
 // CRIAÇÃO DE CANAIS (Texto ou Voz)
@@ -7274,7 +7306,7 @@ const btnSendPopoverQuickChat = document.getElementById('btnSendPopoverQuickChat
 
 function getProfileFriendRequestHandle(member) {
   const memberId = String(member?.id || '');
-  const knownMember = (serverMembersByServer.get(activeServerId) || [])
+  const knownMember = (serverMembersByServer.get(member?.serverId || activeServerId) || [])
     .find((entry) => String(entry.id) === memberId);
   const knownFriend = friendsList.find((entry) => String(entry.id) === memberId);
   const username = member?.username || knownMember?.username || knownFriend?.username;
@@ -7323,7 +7355,7 @@ function openMemberProfilePopover(member, triggerEvent) {
       const image = document.createElement('img');
       image.src = member.avatarUrl;
       image.alt = '';
-      image.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover;';
+      image.style.cssText = 'width:100%;height:100%;border-radius:14px;object-fit:cover;';
       userPopoverAvatar.appendChild(image);
     } else {
       userPopoverAvatar.style.backgroundColor = member.color || member.bannerColor || '#5865F2';
@@ -8485,6 +8517,7 @@ async function disconnectVoice(playSound = true) {
   }
 
   currentChannel = null;
+  connectedVoiceServerId = '';
   activityVoiceCard?.classList.remove('is-voice-connected');
   clearVoiceChannelPreview();
   stageContent?.classList.remove('has-voice-channel', 'has-live-stream');
@@ -8645,30 +8678,24 @@ function createParticipantRttBadge(member) {
 }
 
 function updatePingUI(ms) {
-  const displayValue = ms === null ? '--' : String(ms);
-  if (vcPingValue) vcPingValue.textContent = displayValue;
-  if (stagePingPill) stagePingPill.textContent = `📶 ${displayValue} ms`;
-
   const vcPingTooltipText = document.getElementById('vcPingTooltipText');
   if (vcPingTooltipText) {
-    vcPingTooltipText.textContent = ms === null ? 'RTT do servidor de voz indisponível' : `${ms} ms até o servidor de voz`;
+    vcPingTooltipText.textContent = ms === null ? 'Ping de voz indisponível' : `Ping de voz: ${ms} ms`;
   }
 
-  let quality = ms === null ? 'ping-unavailable' : 'ping-good';
-  let icon = '📶';
-
-  if (ms !== null && ms > 120) {
-    quality = 'ping-bad';
-    icon = '⚠️';
-  } else if (ms !== null && ms > 60) {
-    quality = 'ping-medium';
-    icon = '📶';
+  const quality = ms === null ? 'ping-unavailable' : ms > 120 ? 'ping-bad' : ms > 60 ? 'ping-medium' : 'ping-good';
+  if (vcSignalBox) {
+    vcSignalBox.dataset.quality = quality;
+    vcSignalBox.setAttribute(
+      'aria-label',
+      ms === null ? 'Ping da conexão de voz indisponível' : `Ping da conexão de voz: ${ms} ms`
+    );
   }
-
-  if (vcPingBadge) vcPingBadge.className = `vc-ping-badge ${quality}`;
-  if (stagePingPill) stagePingPill.className = `ping-pill ${quality}`;
+  if (vcPingBadge) {
+    vcPingBadge.classList.remove('ping-good', 'ping-medium', 'ping-bad', 'ping-unavailable');
+    vcPingBadge.classList.add(quality);
+  }
   if (pingDot) pingDot.className = `status-dot ${quality}`;
-  if (vcSignalIcon) vcSignalIcon.textContent = icon;
   if (participantsGrid) updateParticipantRttBadge('self', ms);
 }
 
@@ -10048,7 +10075,7 @@ function applyUserProfile() {
   renderProfileTags(document.getElementById('presenceClanBadges'), userProfile.profileTags);
 
   if (currentChannel) {
-    updateSidebarChannelUsers(currentChannel);
+    updateSidebarChannelUsers(currentChannel, connectedVoiceServerId || activeServerId);
   }
   updateVoiceSelfCard();
 }
@@ -11796,12 +11823,14 @@ window.addEventListener('keydown', (event) => {
   let vctxTargetUser = null; // { name, tag, ... }
 
   function openVoiceUserContextMenu(x, y, userData) {
+    const userServerId = userData?.serverId || connectedVoiceServerId || activeServerId;
     const serverMember = userData?.id && userData.id !== 'self'
-      ? (serverMembersByServer.get(activeServerId) || []).find((member) => String(member.id) === String(userData.id))
+      ? (serverMembersByServer.get(userServerId) || []).find((member) => String(member.id) === String(userData.id))
       : null;
     vctxTargetUser = {
       ...(serverMember || {}),
       ...(userData || {}),
+      serverId: userServerId,
       roleId: userData?.roleId || serverMember?.roleId || '',
       groupName: userData?.groupName || serverMember?.groupName || 'Disponíveis'
     };
@@ -12122,7 +12151,8 @@ window.addEventListener('keydown', (event) => {
     e.preventDefault();
     const card = e.target.closest('.participant-card');
     if (!card) return;
-    const member = getVoiceChannelParticipants().find((participant) => participant.id === card.dataset.participantIdentity);
+    const member = getVoiceChannelParticipants(currentChannel, connectedVoiceServerId || activeServerId)
+      .find((participant) => participant.id === card.dataset.participantIdentity);
     if (member) openVoiceUserContextMenu(e.clientX, e.clientY, member);
   });
 
