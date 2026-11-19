@@ -3564,7 +3564,8 @@ function renderLiveIndicator(member, includePreview = true) {
     const watchButton = document.createElement('button');
     watchButton.type = 'button';
     watchButton.className = 'live-watch-button';
-    watchButton.textContent = 'Assistir';
+    watchButton.textContent = '▶';
+    watchButton.title = `Assistir à transmissão de ${member.name}`;
     watchButton.setAttribute('aria-label', `Assistir à transmissão de ${member.name}`);
     watchButton.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -3800,7 +3801,7 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
     userItem.appendChild(avatar);
     userItem.appendChild(name);
     if (isCurrentVoiceRoom) userItem.appendChild(createParticipantRttBadge(member));
-    const liveIndicator = renderLiveIndicator(member);
+    const liveIndicator = renderLiveIndicator(member, false);
     if (liveIndicator) userItem.appendChild(liveIndicator);
     userItem.appendChild(micIcon);
     targetList.appendChild(userItem);
