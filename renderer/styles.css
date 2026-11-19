@@ -593,34 +593,33 @@ body {
 .live-watch-button-badge {
   position: static;
   width: auto;
-  height: 18px;
-  min-height: 18px;
+  height: 16px;
+  min-height: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 3px 7px;
-  border: 0;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 91, 98, 0.24);
   border-radius: 999px;
-  background: #d83b43;
-  font-size: 9px;
-  letter-spacing: 0.035em;
+  background: rgba(218, 55, 60, 0.12);
+  color: #ff858a;
+  font-size: 8px;
+  letter-spacing: 0.02em;
   line-height: 1;
 }
 
 .live-watch-button-badge::before {
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 7px currentColor;
   content: "";
 }
 
 .live-watch-button-badge:hover {
-  transform: translateY(-1px);
-  border-color: transparent;
-  background: #ed454d;
+  border-color: rgba(255, 91, 98, 0.42);
+  background: rgba(218, 55, 60, 0.2);
 }
 
 .live-viewer-count {
@@ -750,30 +749,6 @@ body {
   justify-content: center;
   border-radius: 6px;
   font-size: 11px;
-}
-
-.vc-ping-tooltip {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  background: rgba(0, 0, 0, 0.9);
-  color: #fff;
-  border-radius: 6px;
-  padding: 4px 7px;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1.2;
-  opacity: 0;
-  transform: translateY(4px);
-  transition: opacity 0.15s ease, transform 0.15s ease;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-.vc-rtc-waves-btn:hover .vc-ping-tooltip,
-.vc-rtc-waves-btn:focus-within .vc-ping-tooltip {
-  opacity: 1;
-  transform: translateY(0);
 }
 
 .stage-content {
@@ -922,13 +897,13 @@ body {
 
 .stage-content.has-live-stream {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: max-content;
-  align-items: start;
-  justify-items: stretch;
-  align-content: start;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) max-content;
+  align-items: stretch;
+  justify-items: center;
+  align-content: stretch;
   justify-content: stretch;
-  gap: 8px;
+  gap: 10px;
   padding: 8px 8px 80px;
   overflow: auto;
 }
@@ -936,35 +911,41 @@ body {
 .stage-content.has-live-stream > .stream-viewer-wrapper {
   grid-column: 1;
   grid-row: 1;
-  width: 100%;
+  width: min(100%, 1120px, calc((100vh - 260px) * 1.7778));
+  width: min(100%, 1120px, calc((100dvh - 260px) * 1.7778));
   height: auto;
   min-width: 0;
   min-height: 0;
-  flex: none;
+  max-height: 100%;
   aspect-ratio: 16 / 9;
+  align-self: center;
+  flex: none;
 }
 
 .stage-content.has-live-stream > .participants-grid {
-  display: grid !important;
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: start;
+  grid-column: 1;
+  grid-row: 2;
+  display: flex !important;
+  flex-flow: row nowrap;
+  justify-self: center;
   align-self: start;
-  width: 100%;
+  width: min(100%, 1120px);
   height: auto;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr);
-  grid-auto-rows: max-content;
-  align-content: start;
+  max-height: 108px;
+  justify-content: center;
+  align-items: flex-start;
   gap: 8px;
   margin: 0;
-  overflow: visible;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .stage-content.has-live-stream > .participants-grid > .participant-card {
-  width: 100%;
-  max-width: none;
+  flex: 0 0 clamp(144px, 18vw, 180px);
+  width: clamp(144px, 18vw, 180px);
+  max-width: clamp(144px, 18vw, 180px);
   height: auto;
   min-height: 0;
   aspect-ratio: 16 / 9;
@@ -1002,13 +983,13 @@ body {
 
 .stage-content.has-live-stream > .participants-grid > .participant-card:not(.has-camera) .participant-avatar-lg {
   position: absolute;
-  top: 50%;
-  left: 50%;
+  inset: 0;
+  margin: auto;
   width: clamp(64px, 16%, 90px);
   height: auto;
   aspect-ratio: 1;
   flex: none;
-  transform: translate(-50%, -50%);
+  transform: none;
   border: 3px solid rgba(255, 255, 255, 0.14);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
 }
@@ -1056,8 +1037,29 @@ body {
 }
 
 .stage-content.has-live-stream > .participants-grid > .participant-card .participant-rtt,
-.stage-content.has-live-stream > .participants-grid > .participant-card .live-indicator {
+.stage-content.has-live-stream > .participants-grid > .participant-card .participant-name-tag .live-indicator {
   display: none;
+}
+
+.stage-content.has-live-stream > .participants-grid > .participant-card > .live-indicator {
+  position: absolute;
+  z-index: 3;
+  right: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  height: auto;
+}
+
+.stage-content.has-live-stream > .participants-grid > .participant-card > .live-indicator .live-watch-button-badge {
+  height: 18px;
+  min-height: 18px;
+  padding: 4px 8px;
+  border: 0;
+  background: #d83b43;
+  color: #fff;
+  font-size: 8px;
 }
 
 .stage-content.has-live-stream .participant-card {
@@ -1136,9 +1138,10 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(0, 0, 0, 0.75);
-  padding: 6px 12px;
-  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.62);
+  padding: 5px 8px;
+  border-radius: 10px;
   z-index: 10;
   font-size: 12px;
   font-weight: 700;
@@ -1201,34 +1204,25 @@ html.badiscord-android-webview .stream-leave-call-btn {
 .live-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 9px;
-  border: 1px solid rgba(255, 91, 98, 0.48);
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 91, 98, 0.32);
   border-radius: 999px;
-  background: rgba(218, 55, 60, 0.2);
+  background: rgba(218, 55, 60, 0.12);
   color: #ff777d;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   line-height: 1;
-  box-shadow: 0 0 14px rgba(218, 55, 60, 0.16);
 }
 
 .live-pill::before {
-  width: 7px;
-  height: 7px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: #ff5b62;
-  box-shadow: 0 0 0 3px rgba(255, 91, 98, 0.16);
+  box-shadow: 0 0 0 2px rgba(255, 91, 98, 0.12);
   content: "";
-  animation: live-pill-pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes live-pill-pulse {
-  50% {
-    opacity: 0.55;
-    box-shadow: 0 0 0 5px rgba(255, 91, 98, 0.08);
-  }
 }
 
 .res-pill {
@@ -1236,8 +1230,8 @@ html.badiscord-android-webview .stream-leave-call-btn {
   border-radius: 999px;
   background: var(--bg-secondary);
   color: var(--text-normal);
-  padding: 4px 9px;
-  font-size: 10px;
+  padding: 3px 7px;
+  font-size: 9px;
   font-weight: 800;
 }
 
@@ -5486,7 +5480,7 @@ button.profile-tag-chip:hover {
 .vc-signal-box:focus-visible .vc-ping-tooltip {
   opacity: 1;
   visibility: visible;
-  transform: translate(0, -50%);
+  transform: translateY(0);
 }
 
 .vc-signal-box:hover,
@@ -5510,9 +5504,9 @@ button.profile-tag-chip:hover {
 
 .vc-ping-tooltip {
   position: absolute;
-  top: 50%;
-  left: calc(100% + 8px);
-  transform: translate(-4px, -50%);
+  top: calc(100% + 8px);
+  left: 0;
+  transform: translateY(-4px);
   background: #111214;
   color: #fff;
   border: 1px solid rgba(35, 165, 90, 0.28);
@@ -5532,12 +5526,11 @@ button.profile-tag-chip:hover {
 .vc-ping-tooltip::after {
   content: '';
   position: absolute;
-  top: 50%;
-  left: -9px;
-  transform: translateY(-50%);
-  border-width: 5px 5px 5px 0;
+  top: -9px;
+  left: 12px;
+  border-width: 0 5px 5px;
   border-style: solid;
-  border-color: transparent #111214 transparent transparent;
+  border-color: transparent transparent #111214;
 }
 
 .vc-signal-box svg {
@@ -11664,25 +11657,27 @@ button.profile-tag-chip:hover {
   }
 
   .stage-content.has-live-stream > .participants-grid {
-    display: grid !important;
+    display: flex !important;
     grid-column: 1;
     grid-row: 2;
-    justify-self: stretch;
+    flex-flow: row nowrap;
+    justify-self: center;
     align-self: start;
     width: 100%;
     height: auto;
     min-height: 0;
     max-height: none;
-    grid-template-columns: minmax(0, 1fr);
-    grid-auto-rows: max-content;
-    align-content: start;
+    justify-content: flex-start;
+    align-items: flex-start;
     margin: 0;
-    overflow: visible;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .stage-content.has-live-stream > .participants-grid > .participant-card {
-    width: 100%;
-    max-width: none;
+    flex: 0 0 clamp(124px, 38vw, 164px);
+    width: clamp(124px, 38vw, 164px);
+    max-width: clamp(124px, 38vw, 164px);
     min-height: 0;
   }
 
@@ -17008,6 +17003,13 @@ button.profile-tag-chip:hover {
 .participant-card:not(.has-camera) .participant-name-tag {
   gap: 7px;
   font-size: 12px;
+}
+
+.participant-name-tag .live-watch-button-badge {
+  height: 16px;
+  min-height: 16px;
+  padding: 2px 6px;
+  font-size: 8px;
 }
 
 .participant-card:not(.has-camera) .participant-mic-icon {

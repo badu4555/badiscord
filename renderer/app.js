@@ -3638,6 +3638,7 @@ async function watchLiveStream(participantId, channelName = currentChannel, serv
     if (participantsGrid) participantsGrid.style.display = 'grid';
     watchingLiveParticipantId = participantId;
     stageContent?.classList.add('has-live-stream');
+    renderVoiceParticipants();
     showStreamOverlayControls();
     switchView('voice');
     remoteVideoPlayer.play().catch((error) => {
@@ -3673,7 +3674,10 @@ function stopWatchingLive() {
   const viewerCount = document.getElementById('liveViewerCount');
   if (viewerCount && !isLocalStreamer) viewerCount.textContent = '👁 0';
   if (btnStopStreamDirect) btnStopStreamDirect.style.display = '';
-  if (participantsGrid && currentChannel && !isLocalStreamer) participantsGrid.style.display = 'grid';
+  if (participantsGrid && currentChannel && !isLocalStreamer) {
+    participantsGrid.style.display = 'grid';
+    renderVoiceParticipants();
+  }
 }
 
 function refreshVoiceParticipantViews() {
@@ -3883,7 +3887,12 @@ function renderVoiceParticipants() {
     tag.appendChild(nameSpan);
     tag.appendChild(createParticipantRttBadge(member));
     const liveIndicator = renderLiveIndicator(member, false);
-    if (liveIndicator) tag.appendChild(liveIndicator);
+    const isWatchingThisLive = watchingLiveParticipantId &&
+      (member.screenShareParticipantId || member.id) === watchingLiveParticipantId;
+    if (liveIndicator) {
+      if (isWatchingThisLive) card.appendChild(liveIndicator);
+      else tag.appendChild(liveIndicator);
+    }
 
     if (member.game) {
       const gamePill = document.createElement('span');
