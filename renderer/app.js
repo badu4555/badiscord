@@ -3559,12 +3559,12 @@ function renderLiveIndicator(member, includePreview = true) {
   const badge = document.createElement('span');
   badge.className = 'live-indicator-badge';
   badge.textContent = `● AO VIVO ${member.viewerCount || 0}`;
-  indicator.appendChild(badge);
+  if (includePreview) indicator.appendChild(badge);
   if (member.id !== 'self') {
     const watchButton = document.createElement('button');
     watchButton.type = 'button';
-    watchButton.className = 'live-watch-button';
-    watchButton.textContent = '▶';
+    watchButton.className = `live-watch-button${includePreview ? '' : ' live-watch-button-badge'}`;
+    watchButton.textContent = includePreview ? '▶' : 'AO VIVO';
     watchButton.title = `Assistir à transmissão de ${member.name}`;
     watchButton.setAttribute('aria-label', `Assistir à transmissão de ${member.name}`);
     watchButton.addEventListener('click', (event) => {
@@ -3873,10 +3873,10 @@ function renderVoiceParticipants() {
       avatar.textContent = (member.name || 'U')[0].toUpperCase();
     }
     applyProfileAvatarCustomization(avatar, member);
+    card.appendChild(avatar);
 
     const tag = document.createElement('div');
     tag.className = 'participant-name-tag';
-    tag.appendChild(avatar);
 
     const nameSpan = document.createElement('span');
     nameSpan.textContent = member.name;
