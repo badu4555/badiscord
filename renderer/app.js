@@ -2899,6 +2899,37 @@ function markChannelAsRead(server, channelName, channelType) {
   showToast(`Canal ${channelName} marcado como lido.`, '✓');
 }
 
+function markServerAsRead(server) {
+  if (!server?.id) return false;
+  const accountId = String(authenticatedAccount?.id || 'guest');
+  const readAt = Date.now();
+  const channels = [
+    ...(Array.isArray(server.textChannels) ? server.textChannels.map((name) => ['text', name]) : []),
+    ...(Array.isArray(server.voiceChannels) ? server.voiceChannels.map((name) => ['voice', name]) : [])
+  ];
+  const nextStore = { ...getChannelPreferencesStore() };
+
+  for (const [channelType, channelName] of channels) {
+    const key = getChannelPreferenceKey(server.id, channelType, channelName);
+    nextStore[key] = { ...(nextStore[key] || {}), readAt };
+  }
+
+  try {
+    localStorage.setItem(`${CHANNEL_PREFERENCES_STORAGE_PREFIX}${accountId}`, JSON.stringify(nextStore));
+    channelPreferencesStore = nextStore;
+    channelPreferencesAccountId = accountId;
+  } catch (error) {
+    console.error('Não foi possível salvar as preferências de canais:', error);
+    showToast('Não foi possível marcar o servidor como lido neste dispositivo.', '⚠️');
+    return false;
+  }
+
+  if (server.id === activeServerId) {
+    document.querySelectorAll('.channel-item.is-unread').forEach((item) => item.classList.remove('is-unread'));
+  }
+  return true;
+}
+
 function getChannelShareLink(server, channelName, channelType) {
   const url = new URL(window.location.href);
   url.searchParams.delete('invite');
@@ -5432,28 +5463,21 @@ if (menuItemCreateChannel) {
 if (menuItemApps) {
   menuItemApps.addEventListener('click', () => {
     closeServerDropdown();
-    showToast('🧩 Diretório de Apps: Bots de Música e Moderação ativos!', '🧩');
+    openSettingsTab('apps');
   });
 }
 
 if (menuItemNotifications) {
   menuItemNotifications.addEventListener('click', () => {
     closeServerDropdown();
-    showToast('🔔 Notificações ativadas para todas as mensagens.', '🔔');
+    openSettingsTab('notifications');
   });
 }
 
 if (menuItemPrivacy) {
   menuItemPrivacy.addEventListener('click', () => {
     closeServerDropdown();
-    showToast('🔒 Configurações de privacidade salvas com sucesso.', '🔒');
-  });
-}
-
-if (menuItemLeave) {
-  menuItemLeave.addEventListener('click', () => {
-    closeServerDropdown();
-    showToast('Você é o proprietário desta comunidade.', '👑');
+    openSettingsTab('privacy');
   });
 }
 
@@ -5566,7 +5590,7 @@ if (dockBtnStream) {
 
 function openActivitiesToast() {
   playSoundEffect('bell');
-  showToast('🚀 Atividades BADISCORD: Watch Together e Mini-jogos ativos na sala!', '🚀');
+  showToast('Atividades e mini-jogos ainda não estão disponíveis nesta versão.', 'ℹ️');
 }
 if (dockBtnActivities) dockBtnActivities.addEventListener('click', openActivitiesToast);
 if (btnStageActivities) btnStageActivities.addEventListener('click', openActivitiesToast);
@@ -7732,7 +7756,10 @@ const ctxMarkAsRead = document.getElementById('ctxMarkAsRead');
 if (ctxMarkAsRead) {
   ctxMarkAsRead.addEventListener('click', () => {
     closeServerContextMenu();
-    showToast('Servidor marcado como lido.', '✅');
+    if (!contextTargetServer) return;
+    if (markServerAsRead(contextTargetServer)) {
+      showToast('Servidor marcado como lido.', '✅');
+    }
   });
 }
 
@@ -7760,7 +7787,7 @@ const ctxNotificationSettings = document.getElementById('ctxNotificationSettings
 if (ctxNotificationSettings) {
   ctxNotificationSettings.addEventListener('click', () => {
     closeServerContextMenu();
-    showToast('Configurações de notificação salvas para este servidor.', '🔔');
+    openSettingsTab('notifications');
   });
 }
 
@@ -10249,10 +10276,62 @@ function switchSettingsTab(tabName) {
   const targetPane = document.getElementById(`pane-${tabName}`);
   if (targetPane) {
     targetPane.style.display = 'block';
+  } else {
+    const fallbackPane = document.getElementById('pane-settings-fallback');
+    const fallbackTitle = document.getElementById('settingsFallbackTitle');
+    const fallbackDescription = document.getElementById('settingsFallbackDescription');
+    const fallbackAction = document.getElementById('settingsFallbackAction');
+    const fallbackContent = {
+      privacy: {
+        title: 'Dados e privacidade',
+        description: 'A proteção de privacidade ao minimizar uma transmissão está nas configurações de Transmissão.',
+        actionTab: 'stream',
+        actionLabel: 'Abrir configurações de transmissão'
+      },
+      permissions: {
+        title: 'Permissões de mensagens',
+        description: 'As permissões de microfone, câmera e dispositivos de áudio ficam nas configurações de Voz.',
+        actionTab: 'voice',
+        actionLabel: 'Abrir configurações de voz'
+      },
+      boost: {
+        title: 'Identidade do servidor',
+        description: 'Vantagens de impulso de servidor ainda não estão disponíveis nesta versão.',
+        actionTab: 'decorations',
+        actionLabel: 'Ver personalizações gratuitas'
+      },
+      'gift-inventory': {
+        title: 'Itens disponíveis',
+        description: 'Consulte as personalizações gratuitas disponíveis na loja comunitária.',
+        actionTab: 'subscriptions',
+        actionLabel: 'Abrir loja comunitária'
+      },
+      apps: {
+        title: 'Diretório de Apps',
+        description: 'O diretório de aplicativos de terceiros ainda não está disponível. O painel de efeitos sonoros é um recurso disponível no BADISCORD.',
+        actionTab: 'soundboard',
+        actionLabel: 'Abrir painel de efeitos sonoros'
+      }
+    }[tabName] || {
+      title: 'Seção indisponível',
+      description: 'Esta seção ainda não possui configurações disponíveis nesta versão.'
+    };
+
+    if (fallbackPane) fallbackPane.style.display = 'block';
+    if (fallbackTitle) fallbackTitle.textContent = fallbackContent.title;
+    if (fallbackDescription) fallbackDescription.textContent = fallbackContent.description;
+    if (fallbackAction) {
+      fallbackAction.hidden = !fallbackContent.actionTab;
+      fallbackAction.style.display = fallbackContent.actionTab ? 'inline-flex' : 'none';
+      fallbackAction.textContent = fallbackContent.actionLabel || '';
+      fallbackAction.dataset.tab = fallbackContent.actionTab || '';
+    }
   }
 
   const categoryTitles = {
     account: 'Perfil do Usuário',
+    privacy: 'Dados e privacidade',
+    permissions: 'Permissões de mensagens',
     decorations: 'Decorações de perfil',
     voice: 'Voz e vídeo',
     stream: 'Transmissão e Lives',
@@ -10261,7 +10340,10 @@ function switchSettingsTab(tabName) {
     appearance: 'Aparência',
     notifications: 'Notificações',
     nitro: 'Personalização',
+    boost: 'Identidade do servidor',
     subscriptions: 'Loja gratuita',
+    'gift-inventory': 'Itens disponíveis',
+    apps: 'Diretório de Apps',
     advanced: 'Avançado'
   };
 
@@ -10270,6 +10352,11 @@ function switchSettingsTab(tabName) {
     settingsHeaderCategory.textContent = categoryTitles[tabName] || 'Configurações';
   }
 }
+
+document.getElementById('settingsFallbackAction')?.addEventListener('click', (event) => {
+  const tab = event.currentTarget.dataset.tab;
+  if (tab) switchSettingsTab(tab);
+});
 
 function applyProfileAvatarCustomization(target, profile = {}) {
   if (!target) return;
@@ -12534,15 +12621,68 @@ window.addEventListener('keydown', (event) => {
   }
 
   function switchServerSettingsTab(tabName) {
+    if (tabName === 'members') {
+      closeServerSettings();
+      if (membersSidebar) {
+        membersSidebar.style.display = 'flex';
+        membersSidebar.classList.add('is-open');
+        [btnToggleMembers, btnToggleVoiceMembers].filter(Boolean).forEach(button => {
+          button.setAttribute('aria-expanded', 'true');
+        });
+      }
+      return;
+    }
+
+    if (tabName === 'invites') {
+      closeServerSettings();
+      openInviteModal(currentSrvEditing);
+      return;
+    }
+
+    if (tabName === 'soundboard') {
+      closeServerSettings();
+      openSettingsTab('soundboard');
+      return;
+    }
+
     document.querySelectorAll('.srv-nav-item').forEach(item => {
       item.classList.toggle('active', item.dataset.srvTab === tabName);
     });
 
     const paneProfile = document.getElementById('paneSrvProfile');
     const paneTag = document.getElementById('paneSrvTag');
+    const paneUnavailable = document.getElementById('paneSrvUnavailable');
+    const unavailableTitle = document.getElementById('srvUnavailableTitle');
+    const unavailableDescription = document.getElementById('srvUnavailableDescription');
+    const tabLabels = {
+      engagement: 'Engajamento',
+      boost: 'Vantagens de Impulso',
+      emoji: 'Emoji',
+      stickers: 'Figurinhas',
+      roles: 'Cargos',
+      access: 'Acesso',
+      integrations: 'Integrações',
+      apps: 'Diretório de Apps',
+      safety: 'Configurações de Segurança',
+      audit: 'Registro de auditoria',
+      bans: 'Banimentos',
+      community: 'Visão geral da comunidade',
+      onboarding: 'Onboarding',
+      analytics: 'Análises do servidor',
+      welcome: 'Tela de Boas-vindas'
+    };
 
     if (paneProfile) paneProfile.style.display = tabName === 'profile' ? 'flex' : 'none';
     if (paneTag) paneTag.style.display = tabName === 'tag' ? 'flex' : 'none';
+    const hasImplementedPane = tabName === 'profile' || tabName === 'tag';
+    if (paneUnavailable) paneUnavailable.style.display = hasImplementedPane ? 'none' : 'flex';
+    if (!hasImplementedPane) {
+      const label = tabLabels[tabName] || 'Configuração do servidor';
+      if (unavailableTitle) unavailableTitle.textContent = label;
+      if (unavailableDescription) {
+        unavailableDescription.textContent = 'Esta seção ainda não possui ações implementadas. Use Perfil do servidor ou Tag do servidor, que estão disponíveis nesta versão.';
+      }
+    }
   }
 
   document.querySelectorAll('.srv-nav-item').forEach(item => {

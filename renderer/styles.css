@@ -1233,13 +1233,14 @@ body {
   left: 12px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  width: fit-content;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(0, 0, 0, 0.62);
-  padding: 5px 8px;
-  border-radius: 10px;
+  padding: 4px 6px;
+  border-radius: 8px;
   z-index: 10;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: #fff;
   backdrop-filter: blur(4px);
@@ -1256,10 +1257,11 @@ body {
 }
 
 .stream-header-viewers {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
 }
 
 #streamerName {
+  max-width: clamp(88px, 18vw, 220px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1332,13 +1334,17 @@ html.badiscord-android-webview .stream-leave-call-btn {
 }
 
 .stream-loopback-badge {
+  max-width: clamp(120px, 22vw, 280px);
   background: rgba(240, 178, 50, 0.2);
   color: #f0b232;
   border: 1px solid rgba(240, 178, 50, 0.4);
-  padding: 2px 8px;
+  padding: 2px 6px;
   border-radius: 4px;
   font-size: 10px;
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ==========================================
@@ -1408,8 +1414,7 @@ html.badiscord-android-webview .stream-leave-call-btn {
 #streamViewerWrapper.electron-fullscreen .stream-header-tag {
   top: max(12px, env(safe-area-inset-top));
   left: max(12px, env(safe-area-inset-left));
-  right: max(12px, env(safe-area-inset-right));
-  flex-wrap: wrap;
+  max-width: calc(100% - 24px);
 }
 
 #streamViewerWrapper:fullscreen .stream-player-controls,
@@ -3602,8 +3607,6 @@ html.badiscord-android-webview .stream-leave-call-btn {
   height: 8px;
   border-radius: 50%;
   background: #fff;
-}
-
 }
 
 .confirm-btn:disabled {
@@ -11826,46 +11829,40 @@ button.profile-tag-chip:hover {
   .stream-header-tag {
     top: 8px;
     left: 8px;
-    right: 8px;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-areas:
-      "quality viewers"
-      "badge badge";
-    gap: 6px;
-    width: auto;
-    max-width: none;
-    padding: 7px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    width: fit-content;
+    max-width: calc(100% - 16px);
+    padding: 5px 6px;
     border-radius: 8px;
-    font-size: 11px;
+    font-size: 10px;
   }
 
   html.badiscord-android-webview .stream-header-tag {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas:
-      "quality viewers leave"
-      "badge badge badge";
+    padding: 4px 5px;
   }
 
   .stream-header-quality {
-    grid-area: quality;
-    gap: 5px;
+    gap: 4px;
   }
 
   .stream-header-viewers {
-    grid-area: viewers;
-    gap: 5px;
+    gap: 4px;
+  }
+
+  #streamerName {
+    max-width: clamp(72px, 26vw, 160px);
   }
 
   .stream-leave-call-btn {
-    grid-area: leave;
     min-height: 36px;
     padding: 4px 7px;
     font-size: 10px;
   }
 
   .stream-loopback-badge {
-    grid-area: badge;
+    max-width: clamp(104px, 34vw, 180px);
   }
 
   .voice-self-card {
