@@ -3915,7 +3915,7 @@ function renderVoiceParticipants() {
     participantsGrid.appendChild(card);
     card.addEventListener('click', (event) => {
       event.stopPropagation();
-      if (watchingLiveParticipantId) {
+      if (isStreamViewSizeToggleEnabled()) {
         toggleStreamViewSize();
         return;
       }
@@ -3925,7 +3925,7 @@ function renderVoiceParticipants() {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       event.stopPropagation();
-      if (watchingLiveParticipantId) {
+      if (isStreamViewSizeToggleEnabled()) {
         toggleStreamViewSize();
         return;
       }
@@ -8967,8 +8967,15 @@ function setStreamViewCompact(compact) {
   }
 }
 
+function isStreamViewSizeToggleEnabled() {
+  return Boolean(
+    stageContent?.classList.contains('has-live-stream') &&
+    (watchingLiveParticipantId || isLocalStreamer)
+  );
+}
+
 function toggleStreamViewSize() {
-  if (!watchingLiveParticipantId || !stageContent?.classList.contains('has-live-stream')) return;
+  if (!isStreamViewSizeToggleEnabled()) return;
   setStreamViewCompact(!stageContent.classList.contains('stream-compact'));
   showStreamOverlayControls();
 }
@@ -9239,6 +9246,7 @@ async function stopCurrentStream() {
     remoteVideoPlayer.muted = true;
   }
   watchingLiveParticipantId = '';
+  setStreamViewCompact(false);
   if (streamViewerWrapper) {
     streamViewerWrapper.style.display = 'none';
     streamViewerWrapper.classList.remove('controls-hidden');
@@ -9663,6 +9671,7 @@ async function startStreamWithSourceId(sourceId, sourceTitle) {
     remoteVideoPlayer.defaultMuted = true;
     streamViewerWrapper.style.display = 'flex';
     stageContent?.classList.add('has-live-stream');
+    setStreamViewCompact(true);
     showStreamOverlayControls();
 
     if (participantsGrid) participantsGrid.style.display = 'grid';
