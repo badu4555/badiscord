@@ -311,7 +311,7 @@ ipcMain.handle('desktop-update:install', (event) => {
   if (!isUpdateWindow(event) || updateState.status !== 'downloaded') {
     throw new Error('A atualização ainda não terminou de baixar.');
   }
-  autoUpdater.quitAndInstall();
+  autoUpdater.quitAndInstall(true, true);
 });
 
 ipcMain.handle('desktop-update:close', (event) => {

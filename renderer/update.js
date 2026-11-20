@@ -24,7 +24,7 @@ function renderUpdateState(state) {
       break;
     case 'available':
       title.textContent = 'Atualização disponível';
-      message.textContent = 'Baixe a nova versão para manter o BADISCORD atualizado.';
+      message.textContent = 'O BADISCORD vai baixar a atualização sem abrir o instalador.';
       primaryAction.textContent = 'Atualizar agora';
       break;
     case 'downloading': {
@@ -39,7 +39,7 @@ function renderUpdateState(state) {
     }
     case 'downloaded':
       title.textContent = 'Atualização pronta';
-      message.textContent = 'A atualização foi baixada. Reinicie o BADISCORD para concluir.';
+      message.textContent = 'Reinicie para aplicar a atualização. O BADISCORD abrirá novamente em seguida.';
       primaryAction.textContent = 'Reiniciar e atualizar';
       break;
     case 'error':
