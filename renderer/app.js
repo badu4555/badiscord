@@ -3915,12 +3915,20 @@ function renderVoiceParticipants() {
     participantsGrid.appendChild(card);
     card.addEventListener('click', (event) => {
       event.stopPropagation();
+      if (watchingLiveParticipantId) {
+        toggleStreamViewSize();
+        return;
+      }
       openMemberProfilePopover(member, event);
     });
     card.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       event.stopPropagation();
+      if (watchingLiveParticipantId) {
+        toggleStreamViewSize();
+        return;
+      }
       openMemberProfilePopover(member, event);
     });
   });

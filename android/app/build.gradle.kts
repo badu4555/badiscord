@@ -21,8 +21,8 @@ android {
         applicationId = "com.badiscord.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 37
-        versionName = "1.0.42"
+        versionCode = 38
+        versionName = "1.0.43"
     }
 
     buildFeatures {
