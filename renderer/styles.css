@@ -1377,6 +1377,15 @@ html.badiscord-android-webview .stream-leave-call-btn {
   visibility: hidden;
 }
 
+@media (hover: hover) {
+  .stream-viewer-wrapper.controls-hidden:hover .stream-player-controls,
+  .stream-viewer-wrapper.controls-hidden:hover .stream-header-tag {
+    opacity: 1;
+    pointer-events: auto;
+    visibility: visible;
+  }
+}
+
 .stream-player-controls,
 .stream-header-tag {
   transition: opacity 180ms ease, visibility 180ms ease;

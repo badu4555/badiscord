@@ -9011,15 +9011,17 @@ function showStreamOverlayControls() {
   if (!streamViewerWrapper) return;
   streamViewerWrapper.classList.remove('controls-hidden');
   if (streamControlsHideTimeout) clearTimeout(streamControlsHideTimeout);
-  if (window.matchMedia('(hover: none)').matches) {
-    streamControlsHideTimeout = window.setTimeout(() => {
-      streamViewerWrapper.classList.add('controls-hidden');
-    }, 3500);
-  }
+  streamControlsHideTimeout = window.setTimeout(() => {
+    streamViewerWrapper.classList.add('controls-hidden');
+  }, 2500);
 }
 
 if (streamViewerWrapper) {
   streamViewerWrapper.addEventListener('click', (event) => {
+    if (streamViewerWrapper.classList.contains('controls-hidden')) {
+      showStreamOverlayControls();
+      return;
+    }
     if (event.target.closest('.stream-player-controls, .stream-header-tag')) {
       showStreamOverlayControls();
       return;
