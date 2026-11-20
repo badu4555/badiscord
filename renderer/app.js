@@ -3638,7 +3638,7 @@ async function watchLiveStream(participantId, channelName = currentChannel, serv
     if (participantsGrid) participantsGrid.style.display = 'grid';
     watchingLiveParticipantId = participantId;
     stageContent?.classList.add('has-live-stream');
-    setStreamViewCompact(false);
+    setStreamViewCompact(true);
     renderVoiceParticipants();
     showStreamOverlayControls();
     switchView('voice');
@@ -8978,8 +8978,12 @@ function showStreamOverlayControls() {
 
 if (streamViewerWrapper) {
   streamViewerWrapper.addEventListener('click', (event) => {
-    if (event.target.closest('.stream-player-controls, .stream-header-tag button')) {
+    if (event.target.closest('.stream-player-controls, .stream-header-tag')) {
       showStreamOverlayControls();
+      return;
+    }
+    if (event.target === remoteVideoPlayer || event.target === streamViewerWrapper) {
+      toggleStreamViewSize();
       return;
     }
     showStreamOverlayControls();
@@ -8992,7 +8996,6 @@ if (streamViewerWrapper) {
 if (remoteVideoPlayer) {
   remoteVideoPlayer.tabIndex = 0;
   remoteVideoPlayer.setAttribute('role', 'button');
-  remoteVideoPlayer.addEventListener('click', toggleStreamViewSize);
   remoteVideoPlayer.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
