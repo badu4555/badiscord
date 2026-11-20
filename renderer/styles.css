@@ -920,6 +920,56 @@ body {
   aspect-ratio: 16 / 9;
   align-self: center;
   flex: none;
+  transition: width 180ms ease, height 180ms ease;
+}
+
+.stage-content.has-live-stream.stream-compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: max-content;
+  align-items: start;
+  justify-items: stretch;
+  align-content: start;
+}
+
+.stage-content.has-live-stream.stream-compact > .stream-viewer-wrapper {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  height: auto;
+  max-height: none;
+  aspect-ratio: 16 / 9;
+  align-self: start;
+}
+
+.stage-content.has-live-stream.stream-compact > .participants-grid {
+  display: grid !important;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: stretch;
+  align-self: start;
+  width: 100%;
+  max-height: min(56vh, 640px);
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: max-content;
+  align-content: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.stage-content.has-live-stream.stream-compact > .participants-grid > .participant-card {
+  flex: none;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+}
+
+.stage-content.has-live-stream:not(.stream-compact) #remoteVideoPlayer {
+  cursor: zoom-out;
+}
+
+.stage-content.has-live-stream.stream-compact #remoteVideoPlayer {
+  cursor: zoom-in;
 }
 
 .stage-content.has-live-stream > .participants-grid {
@@ -11654,6 +11704,35 @@ button.profile-tag-chip:hover {
     height: auto;
     aspect-ratio: 16 / 9;
     flex: none;
+  }
+
+  .stage-content.has-live-stream.stream-compact {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: max-content;
+  }
+
+  .stage-content.has-live-stream.stream-compact > .stream-viewer-wrapper {
+    grid-column: 1;
+    grid-row: 1;
+    width: 78%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+
+  .stage-content.has-live-stream.stream-compact > .participants-grid {
+    display: flex !important;
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .stage-content.has-live-stream.stream-compact > .participants-grid > .participant-card {
+    flex: 0 0 clamp(124px, 38vw, 164px);
+    width: clamp(124px, 38vw, 164px);
+    max-width: clamp(124px, 38vw, 164px);
   }
 
   .stage-content.has-live-stream > .participants-grid {

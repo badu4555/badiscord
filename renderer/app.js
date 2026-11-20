@@ -3638,6 +3638,7 @@ async function watchLiveStream(participantId, channelName = currentChannel, serv
     if (participantsGrid) participantsGrid.style.display = 'grid';
     watchingLiveParticipantId = participantId;
     stageContent?.classList.add('has-live-stream');
+    setStreamViewCompact(false);
     renderVoiceParticipants();
     showStreamOverlayControls();
     switchView('voice');
@@ -3666,6 +3667,7 @@ function stopWatchingLive() {
     if (stream) stream.track.detach(remoteVideoPlayer);
   }
   watchingLiveParticipantId = '';
+  setStreamViewCompact(false);
   if (remoteVideoPlayer && !isLocalStreamer) remoteVideoPlayer.srcObject = null;
   if (streamViewerWrapper && !isLocalStreamer) streamViewerWrapper.style.display = 'none';
   if (!isLocalStreamer) stageContent?.classList.remove('has-live-stream');
@@ -8944,6 +8946,25 @@ const streamVolumeHudVal = document.getElementById('streamVolumeHudVal');
 const streamLoopbackBadge = document.getElementById('streamLoopbackBadge');
 
 let streamControlsHideTimeout = null;
+function setStreamViewCompact(compact) {
+  stageContent?.classList.toggle('stream-compact', compact);
+  if (remoteVideoPlayer) {
+    remoteVideoPlayer.setAttribute('aria-pressed', String(!compact));
+    remoteVideoPlayer.setAttribute(
+      'aria-label',
+      compact
+        ? 'Transmissão compacta. Clique ou pressione Enter para ampliar.'
+        : 'Transmissão ampliada. Clique ou pressione Enter para reduzir.'
+    );
+  }
+}
+
+function toggleStreamViewSize() {
+  if (!watchingLiveParticipantId || !stageContent?.classList.contains('has-live-stream')) return;
+  setStreamViewCompact(!stageContent.classList.contains('stream-compact'));
+  showStreamOverlayControls();
+}
+
 function showStreamOverlayControls() {
   if (!streamViewerWrapper) return;
   streamViewerWrapper.classList.remove('controls-hidden');
@@ -8965,6 +8986,17 @@ if (streamViewerWrapper) {
   });
   streamViewerWrapper.addEventListener('pointermove', () => {
     if (!window.matchMedia('(hover: none)').matches) showStreamOverlayControls();
+  });
+}
+
+if (remoteVideoPlayer) {
+  remoteVideoPlayer.tabIndex = 0;
+  remoteVideoPlayer.setAttribute('role', 'button');
+  remoteVideoPlayer.addEventListener('click', toggleStreamViewSize);
+  remoteVideoPlayer.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    toggleStreamViewSize();
   });
 }
 
