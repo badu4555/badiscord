@@ -1131,22 +1131,68 @@ body {
 }
 
 .stage-content.has-voice-channel:not(.has-live-stream) {
-  align-items: stretch;
-  justify-content: stretch;
-  padding: 14px 14px 82px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 14px 82px;
 }
 
 .stage-content.has-voice-channel:not(.has-live-stream) > .participants-grid {
-  width: 100%;
-  height: 100%;
-  max-width: none;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 300px));
+  flex: 0 0 auto;
+  width: min(100%, 1120px);
+  height: auto;
+  max-width: 1120px;
+  max-height: 100%;
+  min-height: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
   grid-auto-rows: max-content;
   gap: 8px;
   overflow: auto;
   align-content: start;
-  justify-content: start;
+  justify-content: center;
+  margin: 0 auto;
   overscroll-behavior: contain;
+}
+
+.stage-content.has-voice-channel:not(.has-live-stream) > .participants-grid > .participant-card {
+  flex: none;
+  width: min(100%, 768px);
+  max-width: 768px;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  align-self: start;
+  padding: 0;
+  border: 1px solid rgba(125, 210, 196, 0.22);
+  border-radius: 8px;
+  background: #14122a;
+  overflow: hidden;
+}
+
+.stage-content.has-voice-channel:not(.has-live-stream) > .participants-grid > .participant-card:not(.has-camera) .participant-avatar-lg {
+  width: clamp(72px, 8vw, 96px);
+  height: clamp(72px, 8vw, 96px);
+  flex-basis: clamp(72px, 8vw, 96px);
+  margin: 0;
+  font-size: clamp(24px, 3vw, 36px);
+}
+
+.stage-content.has-voice-channel:not(.has-live-stream) > .participants-grid > .participant-card .participant-name-tag {
+  position: absolute;
+  z-index: 2;
+  bottom: 10px;
+  left: 10px;
+}
+
+.stage-content.has-voice-channel:not(.has-live-stream) > .participants-grid > .participant-card .participant-mic-icon {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  right: 10px;
 }
 
 .stage-content.has-voice-channel:not(.has-live-stream) > .voice-self-card {
@@ -11687,6 +11733,11 @@ button.profile-tag-chip:hover {
     padding: 8px 8px calc(132px + env(safe-area-inset-bottom));
   }
 
+  .stage-content.has-voice-channel:not(.has-live-stream) > .participants-grid {
+    width: 100%;
+    max-width: 768px;
+  }
+
   .stage-content.has-live-stream {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: max-content;
@@ -11866,10 +11917,12 @@ button.profile-tag-chip:hover {
   }
 
   .stage-content.has-voice-channel:not(.has-live-stream) > .participants-grid {
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 280px));
+    width: 100%;
+    max-width: 768px;
+    grid-template-columns: minmax(0, 1fr);
     grid-auto-rows: max-content;
     align-content: start;
-    justify-content: start;
+    justify-content: center;
   }
 
   .voice-floating-bar {
