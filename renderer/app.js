@@ -589,6 +589,11 @@ async function finalizeAuthSession(account) {
     messageCacheAccountId = account.id;
   }
   authenticatedAccount = account;
+  if (window.BadiscordE2EE?.initialize) {
+    await window.BadiscordE2EE.initialize().catch((error) => {
+      console.error('Não foi possível inicializar a criptografia ponta a ponta:', error);
+    });
+  }
 
   const customization = await loadProfileCustomization();
   applySessionToProfile(account, customization);
@@ -874,11 +879,30 @@ async function connectToLiveKitRoom(channelName, onCredentials = null) {
     const participantName = userProfile.displayName || 'Bads';
 
     if (!livekitRoom) {
-      livekitRoom = new window.LivekitClient.Room({
+      let roomOptions = {
         adaptiveStream: true,
         dynacast: true,
         logger: false
-      });
+      };
+      if (window.LivekitClient.isE2EESupported?.() &&
+        window.LivekitClient.ExternalE2EEKeyProvider &&
+        window.LivekitClient.createE2EEKey &&
+        window.BadiscordE2EE?.exportGroupKeyMaterial &&
+        activeServerId) {
+        try {
+          const recipientIds = await getChannelMemberIds(activeServerId);
+          if (!recipientIds.includes(authenticatedAccount.id)) recipientIds.push(authenticatedAccount.id);
+          const conversationId = `server:${activeServerId}:${encodeURIComponent(channelName)}`;
+          const keyMaterial = await window.BadiscordE2EE.exportGroupKeyMaterial(conversationId, recipientIds);
+          const keyProvider = new window.LivekitClient.ExternalE2EEKeyProvider();
+          await keyProvider.setKey(keyMaterial);
+          const worker = new Worker('/node_modules/livekit-client/dist/livekit-client.e2ee.worker.js');
+          roomOptions.encryption = { keyProvider, worker };
+        } catch (error) {
+          console.error('Não foi possível ativar E2EE da chamada de voz:', error);
+        }
+      }
+      livekitRoom = new window.LivekitClient.Room(roomOptions);
 
       livekitRoom.on(window.LivekitClient.RoomEvent.ConnectionStateChanged, (state) => {
         console.log('LiveKit connection state:', state);
@@ -1095,7 +1119,26 @@ async function connectPrivateCall(call) {
   }
   const { token } = await requestLiveKitToken(call.roomName, userProfile.displayName || 'Usuário');
   const livekitUrl = await fetchLiveKitConfig();
-  const room = new window.LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+  let roomOptions = { adaptiveStream: true, dynacast: true };
+  const recipientId = call.caller_id
+    ? (call.caller_id === authenticatedAccount.id ? call.receiver_id : call.caller_id)
+    : currentDmFriend?.id;
+  if (recipientId && window.LivekitClient.isE2EESupported?.() &&
+    window.LivekitClient.ExternalE2EEKeyProvider &&
+    window.BadiscordE2EE?.exportDirectKeyMaterial) {
+    try {
+      const ids = [authenticatedAccount.id, recipientId].sort();
+      const conversationId = `dm:${ids[0]}:${ids[1]}`;
+      const keyMaterial = await window.BadiscordE2EE.exportDirectKeyMaterial(conversationId, recipientId);
+      const keyProvider = new window.LivekitClient.ExternalE2EEKeyProvider();
+      await keyProvider.setKey(keyMaterial);
+      const worker = new Worker('/node_modules/livekit-client/dist/livekit-client.e2ee.worker.js');
+      roomOptions.encryption = { keyProvider, worker };
+    } catch (error) {
+      console.error('Não foi possível ativar E2EE da chamada privada:', error);
+    }
+  }
+  const room = new window.LivekitClient.Room(roomOptions);
   privateCallRoom = room;
   room.on(window.LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
     if (track.kind !== 'audio') return;
@@ -4360,7 +4403,7 @@ async function syncChannelMessages(srvId, chanName, generation, showError = fals
     const payload = await requestChannelMessages(srvId, chanName, { url });
     if (generation !== channelMessagesLoadGeneration ||
       currentDmFriend || activeServerId !== srvId || currentTextChannel !== chanName) return;
-    const changedMessages = Array.isArray(payload.messages) ? payload.messages : [];
+    const changedMessages = await decryptE2EEMessages(Array.isArray(payload.messages) ? payload.messages : []);
     if (!payload.full && changedMessages.length === 0) return;
     const cachedMessages = getStoredMessages(srvId, chanName);
     const messages = payload.full
@@ -4390,6 +4433,57 @@ function directMessagesUrl(friendId) {
   return `/api/dms/${encodeURIComponent(friendId)}/messages`;
 }
 
+async function decryptE2EEMessage(message) {
+  if (!message?.e2ee) return message;
+  try {
+    const decrypted = await window.BadiscordE2EE.decryptEnvelope(message.e2ee);
+    return { ...decrypted, id: message.id, author: message.author, authorId: message.authorId,
+      time: message.time, createdAt: message.createdAt, updatedAt: message.updatedAt };
+  } catch (error) {
+    console.error('Falha ao descriptografar mensagem:', error);
+    return { ...message, text: '🔒 Mensagem não pôde ser descriptografada neste dispositivo.', attachments: [] };
+  }
+}
+
+async function decryptE2EEMessages(messages) {
+  if (!Array.isArray(messages) || !messages.length) return [];
+  return Promise.all(messages.map(decryptE2EEMessage));
+}
+
+async function getChannelMemberIds(serverId) {
+  try {
+    const response = await fetch(`/api/servers/${encodeURIComponent(serverId)}/members`, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' }
+    });
+    if (!response.ok) return authenticatedAccount?.id ? [authenticatedAccount.id] : [];
+    const payload = await response.json();
+    return (payload.members || payload.users || []).map((member) => member.id).filter(Boolean);
+  } catch (_) {
+    return authenticatedAccount?.id ? [authenticatedAccount.id] : [];
+  }
+}
+
+async function encryptActiveChatMessage(message) {
+  if (!window.BadiscordE2EE) return message;
+  if (currentDmFriend) {
+    const ids = [authenticatedAccount.id, currentDmFriend.id].sort();
+    const conversationId = `dm:${ids[0]}:${ids[1]}`;
+    return {
+      e2ee: await window.BadiscordE2EE.encryptDirect(conversationId, currentDmFriend.id, message)
+    };
+  }
+  if (activeServerId && currentTextChannel) {
+    const conversationId = `server:${activeServerId}:${encodeURIComponent(currentTextChannel)}`;
+    const recipientIds = await getChannelMemberIds(activeServerId);
+    if (!recipientIds.includes(authenticatedAccount.id)) recipientIds.push(authenticatedAccount.id);
+    return {
+      e2ee: await window.BadiscordE2EE.encryptGroup(conversationId, recipientIds, message)
+    };
+  }
+  return message;
+}
+
 function cacheDirectMessages(friendId, messages) {
   const key = getDirectMessagesStorageKey(friendId);
   const recentMessages = messages.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
@@ -4408,7 +4502,7 @@ async function syncDirectMessages(friendId, generation, showError = false) {
     const url = `${directMessagesUrl(friendId)}${since ? `?since=${encodeURIComponent(since)}` : ''}`;
     const payload = await requestChannelMessages('', '', { url });
     if (generation !== channelMessagesLoadGeneration || currentDmFriend?.id !== friendId) return;
-    const changedMessages = Array.isArray(payload.messages) ? payload.messages : [];
+    const changedMessages = await decryptE2EEMessages(Array.isArray(payload.messages) ? payload.messages : []);
     if (!payload.full && changedMessages.length === 0) return;
     const cachedMessages = getStoredDMMessages(friendId, currentDmFriend);
     const messages = payload.full
@@ -4492,15 +4586,23 @@ function createChatMessage(content = {}) {
 }
 
 async function saveActiveChatMessage(message) {
+  let encryptedMessage;
+  try {
+    encryptedMessage = await encryptActiveChatMessage(message);
+  } catch (error) {
+    console.error('Falha ao criptografar mensagem:', error);
+    showToast(error.message || 'Não foi possível criptografar a mensagem.', '🔒');
+    return null;
+  }
   if (currentDmFriend) {
     const friendId = currentDmFriend.id;
     try {
       const payload = await requestChannelMessages('', '', {
         method: 'POST',
         url: directMessagesUrl(friendId),
-        body: { message }
+        body: { message: encryptedMessage }
       });
-      const savedMessage = payload.message;
+      const savedMessage = await decryptE2EEMessage(payload.message);
       const messages = getStoredDMMessages(friendId, currentDmFriend);
       if (!messages.some((item) => item.id === savedMessage.id)) messages.push(savedMessage);
       cacheDirectMessages(friendId, messages);
@@ -4521,10 +4623,10 @@ async function saveActiveChatMessage(message) {
   try {
     const payload = await requestChannelMessages(serverId, channelName, {
       method: 'POST',
-      body: { message },
+      body: { message: encryptedMessage },
       url: channelMessagesUrl(serverId, channelName)
     });
-    const savedMessage = payload.message;
+    const savedMessage = await decryptE2EEMessage(payload.message);
     const currentMessages = getStoredMessages(serverId, channelName);
     if (!currentMessages.some((item) => item.id === savedMessage.id)) currentMessages.push(savedMessage);
     cacheChannelMessages(serverId, channelName, currentMessages);

@@ -297,6 +297,20 @@ db.exec(`
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS e2ee_identity_keys (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    public_key_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS e2ee_conversation_keys (
+    conversation_id TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    wrapped_key_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, user_id)
+  );
   CREATE TABLE IF NOT EXISTS user_activity_stats (
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     game_seconds INTEGER NOT NULL DEFAULT 0,
@@ -944,6 +958,86 @@ function getAuthorizedTextChannel(req, res) {
   return { serverId, channelName };
 }
 
+app.put('/api/e2ee/identity', requireAuth, (req, res) => {
+  const publicKey = req.body?.publicKey;
+  if (!publicKey || typeof publicKey !== 'object' ||
+    publicKey.kty !== 'EC' || publicKey.crv !== 'P-256' ||
+    typeof publicKey.x !== 'string' || typeof publicKey.y !== 'string') {
+    return res.status(400).json({ error: 'Chave pública E2EE inválida.' });
+  }
+  const publicKeyJson = JSON.stringify({
+    kty: 'EC',
+    crv: 'P-256',
+    x: publicKey.x.slice(0, 300),
+    y: publicKey.y.slice(0, 300),
+    ext: true,
+    key_ops: ['deriveKey', 'deriveBits']
+  });
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO e2ee_identity_keys
+    (user_id, public_key_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET public_key_json = excluded.public_key_json, updated_at = excluded.updated_at`)
+    .run(req.user.id, publicKeyJson, now, now);
+  return res.json({ ok: true });
+});
+
+app.get('/api/e2ee/identities/:userId', requireAuth, (req, res) => {
+  const userId = normalize(req.params.userId);
+  if (!userId) return res.status(400).json({ error: 'Usuário inválido.' });
+  const row = db.prepare('SELECT public_key_json, updated_at FROM e2ee_identity_keys WHERE user_id = ?').get(userId);
+  if (!row) return res.status(404).json({ error: 'A chave de ponta a ponta deste usuário ainda não está disponível.' });
+  return res.json({ publicKey: parseJsonValue(row.public_key_json, null), updatedAt: row.updated_at });
+});
+
+app.get('/api/e2ee/conversations/:conversationId/key', requireAuth, (req, res) => {
+  const conversationId = normalize(req.params.conversationId).slice(0, 300);
+  if (!conversationId) return res.status(400).json({ error: 'Conversa inválida.' });
+  const row = db.prepare(`SELECT wrapped_key_json FROM e2ee_conversation_keys
+    WHERE conversation_id = ? AND user_id = ?`).get(conversationId, req.user.id);
+  if (!row) return res.status(404).json({ error: 'Nenhuma chave de conversa disponível.' });
+  return res.json({ wrappedKey: parseJsonValue(row.wrapped_key_json, null) });
+});
+
+app.put('/api/e2ee/conversations/:conversationId/key', requireAuth, (req, res) => {
+  const conversationId = normalize(req.params.conversationId).slice(0, 300);
+  const wraps = req.body?.wraps;
+  if (!conversationId || !Array.isArray(wraps) || wraps.length === 0 || wraps.length > 500) {
+    return res.status(400).json({ error: 'Dados de chave inválidos.' });
+  }
+  if (conversationId.startsWith('dm:')) {
+    const ids = conversationId.slice(3).split(':');
+    if (ids.length !== 2 || ids[0] !== req.user.id && ids[1] !== req.user.id) {
+      return res.status(403).json({ error: 'Conversa direta não autorizada.' });
+    }
+  } else if (conversationId.startsWith('server:')) {
+    const parts = conversationId.slice(7).split(':');
+    const serverId = parts.shift();
+    if (!serverId || !canAccessServer(req.user.id, serverId)) {
+      return res.status(403).json({ error: 'Servidor não autorizado.' });
+    }
+  } else {
+    return res.status(400).json({ error: 'Tipo de conversa inválido.' });
+  }
+  const now = new Date().toISOString();
+  const putWrap = db.prepare(`INSERT INTO e2ee_conversation_keys
+    (conversation_id, user_id, wrapped_key_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(conversation_id, user_id) DO UPDATE SET
+      wrapped_key_json = excluded.wrapped_key_json,
+      updated_at = excluded.updated_at`);
+  db.transaction(() => {
+    for (const wrap of wraps) {
+      if (!wrap || typeof wrap.userId !== 'string' ||
+        typeof wrap.wrappedKey !== 'object') continue;
+      const userId = normalize(wrap.userId).slice(0, 80);
+      if (!userId) continue;
+      putWrap.run(conversationId, userId, JSON.stringify(wrap.wrappedKey), now, now);
+    }
+  })();
+  return res.json({ ok: true });
+});
+
 function formatChannelMessage(row) {
   return {
     ...parseJsonValue(row.content_json, {}),
@@ -959,6 +1053,21 @@ function formatChannelMessage(row) {
 function normalizeChatMessageInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return { error: 'Mensagem inválida.' };
+  }
+  if (input.e2ee && typeof input.e2ee === 'object') {
+    const encrypted = input.e2ee;
+    if (typeof encrypted.type !== 'string' ||
+      typeof encrypted.conversation !== 'string' ||
+      typeof encrypted.iv !== 'string' ||
+      typeof encrypted.ciphertext !== 'string') {
+      return { error: 'Envelope criptografado inválido.' };
+    }
+    if (encrypted.conversation.length > 300 ||
+      encrypted.iv.length > 80 ||
+      encrypted.ciphertext.length > 1400000) {
+      return { error: 'Envelope criptografado inválido ou excede o limite de tamanho.' };
+    }
+    return { content: { e2ee: encrypted } };
   }
   const text = typeof input.text === 'string' ? input.text.trim().slice(0, 4000) : '';
   if (input.attachments != null && !Array.isArray(input.attachments)) {
@@ -1453,6 +1562,7 @@ app.post('/api/dms/:friendId/messages/:messageId/votes', requireAuth, (req, res)
     .get(req.params.messageId, participants[0], participants[1]);
   if (!row) return res.status(404).json({ error: 'Enquete não encontrada.' });
   const content = parseJsonValue(row.content_json, {});
+  if (content.e2ee) return res.status(409).json({ error: 'Enquetes criptografadas não podem ser alteradas pelo servidor.' });
   if (!content.poll || !Array.isArray(content.poll.options)) return res.status(400).json({ error: 'Esta mensagem não contém uma enquete.' });
   const optionIndex = Number(req.body?.optionIndex);
   if (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= content.poll.options.length) {
@@ -1472,6 +1582,7 @@ app.post('/api/dms/:friendId/messages/:messageId/replies', requireAuth, (req, re
     .get(req.params.messageId, participants[0], participants[1]);
   if (!row) return res.status(404).json({ error: 'Tópico não encontrado.' });
   const content = parseJsonValue(row.content_json, {});
+  if (content.e2ee) return res.status(409).json({ error: 'Tópicos criptografados não podem ser alterados pelo servidor.' });
   if (!content.topic) return res.status(400).json({ error: 'Esta mensagem não contém um tópico.' });
   const text = normalize(req.body?.text).slice(0, 500);
   if (!text) return res.status(400).json({ error: 'A resposta do tópico não pode estar vazia.' });
@@ -1505,6 +1616,7 @@ app.post('/api/servers/:serverId/channels/:channelName/messages/:messageId/votes
     WHERE id = ? AND server_id = ? AND channel_name = ?`).get(req.params.messageId, channel.serverId, channel.channelName);
   if (!row) return res.status(404).json({ error: 'Enquete não encontrada.' });
   const content = parseJsonValue(row.content_json, {});
+  if (content.e2ee) return res.status(409).json({ error: 'Enquetes criptografadas não podem ser alteradas pelo servidor.' });
   if (!content.poll || !Array.isArray(content.poll.options)) return res.status(400).json({ error: 'Esta mensagem não contém uma enquete.' });
   const optionIndex = Number(req.body?.optionIndex);
   if (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= content.poll.options.length) {
@@ -1524,6 +1636,7 @@ app.post('/api/servers/:serverId/channels/:channelName/messages/:messageId/repli
     WHERE id = ? AND server_id = ? AND channel_name = ?`).get(req.params.messageId, channel.serverId, channel.channelName);
   if (!row) return res.status(404).json({ error: 'Tópico não encontrado.' });
   const content = parseJsonValue(row.content_json, {});
+  if (content.e2ee) return res.status(409).json({ error: 'Tópicos criptografados não podem ser alterados pelo servidor.' });
   if (!content.topic) return res.status(400).json({ error: 'Esta mensagem não contém um tópico.' });
   const text = normalize(req.body?.text).slice(0, 500);
   if (!text) return res.status(400).json({ error: 'A resposta do tópico não pode estar vazia.' });
