@@ -550,7 +550,10 @@ async function loginAccount(email, password, recaptchaToken = '', rememberMe = f
     body: JSON.stringify({ email, password, recaptchaToken, rememberMe })
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || 'E-mail ou senha inválidos.');
+  if (!response.ok) {
+    if (payload.error) throw new Error(payload.error);
+    throw new Error(`Não foi possível entrar (HTTP ${response.status}).`);
+  }
   return payload.user;
 }
 
