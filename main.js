@@ -1,7 +1,7 @@
 if (!process.versions.electron) {
   require('./server/server');
 } else {
-const { app, BrowserWindow, ipcMain, desktopCapturer, shell, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, shell, screen, clipboard } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -478,6 +478,8 @@ function createWindow() {
   mainWindow.on('leave-full-screen', () => {
     mainWindow?.webContents.send('stream-fullscreen:changed', false);
   });
+  mainWindow.on('focus', syncGameOverlayVisibility);
+  mainWindow.on('blur', syncGameOverlayVisibility);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
@@ -563,6 +565,18 @@ function sendGameOverlayState() {
   }
 }
 
+function syncGameOverlayVisibility() {
+  if (!gameOverlayWindow || gameOverlayWindow.isDestroyed()) return;
+  const shouldShow = gameOverlayState.visible && !mainWindow?.isFocused();
+  if (!shouldShow) {
+    gameOverlayWindow.hide();
+    return;
+  }
+  if (!gameOverlayWindow.webContents.isLoading() && !gameOverlayWindow.isVisible()) {
+    gameOverlayWindow.showInactive();
+  }
+}
+
 function createGameOverlayWindow() {
   if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) return gameOverlayWindow;
   gameOverlayWindow = new BrowserWindow({
@@ -604,7 +618,7 @@ function createGameOverlayWindow() {
   });
   gameOverlayWindow.webContents.on('did-finish-load', () => {
     sendGameOverlayState();
-    if (gameOverlayState.visible && !gameOverlayWindow.isVisible()) gameOverlayWindow.showInactive();
+    syncGameOverlayVisibility();
   });
   return gameOverlayWindow;
 }
@@ -614,14 +628,19 @@ ipcMain.on('game-overlay:update', (event, value) => {
   const nextState = normalizeGameOverlayState(value);
   if (nextState.visible && !nextState.activity) nextState.activity = gameOverlayState.activity;
   gameOverlayState = nextState;
-  if (!gameOverlayState.visible) {
-    if (gameOverlayWindow && !gameOverlayWindow.isDestroyed()) gameOverlayWindow.hide();
-    return;
-  }
+  if (!gameOverlayState.visible) return syncGameOverlayVisibility();
   const overlay = createGameOverlayWindow();
   if (overlay.webContents.isLoading()) return;
   sendGameOverlayState();
-  if (!overlay.isVisible()) overlay.showInactive();
+  syncGameOverlayVisibility();
+});
+
+ipcMain.handle('clipboard:write-text', (event, text) => {
+  if (!isTrustedRenderer(event) || typeof text !== 'string' || text.length === 0 || text.length > 100_000) {
+    throw new Error('Texto inválido para copiar.');
+  }
+  clipboard.writeText(text);
+  return true;
 });
 
 ipcMain.handle('stream-fullscreen:set', (event, enabled) => {

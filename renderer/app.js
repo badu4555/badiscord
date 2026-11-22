@@ -1981,6 +1981,44 @@ function showToast(msg, icon = '📋') {
   }, 2800);
 }
 
+async function copyTextToClipboard(text) {
+  const value = String(text || '');
+  if (!value) throw new Error('Não há texto para copiar.');
+
+  if (window.electronAPI?.writeClipboardText) {
+    try {
+      await window.electronAPI.writeClipboardText(value);
+      return;
+    } catch (error) {
+      console.warn('Não foi possível usar a área de transferência do sistema:', error);
+    }
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+  } catch (error) {
+    console.warn('A API do navegador não permitiu copiar o texto:', error);
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  let copied = false;
+  try {
+    textarea.select();
+    copied = document.execCommand('copy');
+  } finally {
+    textarea.remove();
+  }
+  if (!copied) throw new Error('A cópia foi recusada pelo sistema.');
+}
+
 // Alternar entre as 3 visões principais
 function switchView(viewName) {
   currentView = viewName;
@@ -3326,7 +3364,7 @@ function openChannelContextMenu(event, server, channelName, channelType, anchor)
   menu.appendChild(createChannelMenuAction('Copiar link', async () => {
     closeChannelContextMenu();
     try {
-      await navigator.clipboard.writeText(getChannelShareLink(server, channelName, channelType));
+      await copyTextToClipboard(getChannelShareLink(server, channelName, channelType));
       showToast('Link do canal copiado.', '📋');
     } catch (error) {
       console.warn('Não foi possível copiar o link do canal:', error);
@@ -4484,12 +4522,27 @@ async function requestChannelMessages(srvId, chanName, options = {}) {
   return payload;
 }
 
+function getMessagesWithoutAttachmentData(messages) {
+  return messages.map((message) => (
+    Array.isArray(message.attachments)
+      ? {
+        ...message,
+        attachments: message.attachments.map((attachment) => {
+          if (!attachment || typeof attachment !== 'object') return attachment;
+          const { data, ...metadata } = attachment;
+          return metadata;
+        })
+      }
+      : message
+  ));
+}
+
 function cacheChannelMessages(srvId, chanName, messages) {
   const key = getChatStorageKey(srvId, chanName);
   const recentMessages = messages.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
   rememberConversationMessages(channelMessagesCache, key, recentMessages);
   try {
-    localStorage.setItem(key, JSON.stringify(recentMessages));
+    localStorage.setItem(key, JSON.stringify(getMessagesWithoutAttachmentData(recentMessages)));
   } catch (error) {
     console.error('Não foi possível atualizar o cache local das mensagens:', error);
   }
@@ -4589,7 +4642,7 @@ function cacheDirectMessages(friendId, messages) {
   const recentMessages = messages.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
   rememberConversationMessages(directMessagesCache, key, recentMessages);
   try {
-    localStorage.setItem(key, JSON.stringify(recentMessages));
+    localStorage.setItem(key, JSON.stringify(getMessagesWithoutAttachmentData(recentMessages)));
   } catch (error) {
     console.error('Não foi possível atualizar o cache local das mensagens diretas:', error);
   }
@@ -5350,10 +5403,6 @@ if (chatInputForm && chatInputText) {
 
 function sendChatFile(file) {
   if (!file) return;
-  if (file.size > 1024 * 1024) {
-    showToast('O arquivo deve ter no máximo 1 MB para ser salvo no chat.', '⚠️');
-    return;
-  }
   const reader = new FileReader();
   reader.addEventListener('load', async () => {
     if (typeof reader.result !== 'string') {
@@ -8195,7 +8244,7 @@ if (btnCopyInviteLink) {
       return;
     }
     try {
-      await navigator.clipboard.writeText(inviteLink);
+      await copyTextToClipboard(inviteLink);
       showToast('Link de convite copiado para a área de transferência!', '📋');
     } catch (error) {
       console.warn('Não foi possível copiar o link de convite:', error);

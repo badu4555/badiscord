@@ -81,7 +81,10 @@ app.use(cors({
   }
   , credentials: true
 }));
-app.use(express.json({ limit: '6mb' }));
+const isChatMessageUpload = (req) => req.method === 'POST'
+  && /^\/api\/(?:dms\/[^/]+\/messages|servers\/[^/]+\/channels\/[^/]+\/messages)$/.test(req.path);
+app.use(express.json({ limit: '6mb', type: (req) => !isChatMessageUpload(req) }));
+const parseChatMessageJson = express.json({ limit: Infinity });
 app.use('/node_modules', express.static(nodeModulesDir));
 app.use(express.static(publicDir));
 
@@ -1066,10 +1069,8 @@ function normalizeChatMessageInput(input) {
       typeof encrypted.ciphertext !== 'string') {
       return { error: 'Envelope criptografado inválido.' };
     }
-    if (encrypted.conversation.length > 300 ||
-      encrypted.iv.length > 80 ||
-      encrypted.ciphertext.length > 1400000) {
-      return { error: 'Envelope criptografado inválido ou excede o limite de tamanho.' };
+    if (encrypted.conversation.length > 300 || encrypted.iv.length > 80) {
+      return { error: 'Envelope criptografado inválido.' };
     }
     return { content: { e2ee: encrypted } };
   }
@@ -1079,16 +1080,13 @@ function normalizeChatMessageInput(input) {
   }
   const attachments = Array.isArray(input.attachments) ? input.attachments : [];
   if (attachments.length > 5) return { error: 'Envie no máximo cinco anexos por mensagem.' };
-  let attachmentBytes = 0;
   for (const attachment of attachments) {
     if (!attachment || typeof attachment.name !== 'string' || attachment.name.length > 255 ||
       typeof attachment.data !== 'string' ||
-      !/^data:[^;,]+;base64,[a-z0-9+/]+=*$/i.test(attachment.data) || attachment.data.length > 1400000) {
-      return { error: 'Um dos anexos é inválido ou excede o limite de tamanho.' };
+      !/^data:[^;,]+;base64,[a-z0-9+/]+=*$/i.test(attachment.data)) {
+      return { error: 'Um dos anexos é inválido.' };
     }
-    attachmentBytes += attachment.data.length;
   }
-  if (attachmentBytes > 1400000) return { error: 'O tamanho total dos anexos por mensagem não pode exceder 1 MB.' };
 
   let poll;
   if (input.poll && typeof input.poll === 'object') {
@@ -1134,13 +1132,8 @@ function nextChannelMessageTimestamp() {
 
 function fitMessageResponse(rows, newestFirst = false) {
   const messages = [];
-  let responseBytes = 0;
   for (const row of rows) {
-    const message = formatChannelMessage(row);
-    const messageBytes = Buffer.byteLength(JSON.stringify(message));
-    if (messages.length > 0 && responseBytes + messageBytes > 4 * 1024 * 1024) break;
-    messages.push(message);
-    responseBytes += messageBytes;
+    messages.push(formatChannelMessage(row));
   }
   if (newestFirst) messages.reverse();
   return messages;
@@ -1544,7 +1537,7 @@ app.get('/api/dms/:friendId/messages', requireAuth, (req, res) => {
   return res.json({ messages: fitMessageResponse(messages, !since), full: !since });
 });
 
-app.post('/api/dms/:friendId/messages', requireAuth, (req, res) => {
+app.post('/api/dms/:friendId/messages', requireAuth, parseChatMessageJson, (req, res) => {
   const participants = getDmParticipants(req.user.id, normalize(req.params.friendId));
   if (!participants) return res.status(403).json({ error: 'Somente amigos podem trocar mensagens diretas.' });
   const { content, error } = normalizeChatMessageInput(req.body?.message);
@@ -1598,7 +1591,7 @@ app.post('/api/dms/:friendId/messages/:messageId/replies', requireAuth, (req, re
   return res.json({ message: formatChannelMessage(message) });
 });
 
-app.post('/api/servers/:serverId/channels/:channelName/messages', requireAuth, (req, res) => {
+app.post('/api/servers/:serverId/channels/:channelName/messages', requireAuth, parseChatMessageJson, (req, res) => {
   const channel = getAuthorizedTextChannel(req, res);
   if (!channel) return;
   const { content, error } = normalizeChatMessageInput(req.body?.message);
