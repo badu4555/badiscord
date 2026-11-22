@@ -394,6 +394,10 @@ const sharedServerSeeds = [
 const seedSharedServer = db.prepare(`INSERT OR IGNORE INTO servers (id, name, icon, is_public, created_at)
   VALUES (?, ?, ?, 1, ?)`);
 sharedServerSeeds.forEach(([id, name, icon]) => seedSharedServer.run(id, name, icon, new Date().toISOString()));
+db.prepare(`UPDATE servers SET
+  text_channels_json = CASE WHEN text_channels_json = '[]' THEN '["geral","anuncios","apresentacoes"]' ELSE text_channels_json END,
+  voice_channels_json = CASE WHEN voice_channels_json = '[]' THEN '["Geral 🔊","Jogos 🎮","Live"]' ELSE voice_channels_json END
+  WHERE id = 'pub-1'`).run();
 
 db.transaction(() => {
   for (const serverId of ['srv-1', 'srv-2', 'pub-3', 'pub-4']) {

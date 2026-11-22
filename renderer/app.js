@@ -616,7 +616,18 @@ async function finalizeAuthSession(account) {
     loadServerMembers(activeServerId);
     startServerMembersPolling();
     await loadServerInvites();
-    restoreServerView(activeServerId);
+    let shouldShowOnboarding = false;
+    try {
+      shouldShowOnboarding = localStorage.getItem(`badiscord_pending_onboarding_${account.id}`) === 'true';
+    } catch (_) {}
+    if (shouldShowOnboarding) {
+      try {
+        localStorage.removeItem(`badiscord_pending_onboarding_${account.id}`);
+      } catch (_) {}
+      openHomeFriendsView();
+    } else {
+      restoreServerView(activeServerId);
+    }
     await loadCustomSoundboard();
     await acceptPendingServerInvite();
     await applyChannelRouteFromUrl();
@@ -1514,7 +1525,7 @@ async function disconnectLiveKitRoom() {
 }
 
 const DEFAULT_SERVERS = [];
-const HIDDEN_SAMPLE_SERVER_IDS = new Set(['srv-1', 'srv-2', 'pub-1', 'pub-2', 'pub-3', 'pub-4']);
+const HIDDEN_SAMPLE_SERVER_IDS = new Set(['srv-1', 'srv-2', 'pub-2', 'pub-3', 'pub-4']);
 
 function normalizeServers(list) {
   if (!Array.isArray(list)) return DEFAULT_SERVERS;
@@ -2033,7 +2044,14 @@ function renderGuilds() {
   hideServerVoiceHoverCard();
   guildList.innerHTML = '';
 
-  servers.forEach(srv => {
+  let pendingOnboarding = false;
+  if (authenticatedAccount) {
+    try {
+      pendingOnboarding = localStorage.getItem(`badiscord_pending_onboarding_${authenticatedAccount.id}`) === 'true';
+    } catch (_) {}
+  }
+
+  (pendingOnboarding ? [] : servers).forEach(srv => {
     const icon = document.createElement('div');
     icon.className = `guild-icon-wrap ${!inHomeView && srv.id === activeServerId ? 'active' : ''}`;
 
@@ -6319,9 +6337,9 @@ function renderFriendsList(filter = '') {
         </svg>
       </div>
       <span class="friends-empty-eyebrow">BADISCORD / CONEXÕES</span>
-      <div class="friends-empty-title">${friendsList.length === 0 ? 'Monte seu círculo' : 'Nenhum resultado encontrado'}</div>
-      <div class="friends-empty-desc">${friendsList.length === 0 ? 'Convide sua galera e transforme uma boa sessão em uma grande história.' : 'Tente buscar com outro nome ou tag.'}</div>
-      ${friendsList.length === 0 ? '<button type="button" class="friends-empty-cta">Adicionar seu primeiro amigo <span aria-hidden="true">↗</span></button>' : ''}
+      <div class="friends-empty-title">${friendsList.length === 0 ? 'Comece pela sua comunidade' : 'Nenhum resultado encontrado'}</div>
+      <div class="friends-empty-desc">${friendsList.length === 0 ? 'Crie seu próprio servidor ou procure a Comunidade BADISCORD.' : 'Tente buscar com outro nome ou tag.'}</div>
+      ${friendsList.length === 0 ? '<div class="friends-onboarding-actions"><button type="button" class="friends-empty-cta" data-server-action="create">Criar seu servidor <span aria-hidden="true">↗</span></button><button type="button" class="friends-empty-cta friends-empty-cta-secondary" data-server-action="explore">Procurar comunidade <span aria-hidden="true">↗</span></button></div>' : ''}
     `;
     if (noStatusMatches) {
       empty.classList.add('is-status-empty');
@@ -6329,7 +6347,19 @@ function renderFriendsList(filter = '') {
       empty.querySelector('.friends-empty-desc').textContent = `Quando seus amigos ficarem ${currentFriendsTab === 'offline' ? 'offline' : 'online'}, a atividade aparece neste espaço.`;
     }
     friendsCardsList.appendChild(empty);
-    empty.querySelector('.friends-empty-cta')?.addEventListener('click', () => switchFriendsTab('add'));
+    empty.querySelector('[data-server-action="create"]')?.addEventListener('click', () => {
+      if (createServerModal) {
+        if (inputServerName) inputServerName.value = '';
+        switchServerWizardTab('create');
+        createServerModal.style.display = 'flex';
+      }
+    });
+    empty.querySelector('[data-server-action="explore"]')?.addEventListener('click', () => {
+      if (createServerModal) {
+        switchServerWizardTab('explore');
+        createServerModal.style.display = 'flex';
+      }
+    });
     return;
   }
 
@@ -13355,6 +13385,9 @@ window.addEventListener('keydown', (event) => {
 
       try {
         const account = await registerAccount({ email, username, password, recaptchaToken });
+        try {
+          localStorage.setItem(`badiscord_pending_onboarding_${account.id}`, 'true');
+        } catch (_) {}
         await finalizeAuthSession(account);
         showToast(`Conta criada com sucesso! Olá, ${account.displayName}#${account.tag}!`, '🎉');
       } catch (error) {

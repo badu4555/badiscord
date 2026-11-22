@@ -1386,6 +1386,17 @@ html.badiscord-android-webview .stream-leave-call-btn {
   }
 }
 
+#streamViewerWrapper:fullscreen.controls-hidden .stream-player-controls,
+#streamViewerWrapper:fullscreen.controls-hidden .stream-header-tag,
+#streamViewerWrapper:-webkit-full-screen.controls-hidden .stream-player-controls,
+#streamViewerWrapper:-webkit-full-screen.controls-hidden .stream-header-tag,
+#streamViewerWrapper.electron-fullscreen.controls-hidden .stream-player-controls,
+#streamViewerWrapper.electron-fullscreen.controls-hidden .stream-header-tag {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
 .stream-player-controls,
 .stream-header-tag {
   transition: opacity 180ms ease, visibility 180ms ease;
@@ -16672,6 +16683,26 @@ button.profile-tag-chip:hover {
 #friendsView .friends-empty-cta:focus-visible {
   outline: 2px solid var(--header-primary);
   outline-offset: 3px;
+}
+
+#friendsView .friends-onboarding-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+#friendsView .friends-onboarding-actions .friends-empty-cta {
+  margin-top: 0;
+}
+
+#friendsView .friends-empty-cta-secondary {
+  border-color: var(--bg-modifier-accent);
+  background: var(--bg-secondary);
+  color: var(--header-primary);
+  box-shadow: none;
 }
 
 #friendsView .add-friend-panel {
