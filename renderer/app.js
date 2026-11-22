@@ -2511,6 +2511,9 @@ function renderChannels(server) {
         }`;
         item.dataset.channel = chan;
         item.dataset.type = 'voice';
+        item.setAttribute('role', 'button');
+        item.tabIndex = 0;
+        item.setAttribute('aria-label', `Abrir opções de ${chan}`);
 
         const icon = document.createElement('span');
         icon.className = 'channel-icon';
@@ -2572,11 +2575,18 @@ function renderChannels(server) {
             }
             return;
           }
-          if (currentChannel) {
-            joinVoiceChannel(chan);
-          } else {
-            showVoiceChannelPreview(chan);
-          }
+          showVoiceChannelPreview(chan);
+        });
+        item.addEventListener('dblclick', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (activeServerId !== server.id) restoreServerView(server.id);
+          joinVoiceChannel(chan);
+        });
+        item.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          joinVoiceChannel(chan);
         });
       });
     });
