@@ -550,12 +550,15 @@ function sendGameOverlayState() {
     const display = screen.getPrimaryDisplay();
     const activityHeight = gameOverlayState.activity ? 94 : 0;
     const participantHeight = Math.min(gameOverlayState.participants.length, 8) * 44;
-    const height = Math.min(Math.round(display.workArea.height * 0.75), 76 + participantHeight + activityHeight);
+    const height = Math.max(100, Math.min(
+      Math.round(display.workArea.height * 0.75),
+      76 + participantHeight + activityHeight
+    ));
     gameOverlayWindow.setBounds({
       x: display.workArea.x + 10,
-      y: display.workArea.y + 84,
+      y: display.workArea.y + Math.round((display.workArea.height - height) / 2),
       width: 196,
-      height: Math.max(100, height)
+      height
     });
   }
 }
@@ -566,7 +569,7 @@ function createGameOverlayWindow() {
     width: 196,
     height: 100,
     x: screen.getPrimaryDisplay().workArea.x + 10,
-    y: screen.getPrimaryDisplay().workArea.y + 84,
+    y: screen.getPrimaryDisplay().workArea.y + Math.round((screen.getPrimaryDisplay().workArea.height - 100) / 2),
     show: false,
     frame: false,
     transparent: true,

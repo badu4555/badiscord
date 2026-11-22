@@ -90,7 +90,7 @@ body {
   padding: 2px;
   border-radius: 999px;
   background: transparent;
-  opacity: 0.16;
+  opacity: 1;
   transition: opacity 120ms ease;
 }
 
@@ -114,6 +114,22 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.overlay-avatar-live {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+  border: 2px solid #16191c;
+  border-radius: 50%;
+  background: #ed4245;
+  color: #fff;
+  font-size: 7px;
+  line-height: 1;
 }
 
 .overlay-member.speaking .overlay-avatar {

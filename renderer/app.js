@@ -618,12 +618,16 @@ async function finalizeAuthSession(account) {
     await loadServerInvites();
     let shouldShowOnboarding = false;
     try {
-      shouldShowOnboarding = localStorage.getItem(`badiscord_pending_onboarding_${account.id}`) === 'true';
-    } catch (_) {}
+      const pendingKey = `badiscord_pending_onboarding_${account.id}`;
+      const activeKey = `badiscord_connections_onboarding_${account.id}`;
+      const wasPending = localStorage.getItem(pendingKey) === 'true';
+      shouldShowOnboarding = wasPending || localStorage.getItem(activeKey) === 'true';
+      if (wasPending) localStorage.setItem(activeKey, 'true');
+      localStorage.removeItem(pendingKey);
+    } catch (error) {
+      console.warn('Não foi possível carregar o estado inicial das conexões:', error);
+    }
     if (shouldShowOnboarding) {
-      try {
-        localStorage.removeItem(`badiscord_pending_onboarding_${account.id}`);
-      } catch (_) {}
       openHomeFriendsView();
     } else {
       restoreServerView(activeServerId);
@@ -2038,19 +2042,32 @@ function returnToConnectedVoiceChannel() {
 // ==========================================
 // RENDERIZAÇÃO DE SERVIDORES E NAVEGAÇÃO
 // ==========================================
+function isCommunityOnboardingActive() {
+  if (!authenticatedAccount?.id) return false;
+  try {
+    return localStorage.getItem(`badiscord_pending_onboarding_${authenticatedAccount.id}`) === 'true'
+      || localStorage.getItem(`badiscord_connections_onboarding_${authenticatedAccount.id}`) === 'true';
+  } catch (error) {
+    console.warn('Não foi possível consultar o estado inicial das conexões:', error);
+    return false;
+  }
+}
+
+function completeCommunityOnboarding() {
+  if (!authenticatedAccount?.id) return;
+  try {
+    localStorage.removeItem(`badiscord_pending_onboarding_${authenticatedAccount.id}`);
+    localStorage.removeItem(`badiscord_connections_onboarding_${authenticatedAccount.id}`);
+  } catch (error) {
+    console.warn('Não foi possível encerrar a apresentação inicial das conexões:', error);
+  }
+}
+
 function renderGuilds() {
   if (!guildList) return;
   hideServerVoiceHoverCard();
   guildList.innerHTML = '';
-
-  let pendingOnboarding = false;
-  if (authenticatedAccount) {
-    try {
-      pendingOnboarding = localStorage.getItem(`badiscord_pending_onboarding_${authenticatedAccount.id}`) === 'true';
-    } catch (_) {}
-  }
-
-  (pendingOnboarding ? [] : servers).forEach(srv => {
+  (isCommunityOnboardingActive() ? [] : servers).forEach(srv => {
     const icon = document.createElement('div');
     icon.className = `guild-icon-wrap ${!inHomeView && srv.id === activeServerId ? 'active' : ''}`;
 
@@ -3806,6 +3823,49 @@ function refreshVoiceParticipantViews() {
 let gameOverlayEnabled = localStorage.getItem('badiscord_game_overlay_enabled') !== 'false';
 let gameOverlayHideTimeout = null;
 let gameOverlayWasShown = false;
+const gameOverlayAvatarCache = new Map();
+
+function getGameOverlayAvatarUrl(avatarUrl) {
+  if (typeof avatarUrl !== 'string' || !avatarUrl) return '';
+  if (avatarUrl.length <= 100_000) return avatarUrl;
+  if (!/^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(avatarUrl)) return '';
+  if (gameOverlayAvatarCache.has(avatarUrl)) return gameOverlayAvatarCache.get(avatarUrl);
+
+  gameOverlayAvatarCache.set(avatarUrl, '');
+  const image = new Image();
+  image.onload = () => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 96;
+      canvas.height = 96;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Não foi possível preparar a foto do mini perfil.');
+      const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+      const sourceX = (image.naturalWidth - sourceSize) / 2;
+      const sourceY = (image.naturalHeight - sourceSize) / 2;
+      context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, canvas.width, canvas.height);
+      let thumbnail = canvas.toDataURL('image/jpeg', 0.7);
+      if (thumbnail.length > 100_000) {
+        canvas.width = 64;
+        canvas.height = 64;
+        context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, canvas.width, canvas.height);
+        thumbnail = canvas.toDataURL('image/jpeg', 0.5);
+      }
+      if (thumbnail.length <= 100_000) gameOverlayAvatarCache.set(avatarUrl, thumbnail);
+      syncGameVoiceOverlay();
+    } catch (error) {
+      console.warn('Não foi possível preparar a foto para o mini perfil no jogo:', error);
+    }
+  };
+  image.onerror = () => {
+    console.warn('Não foi possível carregar a foto para o mini perfil no jogo.');
+  };
+  image.src = avatarUrl;
+  if (gameOverlayAvatarCache.size > 20) {
+    gameOverlayAvatarCache.delete(gameOverlayAvatarCache.keys().next().value);
+  }
+  return '';
+}
 
 function updateGameOverlayToggleButton() {
   const button = document.getElementById('btnToggleGameOverlay');
@@ -3829,7 +3889,7 @@ function syncGameVoiceOverlay(activity = null) {
     ? getVoiceChannelParticipants(currentChannel, connectedVoiceServerId || activeServerId).map((participant) => ({
     id: participant.id,
     name: participant.name,
-    avatarUrl: participant.avatarUrl || '',
+    avatarUrl: getGameOverlayAvatarUrl(participant.avatarUrl || ''),
     isMuted: Boolean(participant.isMuted),
     isSpeaking: Boolean(participant.isSpeaking),
     isStreaming: Boolean(participant.isStreaming)
@@ -6284,6 +6344,10 @@ if (btnHomeDM) {
 function restoreServerView(srvId) {
   inHomeView = false;
   currentDmFriend = null;
+  if (servers.some((server) => server.id === srvId) && isCommunityOnboardingActive()) {
+    completeCommunityOnboarding();
+    renderGuilds();
+  }
   if (btnHomeDM) btnHomeDM.classList.remove('active');
   if (serverHeaderWrapper) serverHeaderWrapper.style.display = 'block';
   if (channelsScroll) channelsScroll.style.display = 'block';
@@ -6331,10 +6395,19 @@ function renderFriendsList(filter = '') {
 
   if (filtered.length === 0) {
     const noStatusMatches = friendsList.length > 0 && !filter && currentFriendsTab !== 'all';
+    const showCommunityOnboarding = friendsList.length === 0 && !filter && isCommunityOnboardingActive();
+    const emptyTitle = showCommunityOnboarding
+      ? 'Comece pela sua comunidade'
+      : (friendsList.length === 0 ? (filter ? 'Nenhum amigo encontrado' : 'Você ainda não adicionou amigos') : 'Nenhum resultado encontrado');
+    const emptyDescription = showCommunityOnboarding
+      ? 'Crie seu próprio servidor ou procure a Comunidade BADISCORD.'
+      : (friendsList.length === 0
+        ? (filter ? 'Tente buscar com outro nome.' : 'Quando adicionar amigos, eles aparecerão aqui.')
+        : 'Tente buscar com outro nome ou tag.');
     const empty = document.createElement('div');
     empty.className = 'friends-empty-state';
     empty.innerHTML = `
-      <div class="friends-empty-visual" aria-hidden="true">
+      ${showCommunityOnboarding ? `<div class="friends-empty-visual" aria-hidden="true">
         <svg viewBox="0 0 120 96">
           <path d="M25 48 60 17l35 31-35 31-35-31Z"></path>
           <path d="M25 48h70M60 17v62"></path>
@@ -6344,11 +6417,11 @@ function renderFriendsList(filter = '') {
           <circle cx="60" cy="79" r="8"></circle>
           <circle class="friends-empty-core" cx="60" cy="48" r="10"></circle>
         </svg>
-      </div>
-      <span class="friends-empty-eyebrow">BADISCORD / CONEXÕES</span>
-      <div class="friends-empty-title">${friendsList.length === 0 ? 'Comece pela sua comunidade' : 'Nenhum resultado encontrado'}</div>
-      <div class="friends-empty-desc">${friendsList.length === 0 ? 'Crie seu próprio servidor ou procure a Comunidade BADISCORD.' : 'Tente buscar com outro nome ou tag.'}</div>
-      ${friendsList.length === 0 ? '<div class="friends-onboarding-actions"><button type="button" class="friends-empty-cta" data-server-action="create">Criar seu servidor <span aria-hidden="true">↗</span></button><button type="button" class="friends-empty-cta friends-empty-cta-secondary" data-server-action="explore">Procurar comunidade <span aria-hidden="true">↗</span></button></div>' : ''}
+      </div>` : ''}
+      <span class="friends-empty-eyebrow">${showCommunityOnboarding ? 'BADISCORD / AMIGOS' : 'AMIGOS'}</span>
+      <div class="friends-empty-title">${emptyTitle}</div>
+      <div class="friends-empty-desc">${emptyDescription}</div>
+      ${showCommunityOnboarding ? '<div class="friends-onboarding-actions"><button type="button" class="friends-empty-cta" data-server-action="create">Criar seu servidor <span aria-hidden="true">↗</span></button><button type="button" class="friends-empty-cta friends-empty-cta-secondary" data-server-action="explore">Procurar comunidade <span aria-hidden="true">↗</span></button></div>' : ''}
     `;
     if (noStatusMatches) {
       empty.classList.add('is-status-empty');
@@ -10323,6 +10396,7 @@ function applyUserProfile() {
     updateSidebarChannelUsers(currentChannel, connectedVoiceServerId || activeServerId);
   }
   updateVoiceSelfCard();
+  syncGameVoiceOverlay();
 }
 
 // Upload de Foto de Perfil (Escolher imagem do PC)

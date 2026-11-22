@@ -40,9 +40,21 @@
         image.alt = '';
         image.onerror = () => {
           image.remove();
-          avatar.textContent = (participant.name || 'U').slice(0, 1).toUpperCase();
+          avatar.insertBefore(
+            document.createTextNode((participant.name || 'U').slice(0, 1).toUpperCase()),
+            avatar.firstChild
+          );
         };
         avatar.replaceChildren(image);
+      }
+      if (participant.isStreaming) {
+        const liveBadge = document.createElement('span');
+        liveBadge.className = 'overlay-avatar-live';
+        liveBadge.textContent = '▣';
+        liveBadge.title = 'Ao vivo';
+        liveBadge.setAttribute('aria-label', 'Ao vivo');
+        liveBadge.setAttribute('role', 'img');
+        avatar.appendChild(liveBadge);
       }
 
       const name = document.createElement('span');
