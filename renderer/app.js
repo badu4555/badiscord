@@ -730,6 +730,7 @@ let livekitRoom = null;
 let livekitAudioTrack = null;
 let localVoiceCanPublish = true;
 let livekitConfigCache = '';
+let livekitTokenCache = new Map();
 let livekitScreenTrack = null;
 let livekitScreenAudioTrack = null;
 let localStreamResolution = null;
@@ -823,6 +824,10 @@ async function fetchLiveKitConfig() {
 }
 
 async function requestLiveKitToken(roomName, participantName, screenShareSession = false) {
+  if (!screenShareSession) {
+    const cached = livekitTokenCache.get(roomName);
+    if (cached && cached.expiresAt > Date.now() + 30_000) return cached.credentials;
+  }
   const response = await fetch(API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -834,11 +839,36 @@ async function requestLiveKitToken(roomName, participantName, screenShareSession
     throw new Error(payload.error || 'Não foi possível obter o token do LiveKit.');
   }
 
-  return {
+  const credentials = {
     token: payload.token,
     canPublish: payload.canPublish !== false,
     participantIdentity: payload.participantIdentity || ''
   };
+  if (!screenShareSession) {
+    livekitTokenCache.set(roomName, {
+      credentials,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    });
+  }
+  return credentials;
+}
+
+let voicePrewarmInFlight = '';
+async function prewarmVoiceChannel(channelName, serverId = activeServerId) {
+  if (!hasAuthenticatedSession() || !channelName) return;
+  const roomName = getLiveKitRoomName(channelName, serverId);
+  if (voicePrewarmInFlight === roomName) return;
+  voicePrewarmInFlight = roomName;
+  try {
+    await Promise.all([
+      fetchLiveKitConfig(),
+      requestLiveKitToken(roomName, userProfile.displayName || 'Bads')
+    ]);
+  } catch (error) {
+    console.warn('Não foi possível preparar o canal de voz antecipadamente:', error);
+  } finally {
+    if (voicePrewarmInFlight === roomName) voicePrewarmInFlight = '';
+  }
 }
 
 function clearRemoteAudioElements(participantIdentity = '') {
@@ -903,24 +933,6 @@ async function connectToLiveKitRoom(channelName, onCredentials = null) {
         dynacast: true,
         logger: false
       };
-      if (window.LivekitClient.isE2EESupported?.() &&
-        window.LivekitClient.ExternalE2EEKeyProvider &&
-        window.LivekitClient.createE2EEKey &&
-        window.BadiscordE2EE?.exportGroupKeyMaterial &&
-        activeServerId) {
-        try {
-          const recipientIds = await getChannelMemberIds(activeServerId);
-          if (!recipientIds.includes(authenticatedAccount.id)) recipientIds.push(authenticatedAccount.id);
-          const conversationId = `server:${activeServerId}:${encodeURIComponent(channelName)}`;
-          const keyMaterial = await window.BadiscordE2EE.exportGroupKeyMaterial(conversationId, recipientIds);
-          const keyProvider = new window.LivekitClient.ExternalE2EEKeyProvider();
-          await keyProvider.setKey(keyMaterial);
-          const worker = new Worker('/node_modules/livekit-client/dist/livekit-client.e2ee.worker.js');
-          roomOptions.encryption = { keyProvider, worker };
-        } catch (error) {
-          console.error('Não foi possível ativar E2EE da chamada de voz:', error);
-        }
-      }
       livekitRoom = new window.LivekitClient.Room(roomOptions);
 
       livekitRoom.on(window.LivekitClient.RoomEvent.ConnectionStateChanged, (state) => {
@@ -1137,25 +1149,7 @@ async function connectPrivateCall(call) {
   }
   const { token } = await requestLiveKitToken(call.roomName, userProfile.displayName || 'Usuário');
   const livekitUrl = await fetchLiveKitConfig();
-  let roomOptions = { adaptiveStream: true, dynacast: true };
-  const recipientId = call.caller_id
-    ? (call.caller_id === authenticatedAccount.id ? call.receiver_id : call.caller_id)
-    : currentDmFriend?.id;
-  if (recipientId && window.LivekitClient.isE2EESupported?.() &&
-    window.LivekitClient.ExternalE2EEKeyProvider &&
-    window.BadiscordE2EE?.exportDirectKeyMaterial) {
-    try {
-      const ids = [authenticatedAccount.id, recipientId].sort();
-      const conversationId = `dm:${ids[0]}:${ids[1]}`;
-      const keyMaterial = await window.BadiscordE2EE.exportDirectKeyMaterial(conversationId, recipientId);
-      const keyProvider = new window.LivekitClient.ExternalE2EEKeyProvider();
-      await keyProvider.setKey(keyMaterial);
-      const worker = new Worker('/node_modules/livekit-client/dist/livekit-client.e2ee.worker.js');
-      roomOptions.encryption = { keyProvider, worker };
-    } catch (error) {
-      console.error('Não foi possível ativar E2EE da chamada privada:', error);
-    }
-  }
+  const roomOptions = { adaptiveStream: true, dynacast: true };
   const room = new window.LivekitClient.Room(roomOptions);
   privateCallRoom = room;
   room.on(window.LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
@@ -1518,7 +1512,9 @@ async function disconnectLiveKitRoom() {
   }
 
   if (livekitRoom && livekitRoom.state === 'connected') {
-    await livekitRoom.disconnect();
+    void livekitRoom.disconnect().catch((error) => {
+      console.warn('Não foi possível desconectar totalmente a sala de voz:', error);
+    });
   }
   localVoiceCanPublish = true;
   remoteScreenTracks.clear();
@@ -2578,6 +2574,12 @@ function renderChannels(server) {
         item.addEventListener('contextmenu', (event) => {
           event.preventDefault();
           openChannelContextMenu(event, server, chan, 'voice', item);
+        });
+        item.addEventListener('pointerenter', () => {
+          prewarmVoiceChannel(chan, server.id);
+        });
+        item.addEventListener('pointerdown', () => {
+          prewarmVoiceChannel(chan, server.id);
         });
         item.addEventListener('click', () => {
           if (connectedVoiceServerId === server.id && currentChannel === chan && livekitRoom?.state === 'connected') {
@@ -4187,18 +4189,21 @@ async function joinVoiceChannel(channelName) {
     void publishVoiceSoundEvent('joined');
     playVoiceJoinSound();
     void measurePing();
-    const microphoneTrack = await publishMicToLiveKit(microphoneTrackPromise, voiceBitrate);
-    if (microphoneTrack?.mediaStreamTrack) {
-      localAudioTrack = microphoneTrack.mediaStreamTrack;
-      void setupAudioLevelMeter(new MediaStream([localAudioTrack]));
-    } else if (localVoiceCanPublish) {
-      throw new Error('Não foi possível ativar o microfone.');
-    } else {
-      isMuted = true;
-      updateControlsUI();
-      showToast('Você pode ouvir o canal, mas está silenciado neste servidor.', '🔇');
-    }
-    if (localVoiceCanPublish) await publishSoundboardTrack();
+    void publishMicToLiveKit(microphoneTrackPromise, voiceBitrate).then((microphoneTrack) => {
+      if (microphoneTrack?.mediaStreamTrack) {
+        localAudioTrack = microphoneTrack.mediaStreamTrack;
+        void setupAudioLevelMeter(new MediaStream([localAudioTrack]));
+      } else if (localVoiceCanPublish) {
+        isMuted = true;
+        updateControlsUI();
+        showToast('Não foi possível ativar o microfone. Você continuará nesta call silenciado.', '🔇');
+      } else {
+        isMuted = true;
+        updateControlsUI();
+        showToast('Você pode ouvir o canal, mas está silenciado neste servidor.', '🔇');
+      }
+    });
+    if (localVoiceCanPublish) void publishSoundboardTrack();
     syncGameVoiceOverlay({
       id: `joined-self-${Date.now()}`,
       text: 'Você entrou na call'
@@ -8731,7 +8736,7 @@ async function disconnectVoice(playSound = true) {
   if (voiceConnectedStrip) voiceConnectedStrip.style.display = 'none';
   stopPingMonitor();
 
-  await publishVoiceSoundEvent('left');
+  void publishVoiceSoundEvent('left');
   if (isNativeMobileStreamer || isNativeMobileSharePending) await stopCurrentStream();
   await disconnectLiveKitRoom();
 
