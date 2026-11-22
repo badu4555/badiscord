@@ -729,6 +729,7 @@ async function ensureAuthState() {
 let livekitRoom = null;
 let livekitAudioTrack = null;
 let localVoiceCanPublish = true;
+let livekitConfigCache = '';
 let livekitScreenTrack = null;
 let livekitScreenAudioTrack = null;
 let localStreamResolution = null;
@@ -802,6 +803,7 @@ function getLiveKitRoomName(channelName, serverId = activeServerId) {
 }
 
 async function fetchLiveKitConfig() {
+  if (livekitConfigCache) return livekitConfigCache;
   const baseUrl = API_URL.replace(/\/api\/token$/i, '');
   try {
     const response = await fetch(`${baseUrl}/api/config`, { headers: { Accept: 'application/json' } });
@@ -809,12 +811,15 @@ async function fetchLiveKitConfig() {
     const payload = await response.json();
     if (payload && payload.livekitUrl) {
       setStoredLiveKitUrl(payload.livekitUrl);
+      livekitConfigCache = payload.livekitUrl;
       return payload.livekitUrl;
     }
   } catch (err) {
     console.warn('Não foi possível carregar a configuração do LiveKit do backend:', err);
   }
-  return getStoredLiveKitUrl();
+  const fallbackUrl = getStoredLiveKitUrl();
+  livekitConfigCache = fallbackUrl;
+  return fallbackUrl;
 }
 
 async function requestLiveKitToken(roomName, participantName, screenShareSession = false) {
@@ -1095,7 +1100,6 @@ async function connectToLiveKitRoom(channelName, onCredentials = null) {
     ]);
     localVoiceCanPublish = credentials.canPublish;
     onCredentials?.(credentials);
-    await livekitRoom.prepareConnection(livekitUrl, credentials.token);
     await livekitRoom.connect(livekitUrl, credentials.token);
     return livekitRoom;
   } finally {
@@ -1171,7 +1175,6 @@ async function connectPrivateCall(call) {
       audio.remove();
     });
   });
-  await room.prepareConnection(livekitUrl, token);
   await room.connect(livekitUrl, token);
   privateCallAudioTrack = await window.LivekitClient.createLocalAudioTrack({
     echoCancellation: true,
@@ -4160,33 +4163,34 @@ async function joinVoiceChannel(channelName) {
     voiceConnectionPanel.style.display = 'flex';
     updateVoiceConnectionLocation();
   }
-  startPingMonitor();
   renderVoiceParticipants();
 
   const activeVoiceServer = servers.find((server) => server.id === activeServerId);
   const voiceBitrate = activeVoiceServer?.voiceSettings?.[channelName]?.bitrate || 96;
-  let microphoneTrackPromise = null;
+  let microphoneTrackPromise = window.LivekitClient?.createLocalAudioTrack
+    ? window.LivekitClient.createLocalAudioTrack({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      sampleRate: 48000
+    }).catch((error) => {
+      console.warn('Não foi possível acessar o microfone:', error);
+      return null;
+    })
+    : null;
   try {
     const room = await connectToLiveKitRoom(channelName, (credentials) => {
       if (!credentials.canPublish) return;
-      microphoneTrackPromise = window.LivekitClient.createLocalAudioTrack({
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: 48000
-      }).catch((error) => {
-        console.warn('Não foi possível acessar o microfone:', error);
-        return null;
-      });
     });
     if (!room || room.state !== 'connected') throw new Error('Não foi possível conectar ao canal de voz.');
-    await publishVoiceSoundEvent('joined');
+    startPingMonitor();
+    void publishVoiceSoundEvent('joined');
     playVoiceJoinSound();
     void measurePing();
     const microphoneTrack = await publishMicToLiveKit(microphoneTrackPromise, voiceBitrate);
     if (microphoneTrack?.mediaStreamTrack) {
       localAudioTrack = microphoneTrack.mediaStreamTrack;
-      await setupAudioLevelMeter(new MediaStream([localAudioTrack]));
+      void setupAudioLevelMeter(new MediaStream([localAudioTrack]));
     } else if (localVoiceCanPublish) {
       throw new Error('Não foi possível ativar o microfone.');
     } else {
