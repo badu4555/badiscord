@@ -203,14 +203,10 @@
           <p class="auth-subtitle">Digite o código enviado ao seu e-mail e escolha uma nova senha.</p>
         </div>
 
-        <div class="auth-2fa-notice" id="auth2FANotice" style="display: none;">
-          <span>Código de desenvolvimento: <strong id="authGenerated2FACode"></strong></span>
-        </div>
-
         <form class="auth-form" id="form2FA" onsubmit="return false;">
           <div class="auth-field-group">
-            <label class="auth-field-label">CÓDIGO DE AUTENTICAÇÃO (6 DÍGITOS) <span class="auth-required">*</span></label>
-            <input type="text" class="auth-input auth-code-input" id="input2FACode" maxlength="6" placeholder="000000" required>
+            <label class="auth-field-label">CÓDIGO DE AUTENTICAÇÃO (8 DÍGITOS) <span class="auth-required">*</span></label>
+            <input type="text" class="auth-input auth-code-input" id="input2FACode" maxlength="8" placeholder="00000000" required>
           </div>
 
           <div class="auth-field-group">
@@ -1777,7 +1773,7 @@
           <div class="profile-edit-form">
             <div class="form-group">
               <label class="setting-field-label">NOME DE EXIBIÇÃO</label>
-              <input type="text" id="inputDisplayName" class="discord-input" placeholder="Seu nome exibido no aplicativo" maxlength="32" value="Bads">
+              <input type="text" id="inputDisplayName" class="discord-input" placeholder="Seu nome exibido no aplicativo" maxlength="28" value="Bads">
             </div>
 
             <div class="form-group">

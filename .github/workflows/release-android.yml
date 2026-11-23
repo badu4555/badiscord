@@ -34,6 +34,15 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Run security and server tests
+        run: npm ci && npm test
+
       - name: Validate Android signing secrets
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

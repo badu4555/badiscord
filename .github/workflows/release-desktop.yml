@@ -37,6 +37,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run security and server tests
+        run: npm test
+
       - name: Build and publish installer, portable package, and update metadata
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

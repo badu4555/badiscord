@@ -103,7 +103,7 @@ Para habilitar a recuperação de senha por e-mail, configure também estas vari
 - `SMTP_USER` e `SMTP_PASS` com o usuário e a senha SMTP ou senha de aplicativo do provedor.
 - `SMTP_FROM` com o remetente autorizado pelo provedor, por exemplo `BADISCORD <contato@seudominio.com>`.
 
-Sem essas variáveis, o endpoint de recuperação informa que o envio está indisponível em produção; ele não confirma falsamente o envio do código. Em desenvolvimento, o código continua disponível apenas na interface local.
+Sem essas variáveis, o endpoint de recuperação informa que o envio está indisponível. O código nunca é devolvido pela API ou mostrado na interface; ele só pode ser recebido pelo e-mail configurado.
 
 ### Configurar atividade do Spotify
 

@@ -55,6 +55,26 @@ const PROFILE_ICON_GLYPHS = {
 };
 const PROFILE_ICON_VALUES = new Set(['none', ...Object.keys(PROFILE_ICON_GLYPHS)]);
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
+}
+
+function getSafeProfileImageUrl(value) {
+  if (typeof value !== 'string' || !value || value.length > 500_000) return '';
+  if (/^data:image\/(?:png|jpeg|webp|gif);base64,[a-z0-9+/]+=*$/i.test(value)) return value;
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'https:' && !url.username && !url.password && !/[<>"'`\\]/.test(value)) return value;
+  } catch (_) {}
+  return '';
+}
+
 let userProfile = DEFAULT_PROFILE;
 try {
   const savedProf = localStorage.getItem('badiscord_user_profile');
@@ -564,17 +584,37 @@ async function loadProfileCustomization() {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || 'Não foi possível carregar as personalizações do perfil.');
-  return payload.customization || {};
+  return {
+    ...(payload.customization || {}),
+    ...(payload.profile || {})
+  };
+}
+
+async function saveAccountProfile() {
+  const response = await fetch('/api/profile', {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      displayName: userProfile.displayName,
+      avatarUrl: userProfile.avatarUrl || ''
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Não foi possível salvar o perfil na conta.');
+  return payload.profile;
 }
 
 function applySessionToProfile(account, customization = {}) {
   userProfile = {
     ...DEFAULT_PROFILE,
     ...customization,
-    displayName: account.displayName || account.username,
+    displayName: customization.displayName || account.displayName || account.username,
     username: account.username,
     tag: account.tag || generateAccountTag(),
-    avatarUrl: account.avatarUrl || '',
+    avatarUrl: typeof customization.avatarUrl === 'string'
+      ? customization.avatarUrl
+      : (account.avatarUrl || ''),
     bannerColor: account.bannerColor || '#5865F2',
     aboutMe: account.aboutMe || 'Usando o BADISCORD!',
     email: account.email,
@@ -3991,8 +4031,13 @@ function updateSidebarChannelUsers(channelName, serverId = activeServerId) {
 
     const avatar = document.createElement('div');
     avatar.className = 'channel-user-avatar';
-    if (member.avatarUrl) {
-      avatar.innerHTML = `<img src="${member.avatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+    const safeMemberAvatarUrl = getSafeProfileImageUrl(member.avatarUrl);
+    if (safeMemberAvatarUrl) {
+      const image = document.createElement('img');
+      image.src = safeMemberAvatarUrl;
+      image.alt = '';
+      image.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover;';
+      avatar.appendChild(image);
     } else {
       avatar.style.backgroundColor = member.color || '#5865F2';
       avatar.textContent = member.initial || member.name[0].toUpperCase();
@@ -4080,8 +4125,12 @@ function renderVoiceParticipants() {
 
     const avatar = document.createElement('div');
     avatar.className = 'participant-avatar-lg';
-    if (member.avatarUrl) {
-      avatar.innerHTML = `<img src="${member.avatarUrl}" alt="Avatar">`;
+    const safeMemberAvatarUrl = getSafeProfileImageUrl(member.avatarUrl);
+    if (safeMemberAvatarUrl) {
+      const image = document.createElement('img');
+      image.src = safeMemberAvatarUrl;
+      image.alt = 'Avatar';
+      avatar.appendChild(image);
     } else {
       avatar.style.backgroundColor = member.color || '#5865F2';
       avatar.textContent = (member.name || 'U')[0].toUpperCase();
@@ -7007,7 +7056,11 @@ function renderNewDmFriendsList(query = '') {
 
     const name = document.createElement('span');
     name.className = 'new-dm-name';
-    name.innerHTML = `${friend.name} <span class="new-dm-tag">#${friend.tag}</span>`;
+    name.textContent = `${friend.name} `;
+    const tag = document.createElement('span');
+    tag.className = 'new-dm-tag';
+    tag.textContent = `#${friend.tag}`;
+    name.appendChild(tag);
 
     left.appendChild(avatar);
     left.appendChild(name);
@@ -8153,18 +8206,26 @@ function renderInviteFriends(query = '') {
   visibleFriends.forEach((friend) => {
     const row = document.createElement('div');
     row.className = 'invite-friend-row';
-    row.innerHTML = `
-      <div class="invite-friend-person">
-        <div class="invite-friend-avatar" style="background:${friend.color || '#5865F2'}">${friend.initial || friend.name[0].toUpperCase()}</div>
-        <div class="invite-friend-meta">
-          <strong>${friend.name}</strong>
-          <span>${friend.username || friend.fullTag || ''}</span>
-        </div>
-        <span class="invite-online-dot ${friend.status === 'offline' ? 'offline' : ''}"></span>
-      </div>
-      <button class="btn-send-friend-req invite-action-button">Convidar</button>
-    `;
-    const button = row.querySelector('button');
+    const person = document.createElement('div');
+    person.className = 'invite-friend-person';
+    const avatar = document.createElement('div');
+    avatar.className = 'invite-friend-avatar';
+    avatar.style.background = friend.color || '#5865F2';
+    avatar.textContent = friend.initial || friend.name[0].toUpperCase();
+    const meta = document.createElement('div');
+    meta.className = 'invite-friend-meta';
+    const name = document.createElement('strong');
+    name.textContent = friend.name;
+    const handle = document.createElement('span');
+    handle.textContent = friend.username || friend.fullTag || '';
+    meta.append(name, handle);
+    const dot = document.createElement('span');
+    dot.className = `invite-online-dot ${friend.status === 'offline' ? 'offline' : ''}`;
+    person.append(avatar, meta, dot);
+    const button = document.createElement('button');
+    button.className = 'btn-send-friend-req invite-action-button';
+    button.textContent = 'Convidar';
+    row.append(person, button);
     button.addEventListener('click', async () => {
       button.disabled = true;
       button.textContent = 'Enviando...';
@@ -10307,6 +10368,52 @@ const inputBannerColor = document.getElementById('inputBannerColor');
 
 const profileTagIcons = { server: '🛡️', friend: '👤', community: '🌐' };
 
+function readProfileAvatar(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('Não foi possível ler a foto escolhida.'));
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error('Não foi possível ler a foto escolhida.'));
+        return;
+      }
+
+      const image = new Image();
+      image.onerror = () => reject(new Error('O arquivo escolhido não é uma imagem válida.'));
+      image.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 256;
+          canvas.height = 256;
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('Não foi possível preparar a foto de perfil.');
+          const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+          const sourceX = (image.naturalWidth - sourceSize) / 2;
+          const sourceY = (image.naturalHeight - sourceSize) / 2;
+          context.fillStyle = '#fff';
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(
+            image,
+            sourceX,
+            sourceY,
+            sourceSize,
+            sourceSize,
+            0,
+            0,
+            canvas.width,
+            canvas.height
+          );
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
+        } catch (error) {
+          reject(error);
+        }
+      };
+      image.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function renderProfileTags(container, tags, removable = false) {
   if (!container) return;
   container.replaceChildren();
@@ -10362,9 +10469,16 @@ function applyUserProfile() {
     myStatusText.textContent = statusLabels[userProfile.presenceStatus] || 'Invisível';
   }
   if (myAvatar) {
-    if (userProfile.avatarUrl) {
-      myAvatar.innerHTML = `<img src="${userProfile.avatarUrl}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+    const safeAvatarUrl = getSafeProfileImageUrl(userProfile.avatarUrl);
+    if (safeAvatarUrl) {
+      myAvatar.replaceChildren();
+      const image = document.createElement('img');
+      image.src = safeAvatarUrl;
+      image.alt = '';
+      image.style.cssText = 'width:100%;height:100%;border-radius:50%;object-fit:cover;';
+      myAvatar.appendChild(image);
     } else {
+      myAvatar.replaceChildren();
       myAvatar.textContent = (userProfile.displayName || 'B')[0].toUpperCase();
     }
   }
@@ -10457,13 +10571,15 @@ if (btnChangeAvatar && inputAvatarFile) {
   inputAvatarFile.addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      userProfile.avatarUrl = event.target.result;
+    inputAvatarFile.value = '';
+    readProfileAvatar(file).then((avatarUrl) => {
+      userProfile.avatarUrl = avatarUrl;
+      saveUserProfile();
       applyUserProfile();
-    };
-    reader.readAsDataURL(file);
+    }).catch((error) => {
+      console.error('Não foi possível atualizar a foto do perfil:', error);
+      showToast(error.message || 'Não foi possível atualizar a foto do perfil.', '⚠️');
+    });
   });
 }
 
@@ -10479,7 +10595,7 @@ if (inputBannerColor) {
 
 // Salvar Perfil
 if (btnSaveProfile) {
-  btnSaveProfile.addEventListener('click', () => {
+  btnSaveProfile.addEventListener('click', async () => {
     const inputDisplayName = document.getElementById('inputDisplayName');
     const inputUsername = document.getElementById('inputUsername');
     const inputAboutMe = document.getElementById('inputAboutMe');
@@ -10497,16 +10613,32 @@ if (btnSaveProfile) {
       userProfile.bannerColor = inputBannerColor.value;
     }
 
-    saveUserProfile();
-    applyUserProfile();
-    publishPresenceStatus();
-    playPopSound();
+    btnSaveProfile.disabled = true;
+    if (saveStatusMsg) saveStatusMsg.textContent = 'Salvando perfil...';
+    try {
+      if (authenticatedAccount) {
+        const savedProfile = await saveAccountProfile();
+        userProfile.displayName = savedProfile.displayName;
+        userProfile.avatarUrl = savedProfile.avatarUrl;
+        authenticatedAccount.displayName = savedProfile.displayName;
+      }
+      saveUserProfile();
+      applyUserProfile();
+      await publishPresenceStatus();
+      playPopSound();
 
-    if (saveStatusMsg) {
-      saveStatusMsg.textContent = '✓ Perfil atualizado com sucesso!';
-      setTimeout(() => {
-        saveStatusMsg.textContent = '';
-      }, 3000);
+      if (saveStatusMsg) {
+        saveStatusMsg.textContent = '✓ Perfil atualizado com sucesso!';
+        setTimeout(() => {
+          saveStatusMsg.textContent = '';
+        }, 3000);
+      }
+    } catch (error) {
+      console.error('Não foi possível salvar o perfil:', error);
+      if (saveStatusMsg) saveStatusMsg.textContent = error.message || 'Não foi possível salvar o perfil.';
+      showToast(error.message || 'Não foi possível salvar o perfil.', '⚠️');
+    } finally {
+      btnSaveProfile.disabled = false;
     }
   });
 }
@@ -12037,10 +12169,15 @@ window.addEventListener('keydown', (event) => {
 
     // Avatar
     if (presenceAvatarImg) {
-      if (userProfile.avatarUrl) {
-        presenceAvatarImg.innerHTML = '<img src="' + userProfile.avatarUrl + '" alt="avatar">';
+      const safeAvatarUrl = getSafeProfileImageUrl(userProfile.avatarUrl);
+      if (safeAvatarUrl) {
+        presenceAvatarImg.replaceChildren();
+        const image = document.createElement('img');
+        image.src = safeAvatarUrl;
+        image.alt = 'avatar';
+        presenceAvatarImg.appendChild(image);
       } else {
-        presenceAvatarImg.innerHTML = '';
+        presenceAvatarImg.replaceChildren();
         presenceAvatarImg.textContent = (userProfile.displayName || 'B')[0].toUpperCase();
         presenceAvatarImg.style.backgroundColor = userProfile.bannerColor || '#5865F2';
       }
@@ -13146,8 +13283,6 @@ window.addEventListener('keydown', (event) => {
 
   const forgotEmail = document.getElementById('forgotEmail');
   const btnSend2FACode = document.getElementById('btnSend2FACode');
-  const auth2FANotice = document.getElementById('auth2FANotice');
-  const authGenerated2FACode = document.getElementById('authGenerated2FACode');
   const input2FACode = document.getElementById('input2FACode');
   const inputNewPassword2FA = document.getElementById('inputNewPassword2FA');
   const btnConfirm2FAReset = document.getElementById('btnConfirm2FAReset');
@@ -13548,8 +13683,6 @@ window.addEventListener('keydown', (event) => {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || 'Não foi possível iniciar a recuperação.');
         active2FACode = payload.recoveryId;
-        if (authGenerated2FACode) authGenerated2FACode.textContent = payload.demoCode || '';
-        if (auth2FANotice) auth2FANotice.style.display = payload.demoCode ? '' : 'none';
         switchAuthView('2fa');
         showToast(payload.message || 'Se houver uma conta com esse e-mail, enviaremos um código de recuperação.', '📩');
       } catch (error) {

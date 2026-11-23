@@ -1,10 +1,11 @@
 {
   "name": "badiscord",
   "productName": "BADISCORD",
-  "version": "1.0.50",
+  "version": "1.0.51",
   "description": "Aplicativo Desktop de Voz e Streaming até 2K",
   "main": "main.js",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "start": "node server/server.js",
     "build:native-audio": "node scripts/build-native-audio.js",
     "desktop": "npm run build:native-audio && electron .",

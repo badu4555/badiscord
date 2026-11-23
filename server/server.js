@@ -16,6 +16,9 @@ const scryptAsync = promisify(crypto.scrypt);
 const AUTH_SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const AUTH_REMEMBERED_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const QR_LOGIN_CHALLENGE_MAX_AGE_MS = 2 * 60 * 1000;
+const RECOVERY_CODE_MAX_ATTEMPTS = 5;
+const RECOVERY_REQUEST_MAX_PER_WINDOW = 3;
+const RECOVERY_REQUEST_WINDOW_MS = 10 * 60 * 1000;
 const PASSWORD_POLICY = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 const EMAIL_POLICY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_CUSTOM_SOUND_BYTES = 4 * 1024 * 1024;
@@ -70,6 +73,19 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || '*')
 
 const publicDir = path.join(__dirname, '..', 'renderer');
 const nodeModulesDir = path.join(__dirname, '..', 'node_modules');
+
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; " +
+    "script-src 'self' https://www.google.com https://www.gstatic.com 'unsafe-inline'; " +
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; " +
+    "media-src 'self' blob: https:; connect-src 'self' wss: https:; " +
+    "frame-src https://www.google.com https://www.gstatic.com; worker-src 'self' blob:");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(), payment=()');
+  next();
+});
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -176,7 +192,13 @@ db.exec(`
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     code_hash TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
-    used_at INTEGER
+    used_at INTEGER,
+    failed_attempts INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS recovery_requests (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS friend_requests (
     id TEXT PRIMARY KEY,
@@ -340,6 +362,7 @@ db.exec(`
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS recovery_requests_user_created_idx ON recovery_requests(user_id, created_at);
   CREATE INDEX IF NOT EXISTS qr_login_challenges_expires_idx ON qr_login_challenges(expires_at);
   CREATE INDEX IF NOT EXISTS friend_requests_receiver_idx ON friend_requests(receiver_id, status);
   CREATE INDEX IF NOT EXISTS friend_requests_sender_idx ON friend_requests(sender_id, status);
@@ -351,6 +374,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS dm_messages_conversation_created_idx ON dm_messages(user_a, user_b, created_at);
   CREATE INDEX IF NOT EXISTS dm_messages_updated_at_idx ON dm_messages(updated_at);
 `);
+
+const recoveryCodeColumns = new Set(db.pragma('table_info(recovery_codes)').map((column) => column.name));
+if (!recoveryCodeColumns.has('failed_attempts')) {
+  db.exec('ALTER TABLE recovery_codes ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0');
+}
 
 const serverMemberColumns = new Set(db.pragma('table_info(server_members)').map((column) => column.name));
 [
@@ -571,7 +599,11 @@ app.post('/api/auth/register', async (req, res) => {
   if (!EMAIL_POLICY.test(email)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
   if (!USERNAME_POLICY.test(username)) return res.status(400).json({ error: 'O usuário deve ter de 3 a 24 caracteres: letras, números ou _.' });
   if (!PASSWORD_POLICY.test(password)) return res.status(400).json({ error: 'A senha precisa ter pelo menos 8 caracteres, uma letra, um número e um símbolo.' });
-  if (displayName.length > 28) return res.status(400).json({ error: 'O nome de exibição deve ter no máximo 28 caracteres.' });
+  if (displayName.length > 28 ||
+    /[<>&"'`]/u.test(displayName) ||
+    /[\u0000-\u001F\u007F]/u.test(displayName)) {
+    return res.status(400).json({ error: 'O nome de exibição contém caracteres inválidos.' });
+  }
 
   const existing = db.prepare('SELECT id FROM users WHERE email = ? OR username = ?').get(email, username);
   if (existing) return res.status(409).json({ error: 'E-mail ou nome de usuário já cadastrado.' });
@@ -614,12 +646,8 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-  if (!user) {
-    return res.status(401).json({ error: 'Conta não cadastrada.' });
-  }
-
-  if (!(await verifyPassword(password, user.password_hash))) {
-    return res.status(401).json({ error: 'Senha incorreta.' });
+  if (!user || !(await verifyPassword(password, user.password_hash))) {
+    return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
   }
 
   const sessionMaxAge = req.body?.rememberMe === true
@@ -750,8 +778,7 @@ app.post('/api/auth/recovery/request', async (req, res) => {
   const email = normalizeEmail(req.body?.email);
   if (!EMAIL_POLICY.test(email)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
 
-  if (!recoveryMailer && process.env.NODE_ENV === 'production') {
-    console.error('O envio de recuperação está indisponível: configure as variáveis SMTP no servidor.');
+  if (!recoveryMailer) {
     return res.status(503).json({ error: 'O envio de e-mail está temporariamente indisponível. Tente novamente mais tarde.' });
   }
 
@@ -763,29 +790,45 @@ app.post('/api/auth/recovery/request', async (req, res) => {
     });
   }
 
-  const code = String(crypto.randomInt(100000, 1000000));
+  const now = Date.now();
+  const canRequestRecovery = db.transaction(() => {
+    db.prepare('DELETE FROM recovery_requests WHERE created_at <= ?')
+      .run(now - RECOVERY_REQUEST_WINDOW_MS);
+    const requestCount = db.prepare(`SELECT COUNT(*) AS count FROM recovery_requests
+      WHERE user_id = ? AND created_at > ?`).get(user.id, now - RECOVERY_REQUEST_WINDOW_MS).count;
+    if (requestCount >= RECOVERY_REQUEST_MAX_PER_WINDOW) return false;
+    db.prepare('INSERT INTO recovery_requests (id, user_id, created_at) VALUES (?, ?, ?)')
+      .run(crypto.randomUUID(), user.id, now);
+    return true;
+  })();
+  if (!canRequestRecovery) {
+    return res.status(202).json({
+      recoveryId: crypto.randomUUID(),
+      message: 'Se houver uma conta com esse e-mail, enviaremos um código de recuperação.'
+    });
+  }
+
+  const code = String(crypto.randomInt(10_000_000, 100_000_000));
   const recoveryId = crypto.randomUUID();
 
-  if (recoveryMailer) {
-    const safeDisplayName = String(user.display_name || '').replace(/[&<>"']/g, (character) => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    })[character]);
-    try {
-      await recoveryMailer.sendMail({
-        from: SMTP_FROM,
-        to: user.email,
-        subject: 'Seu código para redefinir a senha do BADISCORD',
-        text: `Olá${user.display_name ? `, ${user.display_name}` : ''}.\n\nSeu código de recuperação do BADISCORD é: ${code}\n\nEle expira em 10 minutos e só pode ser usado uma vez. Se você não pediu a redefinição da senha, ignore este e-mail.`,
-        html: `<p>Olá${safeDisplayName ? `, ${safeDisplayName}` : ''}.</p><p>Seu código de recuperação do BADISCORD é:</p><p style="font-size:28px;font-weight:bold;letter-spacing:6px">${code}</p><p>Ele expira em 10 minutos e só pode ser usado uma vez.</p><p>Se você não pediu a redefinição da senha, ignore este e-mail.</p>`
-      });
-    } catch (error) {
-      console.error('Falha ao enviar o e-mail de recuperação:', error);
-      return res.status(503).json({ error: 'Não foi possível enviar o e-mail de recuperação agora. Tente novamente mais tarde.' });
-    }
+  const safeDisplayName = String(user.display_name || '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
+  try {
+    await recoveryMailer.sendMail({
+      from: SMTP_FROM,
+      to: user.email,
+      subject: 'Seu código para redefinir a senha do BADISCORD',
+      text: `Olá${user.display_name ? `, ${user.display_name}` : ''}.\n\nSeu código de recuperação do BADISCORD é: ${code}\n\nEle expira em 10 minutos e só pode ser usado uma vez. Se você não pediu a redefinição da senha, ignore este e-mail.`,
+      html: `<p>Olá${safeDisplayName ? `, ${safeDisplayName}` : ''}.</p><p>Seu código de recuperação do BADISCORD é:</p><p style="font-size:28px;font-weight:bold;letter-spacing:6px">${code}</p><p>Ele expira em 10 minutos e só pode ser usado uma vez.</p><p>Se você não pediu a redefinição da senha, ignore este e-mail.</p>`
+    });
+  } catch (error) {
+    console.error('Falha ao enviar o e-mail de recuperação:', error);
+    return res.status(503).json({ error: 'Não foi possível enviar o e-mail de recuperação agora. Tente novamente mais tarde.' });
   }
 
   db.prepare('DELETE FROM recovery_codes WHERE user_id = ?').run(user.id);
@@ -794,8 +837,7 @@ app.post('/api/auth/recovery/request', async (req, res) => {
 
   return res.status(202).json({
     recoveryId,
-    message: 'Se houver uma conta com esse e-mail, enviaremos um código de recuperação.',
-    demoCode: recoveryMailer ? undefined : code
+    message: 'Se houver uma conta com esse e-mail, enviaremos um código de recuperação.'
   });
 });
 
@@ -805,14 +847,39 @@ app.post('/api/auth/recovery/reset', async (req, res) => {
   const newPassword = String(req.body?.newPassword || '');
   const recovery = db.prepare(`SELECT recovery_codes.*, users.* FROM recovery_codes
     JOIN users ON users.id = recovery_codes.user_id
-    WHERE recovery_codes.id = ? AND recovery_codes.used_at IS NULL AND recovery_codes.expires_at > ?`).get(recoveryId, Date.now());
+    WHERE recovery_codes.id = ? AND recovery_codes.used_at IS NULL
+      AND recovery_codes.expires_at > ? AND recovery_codes.failed_attempts < ?`)
+    .get(recoveryId, Date.now(), RECOVERY_CODE_MAX_ATTEMPTS);
 
-  if (!recovery || hashSessionToken(code) !== recovery.code_hash) return res.status(400).json({ error: 'Código de recuperação inválido ou expirado.' });
+  if (!recovery) return res.status(400).json({ error: 'Código de recuperação inválido ou expirado.' });
+  if (hashSessionToken(code) !== recovery.code_hash) {
+    const failedAttempts = recovery.failed_attempts + 1;
+    db.prepare(`UPDATE recovery_codes
+      SET failed_attempts = ?, used_at = ?
+      WHERE id = ? AND used_at IS NULL AND expires_at > ? AND failed_attempts = ?`)
+      .run(
+        failedAttempts,
+        failedAttempts >= RECOVERY_CODE_MAX_ATTEMPTS ? Date.now() : null,
+        recoveryId,
+        Date.now(),
+        recovery.failed_attempts
+      );
+    return res.status(400).json({ error: 'Código de recuperação inválido ou expirado.' });
+  }
   if (!PASSWORD_POLICY.test(newPassword)) return res.status(400).json({ error: 'A nova senha precisa ter pelo menos 8 caracteres, uma letra, um número e um símbolo.' });
 
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(newPassword), recovery.user_id);
-  db.prepare('UPDATE recovery_codes SET used_at = ? WHERE id = ?').run(Date.now(), recoveryId);
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(recovery.user_id);
+  const passwordHash = await hashPassword(newPassword);
+  const usedRecovery = db.transaction(() => {
+    const result = db.prepare(`UPDATE recovery_codes SET used_at = ?
+      WHERE id = ? AND user_id = ? AND code_hash = ? AND used_at IS NULL
+        AND expires_at > ? AND failed_attempts < ?`)
+      .run(Date.now(), recoveryId, recovery.user_id, recovery.code_hash, Date.now(), RECOVERY_CODE_MAX_ATTEMPTS);
+    if (!result.changes) return false;
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, recovery.user_id);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(recovery.user_id);
+    return true;
+  })();
+  if (!usedRecovery) return res.status(400).json({ error: 'Código de recuperação inválido ou expirado.' });
   createSession(res, recovery.user_id);
   return res.json({ user: publicUser(recovery) });
 });
@@ -874,6 +941,21 @@ function formatFriend(user, relationshipStatus) {
 
 function canAccessServer(userId, serverId) {
   return Boolean(db.prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, userId));
+}
+
+function revokeServerConversationKeyWraps(serverId, userId = null) {
+  if (userId) {
+    db.prepare(`DELETE FROM e2ee_conversation_keys
+      WHERE user_id = ? AND conversation_id LIKE ?`).run(userId, `server:${serverId}:%`);
+    return;
+  }
+  db.prepare(`DELETE FROM e2ee_conversation_keys
+    WHERE conversation_id LIKE ?`).run(`server:${serverId}:%`);
+}
+
+function revokeConversationKeyWrap(conversationId, userId) {
+  db.prepare('DELETE FROM e2ee_conversation_keys WHERE conversation_id = ? AND user_id = ?')
+    .run(conversationId, userId);
 }
 
 function isServerBanned(userId, serverId) {
@@ -1000,6 +1082,26 @@ app.get('/api/e2ee/identities/:userId', requireAuth, (req, res) => {
 app.get('/api/e2ee/conversations/:conversationId/key', requireAuth, (req, res) => {
   const conversationId = normalize(req.params.conversationId).slice(0, 300);
   if (!conversationId) return res.status(400).json({ error: 'Conversa inválida.' });
+  if (conversationId.startsWith('dm:')) {
+    const ids = conversationId.slice(3).split(':');
+    if (ids.length !== 2 || ids[0] !== req.user.id && ids[1] !== req.user.id) {
+      return res.status(403).json({ error: 'Conversa direta não autorizada.' });
+    }
+    const friendId = ids[0] === req.user.id ? ids[1] : ids[0];
+    if (!canMessageFriendship(req.user.id, friendId)) {
+      revokeConversationKeyWrap(conversationId, req.user.id);
+      return res.status(403).json({ error: 'A conversa direta não está mais disponível.' });
+    }
+  } else if (conversationId.startsWith('server:')) {
+    const parts = conversationId.slice(7).split(':');
+    const serverId = parts.shift();
+    if (!serverId || !canAccessServer(req.user.id, serverId)) {
+      if (serverId) revokeServerConversationKeyWraps(serverId, req.user.id);
+      return res.status(403).json({ error: 'Servidor não autorizado.' });
+    }
+  } else {
+    return res.status(400).json({ error: 'Tipo de conversa inválido.' });
+  }
   const row = db.prepare(`SELECT wrapped_key_json FROM e2ee_conversation_keys
     WHERE conversation_id = ? AND user_id = ?`).get(conversationId, req.user.id);
   if (!row) return res.status(404).json({ error: 'Nenhuma chave de conversa disponível.' });
@@ -1017,11 +1119,29 @@ app.put('/api/e2ee/conversations/:conversationId/key', requireAuth, (req, res) =
     if (ids.length !== 2 || ids[0] !== req.user.id && ids[1] !== req.user.id) {
       return res.status(403).json({ error: 'Conversa direta não autorizada.' });
     }
+    const friendId = ids[0] === req.user.id ? ids[1] : ids[0];
+    if (!canMessageFriendship(req.user.id, friendId)) {
+      return res.status(403).json({ error: 'A conversa direta não está mais disponível.' });
+    }
+    for (const wrap of wraps) {
+      if (!wrap || typeof wrap.userId !== 'string') continue;
+      const userId = normalize(wrap.userId).slice(0, 80);
+      if (userId !== ids[0] && userId !== ids[1]) {
+        return res.status(403).json({ error: 'Chave inválida para esta conversa direta.' });
+      }
+    }
   } else if (conversationId.startsWith('server:')) {
     const parts = conversationId.slice(7).split(':');
     const serverId = parts.shift();
     if (!serverId || !canAccessServer(req.user.id, serverId)) {
       return res.status(403).json({ error: 'Servidor não autorizado.' });
+    }
+    for (const wrap of wraps) {
+      if (!wrap || typeof wrap.userId !== 'string') continue;
+      const userId = normalize(wrap.userId).slice(0, 80);
+      if (userId && !canAccessServer(userId, serverId)) {
+        return res.status(403).json({ error: 'Uma das chaves foi distribuída para um usuário que não faz mais parte do servidor.' });
+      }
     }
   } else {
     return res.status(400).json({ error: 'Tipo de conversa inválido.' });
@@ -1374,7 +1494,10 @@ app.delete('/api/servers/:serverId/members/:userId', requireAuth, async (req, re
     console.error('Não foi possível remover o membro do canal de voz:', error);
     return res.status(502).json({ error: 'Não foi possível desconectar o membro da voz. Tente novamente.' });
   }
-  db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+  db.transaction(() => {
+    db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+    revokeServerConversationKeyWraps(serverId, userId);
+  })();
   return res.json({ ok: true });
 });
 
@@ -1404,6 +1527,7 @@ app.post('/api/servers/:serverId/members/:userId/ban', requireAuth, async (req, 
       ON CONFLICT(server_id, user_id) DO UPDATE SET expires_at = excluded.expires_at, reason = excluded.reason, created_at = excluded.created_at`)
       .run(serverId, userId, expiresAt, reason, Date.now());
     db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(serverId, userId);
+    revokeServerConversationKeyWraps(serverId, userId);
   })();
   return res.json({ ok: true });
 });
@@ -1744,6 +1868,7 @@ app.delete('/api/servers/:id', requireAuth, (req, res) => {
     db.prepare('DELETE FROM custom_sounds WHERE server_id = ?').run(server.id);
     db.prepare('DELETE FROM server_invites WHERE server_id = ?').run(server.id);
     db.prepare('DELETE FROM server_members WHERE server_id = ?').run(server.id);
+    revokeServerConversationKeyWraps(server.id);
     db.prepare('DELETE FROM servers WHERE id = ?').run(server.id);
   })();
   return res.json({ ok: true });
@@ -1946,7 +2071,57 @@ app.post('/api/presence', requireAuth, (req, res) => {
 app.get('/api/profile/customization', requireAuth, (req, res) => {
   const presence = db.prepare(`SELECT profile_decoration, profile_widget, profile_icon
     FROM user_presence WHERE user_id = ?`).get(req.user.id);
-  return res.json({ customization: getProfileCustomization(presence) });
+  const profile = db.prepare(`SELECT users.display_name, COALESCE(user_presence.avatar_url, '') AS avatar_url
+    FROM users
+    LEFT JOIN user_presence ON user_presence.user_id = users.id
+    WHERE users.id = ?`).get(req.user.id);
+  return res.json({
+    customization: getProfileCustomization(presence),
+    profile: {
+      displayName: profile.display_name,
+      avatarUrl: profile.avatar_url
+    }
+  });
+});
+
+app.put('/api/profile', requireAuth, (req, res) => {
+  const displayName = normalize(req.body?.displayName);
+  const avatarUrl = req.body?.avatarUrl;
+  if (!displayName || displayName.length > 28 ||
+    /[<>&"'`]/u.test(displayName) ||
+    /[\u0000-\u001F\u007F]/u.test(displayName)) {
+    return res.status(400).json({ error: 'O nome de exibição deve ter entre 1 e 28 caracteres válidos.' });
+  }
+  let validAvatarUrl = typeof avatarUrl === 'string' && avatarUrl.length <= 500_000;
+  if (validAvatarUrl && avatarUrl) {
+    if (/^data:image\/(?:png|jpeg|webp|gif);base64,[a-z0-9+/]+=*$/i.test(avatarUrl)) {
+      validAvatarUrl = true;
+    } else {
+      try {
+        const parsedAvatarUrl = new URL(avatarUrl);
+        validAvatarUrl = parsedAvatarUrl.protocol === 'https:' &&
+          !parsedAvatarUrl.username &&
+          !parsedAvatarUrl.password &&
+          !/[<>"'`\\]/.test(avatarUrl);
+      } catch {
+        validAvatarUrl = false;
+      }
+    }
+  }
+  if (!validAvatarUrl) {
+    return res.status(400).json({ error: 'A foto de perfil é inválida ou muito grande.' });
+  }
+
+  const now = Date.now();
+  db.transaction(() => {
+    db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(displayName, req.user.id);
+    db.prepare(`INSERT INTO user_presence (user_id, status, detail, game, avatar_url, updated_at)
+      VALUES (?, 'online', '', '', ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET avatar_url = excluded.avatar_url`)
+      .run(req.user.id, avatarUrl, now);
+  })();
+
+  return res.json({ profile: { displayName, avatarUrl } });
 });
 
 app.put('/api/profile/customization', requireAuth, (req, res) => {
@@ -2193,6 +2368,11 @@ app.delete('/api/friends/requests/:id', requireAuth, (req, res) => {
 app.delete('/api/friends/:id', requireAuth, (req, res) => {
   const result = db.prepare('DELETE FROM friendships WHERE (user_a = ? AND user_b = ?) OR (user_a = ? AND user_b = ?)')
     .run(req.user.id, req.params.id, req.params.id, req.user.id);
+  if (result.changes) {
+    const ids = [req.user.id, req.params.id].sort();
+    db.prepare('DELETE FROM e2ee_conversation_keys WHERE conversation_id = ?')
+      .run(`dm:${ids[0]}:${ids[1]}`);
+  }
   return result.changes ? res.json({ ok: true }) : res.status(404).json({ error: 'Amizade não encontrada.' });
 });
 
@@ -2209,6 +2389,9 @@ app.post('/api/users/:id/block', requireAuth, (req, res) => {
     db.prepare(`DELETE FROM friend_requests
       WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)`)
       .run(req.user.id, targetId, targetId, req.user.id);
+    const ids = [req.user.id, targetId].sort();
+    db.prepare('DELETE FROM e2ee_conversation_keys WHERE conversation_id = ?')
+      .run(`dm:${ids[0]}:${ids[1]}`);
   })();
   return res.json({ ok: true });
 });
