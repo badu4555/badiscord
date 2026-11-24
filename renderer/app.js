@@ -100,10 +100,8 @@ const channelMessagesCache = new Map();
 const directMessagesCache = new Map();
 let recaptchaSiteKey = '';
 const recaptchaWidgets = {};
-let spotifyActivity = null;
-let spotifyConnected = false;
-let spotifyPollingTimer = null;
 let yMusicActivity = null;
+let yMusicStatusButton = null;
 const USER_VOLUMES_STORAGE_KEY = 'badiscord_user_volumes';
 const USER_MUTES_STORAGE_KEY = 'badiscord_muted_users';
 const USER_NICKNAMES_STORAGE_KEY = 'badiscord_user_nicknames';
@@ -465,7 +463,7 @@ function publishPresenceStatus() {
   const status = userProfile.presenceStatus || 'online';
   const details = { online: 'Disponível', idle: 'Ausente', dnd: 'Ocupado', invisible: 'Invisível' };
   const gameActivity = typeof detectedGame !== 'undefined' && detectedGame?.name ? detectedGame : null;
-  const musicActivity = yMusicActivity || spotifyActivity;
+  const musicActivity = yMusicActivity;
   const activity = gameActivity
     ? { type: 'game', text: gameActivity.name, artwork: gameActivity.appIcon || '', url: '' }
     : (musicActivity ? { type: 'music', ...musicActivity } : { type: '', text: '', artwork: '', url: '' });
@@ -653,8 +651,6 @@ async function finalizeAuthSession(account) {
   startPrivateCallPolling();
   await refreshYMusicActivity();
   startYMusicActivityPolling();
-  await refreshSpotifyConnectionStatus();
-  startSpotifyActivityPolling();
   if (await syncLocalServersWithBackend(account.homeServerId || '', true)) {
     startVoiceRosterPolling();
     loadServerMembers(activeServerId);
@@ -699,14 +695,10 @@ function logoutAccount() {
   serverMembersPollingTimer = null;
   clearInterval(privateCallPollingTimer);
   privateCallPollingTimer = null;
-  clearInterval(spotifyPollingTimer);
-  spotifyPollingTimer = null;
   clearInterval(yMusicPollingTimer);
   yMusicPollingTimer = null;
   serverMembersByServer.clear();
   serverRolesByServer.clear();
-  spotifyActivity = null;
-  spotifyConnected = false;
   yMusicActivity = null;
   serverVoiceRosters.clear();
   serverVoiceRosterSignatures.clear();
@@ -3660,10 +3652,10 @@ function getVoiceChannelParticipants(channelName = currentChannel, serverId = ac
     profileTags: userProfile.profileTags || [],
     bannerColor: userProfile.bannerColor || '',
     game: detectedGame?.name || '',
-    activityType: detectedGame?.name ? 'game' : (spotifyActivity ? 'music' : ''),
-    activityText: detectedGame?.name || spotifyActivity?.text || '',
-    activityArtwork: detectedGame?.appIcon || spotifyActivity?.artwork || '',
-    activityUrl: spotifyActivity?.url || '',
+    activityType: detectedGame?.name ? 'game' : (yMusicActivity ? 'music' : ''),
+    activityText: detectedGame?.name || yMusicActivity?.text || '',
+    activityArtwork: detectedGame?.appIcon || yMusicActivity?.artwork || '',
+    activityUrl: yMusicActivity?.url || '',
     detail: userProfile.aboutMe || 'Disponível',
     status: 'online',
     isOwner: true,
@@ -7184,12 +7176,19 @@ function startServerMembersPolling() {
 let yMusicPollingTimer = null;
 
 async function refreshYMusicActivity() {
+  yMusicStatusButton ||= document.getElementById('btnYMusicStatus');
   if (!window.electronAPI?.getSystemMediaActivity) return;
   try {
     const activity = await window.electronAPI.getSystemMediaActivity();
     const next = activity?.playing && activity.text
       ? { text: activity.text, artwork: '', url: '' }
       : null;
+    if (yMusicStatusButton) {
+      yMusicStatusButton.dataset.playing = String(Boolean(next));
+      yMusicStatusButton.title = next ? `YMusic: ${next.text}` : 'YMusic não está tocando';
+      yMusicStatusButton.setAttribute('aria-label', yMusicStatusButton.title);
+      yMusicStatusButton.classList.toggle('is-playing', Boolean(next));
+    }
     if (JSON.stringify(next) !== JSON.stringify(yMusicActivity)) {
       yMusicActivity = next;
       await publishPresenceStatus();
@@ -7205,82 +7204,6 @@ function startYMusicActivityPolling() {
   refreshYMusicActivity();
   yMusicPollingTimer = setInterval(refreshYMusicActivity, 15_000);
 }
-
-async function refreshSpotifyConnectionStatus() {
-  const button = document.getElementById('btnSpotifyConnect');
-  try {
-    const response = await fetch('/api/spotify/status', { credentials: 'include', headers: { Accept: 'application/json' } });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || 'Não foi possível verificar a conexão do Spotify.');
-    spotifyConnected = Boolean(payload.connected);
-    if (button) {
-      button.title = spotifyConnected ? 'Desconectar Spotify' : (payload.configured ? 'Conectar Spotify' : 'Spotify ainda não configurado no servidor');
-      button.setAttribute('aria-label', button.title);
-      button.dataset.connected = String(spotifyConnected);
-    }
-    const query = new URLSearchParams(window.location.search);
-    const spotifyResult = query.get('spotify');
-    if (spotifyResult) {
-      query.delete('spotify');
-      const nextUrl = `${window.location.pathname}${query.toString() ? `?${query}` : ''}${window.location.hash}`;
-      window.history.replaceState({}, '', nextUrl);
-      showToast(spotifyResult === 'connected' ? 'Spotify conectado.' : 'Não foi possível conectar o Spotify.', spotifyResult === 'connected' ? '✅' : '⚠️');
-    }
-  } catch (error) {
-    console.warn('Não foi possível verificar a conexão do Spotify:', error);
-    if (button) button.title = error.message || 'Erro ao verificar Spotify';
-  }
-}
-
-async function refreshSpotifyActivity() {
-  if (!spotifyConnected || !authenticatedAccount) return;
-  try {
-    const response = await fetch('/api/spotify/now-playing', { credentials: 'include', headers: { Accept: 'application/json' } });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || 'Não foi possível atualizar a atividade do Spotify.');
-    spotifyActivity = payload.playing
-      ? { text: payload.text, artwork: payload.artwork || '', url: payload.url || '' }
-      : null;
-    await publishPresenceStatus();
-    loadServerMembers(activeServerId);
-  } catch (error) {
-    console.warn('Não foi possível atualizar a atividade do Spotify:', error);
-  }
-}
-
-function startSpotifyActivityPolling() {
-  clearInterval(spotifyPollingTimer);
-  if (!spotifyConnected) return;
-  refreshSpotifyActivity();
-  spotifyPollingTimer = setInterval(refreshSpotifyActivity, 20_000);
-}
-
-document.getElementById('btnSpotifyConnect')?.addEventListener('click', async () => {
-  try {
-    if (spotifyConnected) {
-      const response = await fetch('/api/spotify/connection', {
-        method: 'DELETE', credentials: 'include', headers: { Accept: 'application/json' }
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Não foi possível desconectar o Spotify.');
-      spotifyConnected = false;
-      spotifyActivity = null;
-      clearInterval(spotifyPollingTimer);
-      spotifyPollingTimer = null;
-      await publishPresenceStatus();
-      await refreshSpotifyConnectionStatus();
-      await loadServerMembers(activeServerId);
-      showToast('Spotify desconectado.', '✅');
-      return;
-    }
-    const response = await fetch('/api/spotify/connect', { credentials: 'include', headers: { Accept: 'application/json' } });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || 'Não foi possível iniciar a conexão com o Spotify.');
-    window.location.assign(payload.url);
-  } catch (error) {
-    showToast(error.message || 'Não foi possível conectar o Spotify.', '⚠️');
-  }
-});
 
 function canManageActiveServerMembers() {
   const server = servers.find((entry) => entry.id === activeServerId);
@@ -7776,7 +7699,7 @@ function openMemberProfilePopover(member, triggerEvent) {
     const isPlayingGame = activityType === 'game';
     if (userActivityType) userActivityType.textContent = isPlayingGame ? 'JOGANDO' : 'OUVINDO MÚSICA';
     if (userActivityTitle) userActivityTitle.textContent = activityText;
-    if (userActivityDetail) userActivityDetail.textContent = isPlayingGame ? 'Atividade atual' : 'YMusic ou Spotify • faixa atual';
+    if (userActivityDetail) userActivityDetail.textContent = isPlayingGame ? 'Atividade atual' : 'YMusic • faixa atual';
     if (userActivityIcon) {
       userActivityIcon.replaceChildren();
       if (member.activityArtwork) {
@@ -7897,10 +7820,7 @@ async function sendActivityInvite(member, type) {
     const game = member.activityText || member.game || 'um jogo';
     text = `🎮 ${userProfile.displayName} convidou você para jogar ${game}.`;
   } else {
-    if (!member.activityUrl || !/^https:\/\/open\.spotify\.com\//i.test(member.activityUrl)) {
-      showToast('Não há um link do Spotify disponível para esta atividade.', '⚠️');
-      return;
-    }
+    if (!member.activityText) return;
     text = `♫ ${userProfile.displayName} convidou você para ouvir: ${member.activityText}\n${member.activityUrl}`;
   }
   const friend = friendsList.find((entry) => entry.id === member.id);
