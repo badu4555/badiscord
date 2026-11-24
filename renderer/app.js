@@ -5470,6 +5470,13 @@ if (chatInputForm && chatInputText) {
     const text = chatInputText.value.trim();
     if (!text) return;
 
+    if (/^!stop$/i.test(text)) {
+      await stopYouTubeMusicAndLeaveVoice();
+      chatInputText.value = '';
+      playPopSound();
+      return;
+    }
+
     const youtubeCommand = /^M!P\s+(.+)$/i.exec(text);
     if (youtubeCommand) {
       if (currentDmFriend) {
@@ -5971,6 +5978,23 @@ function hideYouTubeMusicMiniProfile() {
   if (miniProfile) miniProfile.style.display = 'none';
 }
 
+async function stopYouTubeMusicAndLeaveVoice() {
+  youTubeMusicPlayer?.stopVideo?.();
+  youTubeMusicVideoId = '';
+  await publishYouTubeMusicState('stop');
+  window.electronAPI?.stopYouTubeAudio?.();
+  if (youTubeMusicLiveKitTrack && livekitRoom?.state === 'connected') {
+    await livekitRoom.localParticipant.unpublishTrack(youTubeMusicLiveKitTrack, false).catch(() => {});
+  }
+  try {
+    youTubeMusicLiveKitTrack?.stop?.();
+  } catch (_) {}
+  youTubeMusicLiveKitTrack = null;
+  hideYouTubeMusicMiniProfile();
+  await disconnectVoice(true);
+  showToast('BADSBOT saiu da call e parou a música.', '⏹');
+}
+
 function startYouTubeMusicFromCommand(videoId) {
   const normalizedVideoId = extractYouTubeVideoId(videoId);
   if (!normalizedVideoId) {
@@ -6086,16 +6110,7 @@ document.getElementById('btnYouTubeMusicPause')?.addEventListener('click', () =>
 });
 
 document.getElementById('btnYouTubeMusicStop')?.addEventListener('click', () => {
-  youTubeMusicPlayer?.stopVideo?.();
-  youTubeMusicVideoId = '';
-  window.electronAPI?.stopYouTubeAudio?.();
-  if (youTubeMusicLiveKitTrack && livekitRoom?.state === 'connected') {
-    livekitRoom.localParticipant.unpublishTrack(youTubeMusicLiveKitTrack, false).catch(() => {});
-  }
-  youTubeMusicLiveKitTrack?.stop?.();
-  youTubeMusicLiveKitTrack = null;
-  hideYouTubeMusicMiniProfile();
-  void publishYouTubeMusicState('stop');
+  void stopYouTubeMusicAndLeaveVoice();
 });
 
 function toggleQuickSoundboard() {
