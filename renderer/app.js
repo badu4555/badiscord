@@ -1062,7 +1062,7 @@ async function connectToLiveKitRoom(channelName, onCredentials = null) {
             }
             if (report.action === 'pause') youTubeMusicPlayer?.pauseVideo?.();
             if (report.action === 'play') youTubeMusicPlayer?.playVideo?.();
-            showYouTubeMusicMiniProfile('YouTube Music', report.action === 'pause' ? 'Pausado' : 'Reproduzindo');
+            showYouTubeMusicMiniProfile('BADSBOT', report.action === 'pause' ? 'Pausado' : 'Reproduzindo');
             return;
           }
           if (topic !== 'badiscord-voice-rtt') return;
@@ -5961,7 +5961,7 @@ function showYouTubeMusicMiniProfile(title, status) {
   const miniProfile = document.getElementById('youtubeMusicMiniProfile');
   const titleElement = document.getElementById('youtubeMusicMiniTitle');
   const statusElement = document.getElementById('youtubeMusicMiniStatus');
-  if (titleElement) titleElement.textContent = title || 'YouTube Music';
+  if (titleElement) titleElement.textContent = 'BADSBOT';
   if (statusElement) statusElement.textContent = status || 'Reproduzindo';
   if (miniProfile) miniProfile.style.display = 'grid';
 }
@@ -5978,7 +5978,7 @@ function startYouTubeMusicFromCommand(videoId) {
     return false;
   }
   youTubeMusicVideoId = normalizedVideoId;
-  showYouTubeMusicMiniProfile('Preparando YouTube Music...', 'Reproduzindo');
+  showYouTubeMusicMiniProfile('BADSBOT', 'Preparando música...');
   window.electronAPI?.startYouTubeAudio?.(normalizedVideoId).then(async (nativeResult) => {
     if (!nativeResult) return;
     if (nativeResult.sourceId) {
@@ -5990,7 +5990,7 @@ function startYouTubeMusicFromCommand(videoId) {
             youTubeMusicLiveKitTrack.stop?.();
           }
           const publication = await livekitRoom.localParticipant.publishTrack(youtubeAudioTrack, {
-            name: 'badiscord-youtube-music',
+            name: 'BADSBOT',
             source: window.LivekitClient?.Track?.Source?.Unknown,
             dtx: true
           });
@@ -6001,7 +6001,7 @@ function startYouTubeMusicFromCommand(videoId) {
         showToast('O som da música não pôde ser publicado nesta call.', '⚠️');
       }
     }
-    showYouTubeMusicMiniProfile('YouTube Music', 'Reproduzindo na call');
+    showYouTubeMusicMiniProfile('BADSBOT', 'Reproduzindo na call');
   }).catch((error) => {
     console.warn('Não foi possível iniciar o áudio nativo do YouTube:', error);
   });
@@ -6017,7 +6017,7 @@ function startYouTubeMusicFromCommand(videoId) {
         onReady: (playerEvent) => {
           playerEvent.target.playVideo();
           const title = playerEvent.target.getVideoData?.()?.title;
-          if (title) showYouTubeMusicMiniProfile(title, 'Reproduzindo');
+          if (title) showYouTubeMusicMiniProfile('BADSBOT', title);
         },
         onStateChange: (playerEvent) => {
           if (playerEvent.data === window.YT.PlayerState.PLAYING) void publishYouTubeMusicState('play');
@@ -6075,12 +6075,12 @@ document.getElementById('btnYouTubeMusicPause')?.addEventListener('click', () =>
   if (youTubeMusicPlayer?.getPlayerState?.() === window.YT?.PlayerState?.PLAYING) {
     youTubeMusicPlayer.pauseVideo();
     window.electronAPI?.pauseYouTubeAudio?.();
-    showYouTubeMusicMiniProfile('YouTube Music', 'Pausado');
+    showYouTubeMusicMiniProfile('BADSBOT', 'Pausado');
     void publishYouTubeMusicState('pause');
   } else {
     youTubeMusicPlayer?.playVideo?.();
     window.electronAPI?.startYouTubeAudio?.(youTubeMusicVideoId);
-    showYouTubeMusicMiniProfile('YouTube Music', 'Reproduzindo');
+    showYouTubeMusicMiniProfile('BADSBOT', 'Reproduzindo');
     void publishYouTubeMusicState('play');
   }
 });
