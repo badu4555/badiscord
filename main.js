@@ -174,6 +174,7 @@ let updateWindow;
 let gameOverlayWindow;
 let gameOverlayState = { visible: false, participants: [], activity: null };
 let processAudioCapture = null;
+let youTubeMusicWindow = null;
 let cameraPermissionGranted = false;
 let updateState = { status: 'available', version: '' };
 
@@ -640,7 +641,11 @@ ipcMain.handle('clipboard:write-text', (event, text) => {
     throw new Error('Texto inválido para copiar.');
   }
   clipboard.writeText(text);
-  return true;
+  return {
+    windowId: youTubeMusicWindow.id,
+    webContentsId: youTubeMusicWindow.webContents.id,
+    sourceId: `window:${youTubeMusicWindow.id}:${youTubeMusicWindow.webContents.id}`
+  };
 });
 
 ipcMain.handle('stream-fullscreen:set', (event, enabled) => {
@@ -802,6 +807,52 @@ function getYMusicMetadata() {
 ipcMain.handle('get-system-media-activity', (event) => {
   if (!isTrustedRenderer(event)) throw new Error('Origem da atividade musical inválida.');
   return getYMusicMetadata();
+});
+
+function getYouTubeEmbedUrl(videoId) {
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(String(videoId || ''))) return null;
+  return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&modestbranding=1&rel=0`;
+}
+
+ipcMain.handle('youtube:start', (event, videoId) => {
+  if (!isTrustedRenderer(event)) throw new Error('Origem do player do YouTube inválida.');
+  const url = getYouTubeEmbedUrl(videoId);
+  if (!url) throw new Error('O ID da música do YouTube é inválido.');
+  if (youTubeMusicWindow && !youTubeMusicWindow.isDestroyed()) {
+    youTubeMusicWindow.loadURL(url).catch(() => {});
+  } else {
+    youTubeMusicWindow = new BrowserWindow({
+      show: false,
+      width: 320,
+      height: 180,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        autoplayPolicy: 'no-user-gesture-required'
+      }
+    });
+    youTubeMusicWindow.setMenuBarVisibility(false);
+    youTubeMusicWindow.loadURL(url).catch((error) => {
+      console.error('Não foi possível iniciar o áudio do YouTube:', error);
+    });
+  }
+  return true;
+});
+
+ipcMain.handle('youtube:pause', () => {
+  if (!youTubeMusicWindow || youTubeMusicWindow.isDestroyed()) return false;
+  youTubeMusicWindow.webContents.executeJavaScript(`
+    document.querySelector('iframe')?.contentWindow?.postMessage(JSON.stringify({event:'command',func:'pauseVideo',args:''}), '*');
+  `).catch(() => {});
+  return true;
+});
+
+ipcMain.handle('youtube:stop', () => {
+  if (!youTubeMusicWindow || youTubeMusicWindow.isDestroyed()) return false;
+  youTubeMusicWindow.close();
+  youTubeMusicWindow = null;
+  return true;
 });
 
 // Handler ultra-rápido e leve para detecção de jogos em tempo real (sem gerar thumbnails pesados)

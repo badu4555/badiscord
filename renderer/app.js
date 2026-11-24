@@ -105,6 +105,7 @@ let yMusicStatusButton = null;
 let youTubeMusicPlayer = null;
 let youTubeMusicVideoId = '';
 let youTubeMusicMuted = false;
+let youTubeMusicLiveKitTrack = null;
 const USER_VOLUMES_STORAGE_KEY = 'badiscord_user_volumes';
 const USER_MUTES_STORAGE_KEY = 'badiscord_muted_users';
 const USER_NICKNAMES_STORAGE_KEY = 'badiscord_user_nicknames';
@@ -1046,6 +1047,7 @@ async function connectToLiveKitRoom(channelName, onCredentials = null) {
             if (report.action === 'stop') {
               youTubeMusicPlayer?.stopVideo?.();
               youTubeMusicVideoId = '';
+              hideYouTubeMusicMiniProfile();
               showToast('A reprodução do YouTube foi encerrada.', '■');
               return;
             }
@@ -1060,7 +1062,7 @@ async function connectToLiveKitRoom(channelName, onCredentials = null) {
             }
             if (report.action === 'pause') youTubeMusicPlayer?.pauseVideo?.();
             if (report.action === 'play') youTubeMusicPlayer?.playVideo?.();
-            openYouTubeMusicModal();
+            showYouTubeMusicMiniProfile('YouTube Music', report.action === 'pause' ? 'Pausado' : 'Reproduzindo');
             return;
           }
           if (topic !== 'badiscord-voice-rtt') return;
@@ -5955,15 +5957,18 @@ function extractYouTubeVideoId(value) {
   return '';
 }
 
-function openYouTubeMusicModal() {
-  const modal = document.getElementById('youtubeMusicModal');
-  if (modal) modal.style.display = 'flex';
-  document.getElementById('youtubeMusicUrl')?.focus();
+function showYouTubeMusicMiniProfile(title, status) {
+  const miniProfile = document.getElementById('youtubeMusicMiniProfile');
+  const titleElement = document.getElementById('youtubeMusicMiniTitle');
+  const statusElement = document.getElementById('youtubeMusicMiniStatus');
+  if (titleElement) titleElement.textContent = title || 'YouTube Music';
+  if (statusElement) statusElement.textContent = status || 'Reproduzindo';
+  if (miniProfile) miniProfile.style.display = 'grid';
 }
 
-function closeYouTubeMusicModal() {
-  const modal = document.getElementById('youtubeMusicModal');
-  if (modal) modal.style.display = 'none';
+function hideYouTubeMusicMiniProfile() {
+  const miniProfile = document.getElementById('youtubeMusicMiniProfile');
+  if (miniProfile) miniProfile.style.display = 'none';
 }
 
 function startYouTubeMusicFromCommand(videoId) {
@@ -5973,17 +5978,47 @@ function startYouTubeMusicFromCommand(videoId) {
     return false;
   }
   youTubeMusicVideoId = normalizedVideoId;
-  openYouTubeMusicModal();
+  showYouTubeMusicMiniProfile('Preparando YouTube Music...', 'Reproduzindo');
+  window.electronAPI?.startYouTubeAudio?.(normalizedVideoId).then(async (nativeResult) => {
+    if (!nativeResult) return;
+    if (nativeResult.sourceId) {
+      try {
+        const youtubeAudioTrack = await createProcessAudioTrack(nativeResult.sourceId);
+        if (youtubeAudioTrack && livekitRoom?.state === 'connected' && livekitRoom.localParticipant) {
+          if (youTubeMusicLiveKitTrack) {
+            await livekitRoom.localParticipant.unpublishTrack(youTubeMusicLiveKitTrack, false).catch(() => {});
+            youTubeMusicLiveKitTrack.stop?.();
+          }
+          const publication = await livekitRoom.localParticipant.publishTrack(youtubeAudioTrack, {
+            name: 'badiscord-youtube-music',
+            source: window.LivekitClient?.Track?.Source?.Unknown,
+            dtx: true
+          });
+          youTubeMusicLiveKitTrack = publication.track || youtubeAudioTrack;
+        }
+      } catch (error) {
+        console.warn('Não foi possível transmitir o áudio do YouTube:', error);
+        showToast('O som da música não pôde ser publicado nesta call.', '⚠️');
+      }
+    }
+    showYouTubeMusicMiniProfile('YouTube Music', 'Reproduzindo na call');
+  }).catch((error) => {
+    console.warn('Não foi possível iniciar o áudio nativo do YouTube:', error);
+  });
   if (youTubeMusicPlayer?.loadVideoById) {
     youTubeMusicPlayer.loadVideoById(normalizedVideoId);
   } else if (window.YT?.Player) {
     youTubeMusicPlayer = new window.YT.Player('youtubeMusicPlayer', {
-      height: '270',
-      width: '480',
+      height: '1',
+      width: '1',
       videoId: normalizedVideoId,
       playerVars: { autoplay: 1, controls: 1, rel: 0, modestbranding: 1 },
       events: {
-        onReady: (playerEvent) => playerEvent.target.playVideo(),
+        onReady: (playerEvent) => {
+          playerEvent.target.playVideo();
+          const title = playerEvent.target.getVideoData?.()?.title;
+          if (title) showYouTubeMusicMiniProfile(title, 'Reproduzindo');
+        },
         onStateChange: (playerEvent) => {
           if (playerEvent.data === window.YT.PlayerState.PLAYING) void publishYouTubeMusicState('play');
           if (playerEvent.data === window.YT.PlayerState.PAUSED) void publishYouTubeMusicState('pause');
@@ -6020,31 +6055,16 @@ async function publishYouTubeMusicState(action) {
   }
 }
 
-if (dockBtnActivities) dockBtnActivities.addEventListener('click', openYouTubeMusicModal);
-if (btnStageActivities) btnStageActivities.addEventListener('click', openYouTubeMusicModal);
-
-document.getElementById('btnCloseYouTubeMusic')?.addEventListener('click', closeYouTubeMusicModal);
-
-document.getElementById('youtubeMusicModal')?.addEventListener('click', (event) => {
-  if (event.target === event.currentTarget) closeYouTubeMusicModal();
-});
-
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && document.getElementById('youtubeMusicModal')?.style.display === 'flex') {
-    closeYouTubeMusicModal();
-  }
-});
-
-document.getElementById('youtubeMusicForm')?.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const input = document.getElementById('youtubeMusicUrl');
-  const videoId = extractYouTubeVideoId(input?.value);
-  if (!videoId) {
-    showToast('Informe um link válido do YouTube.', '⚠️');
-    return;
-  }
-  startYouTubeMusicFromCommand(videoId);
-});
+if (dockBtnActivities) {
+  dockBtnActivities.addEventListener('click', () => {
+    showToast('Use M!P no chat de texto para tocar uma música do YouTube.', '🎵');
+  });
+}
+if (btnStageActivities) {
+  btnStageActivities.addEventListener('click', () => {
+    showToast('Use M!P no chat de texto para tocar uma música do YouTube.', '🎵');
+  });
+}
 
 document.getElementById('btnYouTubeMusicPlay')?.addEventListener('click', () => {
   youTubeMusicPlayer?.playVideo?.();
@@ -6052,13 +6072,29 @@ document.getElementById('btnYouTubeMusicPlay')?.addEventListener('click', () => 
 });
 
 document.getElementById('btnYouTubeMusicPause')?.addEventListener('click', () => {
-  youTubeMusicPlayer?.pauseVideo?.();
-  void publishYouTubeMusicState('pause');
+  if (youTubeMusicPlayer?.getPlayerState?.() === window.YT?.PlayerState?.PLAYING) {
+    youTubeMusicPlayer.pauseVideo();
+    window.electronAPI?.pauseYouTubeAudio?.();
+    showYouTubeMusicMiniProfile('YouTube Music', 'Pausado');
+    void publishYouTubeMusicState('pause');
+  } else {
+    youTubeMusicPlayer?.playVideo?.();
+    window.electronAPI?.startYouTubeAudio?.(youTubeMusicVideoId);
+    showYouTubeMusicMiniProfile('YouTube Music', 'Reproduzindo');
+    void publishYouTubeMusicState('play');
+  }
 });
 
 document.getElementById('btnYouTubeMusicStop')?.addEventListener('click', () => {
   youTubeMusicPlayer?.stopVideo?.();
   youTubeMusicVideoId = '';
+  window.electronAPI?.stopYouTubeAudio?.();
+  if (youTubeMusicLiveKitTrack && livekitRoom?.state === 'connected') {
+    livekitRoom.localParticipant.unpublishTrack(youTubeMusicLiveKitTrack, false).catch(() => {});
+  }
+  youTubeMusicLiveKitTrack?.stop?.();
+  youTubeMusicLiveKitTrack = null;
+  hideYouTubeMusicMiniProfile();
   void publishYouTubeMusicState('stop');
 });
 

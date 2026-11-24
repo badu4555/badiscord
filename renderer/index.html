@@ -988,32 +988,16 @@
   </div>
 
   <!-- Notificação Toast (Ex: "Link copiado!") -->
-  <div class="modal-overlay" id="youtubeMusicModal" style="display: none;">
-    <div class="modal-card youtube-music-card">
-      <header class="modal-header">
-        <div class="modal-header-info">
-          <div class="modal-header-icon">▶</div>
-          <div>
-            <h3>Tocar música do YouTube</h3>
-            <p class="modal-subtitle">Cole um link e sincronize a reprodução com o canal de voz.</p>
-          </div>
-        </div>
-        <button type="button" class="close-modal" id="btnCloseYouTubeMusic" aria-label="Fechar player">✕</button>
-      </header>
-      <div class="youtube-music-body">
-        <form id="youtubeMusicForm" class="youtube-music-form">
-          <input type="url" id="youtubeMusicUrl" class="discord-input" placeholder="https://youtube.com/watch?v=..." autocomplete="off">
-          <button type="submit" class="confirm-btn">Tocar</button>
-        </form>
-        <div id="youtubeMusicPlayer" class="youtube-music-player"></div>
-        <div class="youtube-music-controls">
-          <button type="button" id="btnYouTubeMusicPlay" class="discord-test-btn">▶ Reproduzir</button>
-          <button type="button" id="btnYouTubeMusicPause" class="discord-test-btn">⏸ Pausar</button>
-          <button type="button" id="btnYouTubeMusicStop" class="cancel-btn">■ Parar</button>
-        </div>
-      </div>
+
+  <aside id="youtubeMusicMiniProfile" class="youtube-music-mini-profile" style="display: none;" aria-label="Reprodutor de música">
+    <div class="youtube-music-mini-cover">♫</div>
+    <div class="youtube-music-mini-info">
+      <strong id="youtubeMusicMiniTitle">YouTube Music</strong>
+      <span id="youtubeMusicMiniStatus">Reproduzindo</span>
     </div>
-  </div>
+    <button type="button" id="btnYouTubeMusicPause" class="youtube-music-mini-action" title="Pausar" aria-label="Pausar">⏸</button>
+    <button type="button" id="btnYouTubeMusicStop" class="youtube-music-mini-action" title="Parar" aria-label="Parar">■</button>
+  </aside>
 
   <div class="toast-notification" id="toastNotification" style="display: none;">
     <span class="toast-icon" id="toastIcon">📋</span>

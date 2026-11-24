@@ -2256,42 +2256,78 @@ html.badiscord-android-webview .stream-leave-call-btn {
   z-index: 1000;
 }
 
-.youtube-music-card {
-  width: min(560px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
-  overflow: auto;
-}
 
-.youtube-music-body {
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-}
-
-.youtube-music-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-}
-
-.youtube-music-player {
-  width: 100%;
-  min-height: 270px;
+#youtubeMusicPlayer {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
   overflow: hidden;
-  border-radius: 10px;
-  background: #050505;
+  pointer-events: none;
 }
 
-.youtube-music-player iframe {
-  width: 100%;
-  min-height: 270px;
-  border: 0;
-}
-
-.youtube-music-controls {
-  display: flex;
+.youtube-music-mini-profile {
+  position: fixed;
+  z-index: 1200;
+  left: 12px;
+  bottom: 84px;
+  width: min(300px, calc(100vw - 24px));
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 34px 34px;
+  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(22, 23, 27, 0.96);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(14px);
+}
+
+.youtube-music-mini-cover {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ef4444, #7f1d1d);
+  color: #fff;
+  font-size: 21px;
+}
+
+.youtube-music-mini-info {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.youtube-music-mini-info strong,
+.youtube-music-mini-info span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.youtube-music-mini-info strong {
+  color: #fff;
+  font-size: 13px;
+}
+
+.youtube-music-mini-info span {
+  color: #aeb3bd;
+  font-size: 11px;
+}
+
+.youtube-music-mini-action {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+  cursor: pointer;
 }
 
 .badges-modal-overlay {
