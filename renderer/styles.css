@@ -2256,6 +2256,44 @@ html.badiscord-android-webview .stream-leave-call-btn {
   z-index: 1000;
 }
 
+.youtube-music-card {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
+.youtube-music-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.youtube-music-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.youtube-music-player {
+  width: 100%;
+  min-height: 270px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #050505;
+}
+
+.youtube-music-player iframe {
+  width: 100%;
+  min-height: 270px;
+  border: 0;
+}
+
+.youtube-music-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .badges-modal-overlay {
   z-index: 10001;
   padding: 16px;

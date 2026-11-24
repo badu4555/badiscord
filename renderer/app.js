@@ -102,6 +102,9 @@ let recaptchaSiteKey = '';
 const recaptchaWidgets = {};
 let yMusicActivity = null;
 let yMusicStatusButton = null;
+let youTubeMusicPlayer = null;
+let youTubeMusicVideoId = '';
+let youTubeMusicMuted = false;
 const USER_VOLUMES_STORAGE_KEY = 'badiscord_user_volumes';
 const USER_MUTES_STORAGE_KEY = 'badiscord_muted_users';
 const USER_NICKNAMES_STORAGE_KEY = 'badiscord_user_nicknames';
@@ -1029,6 +1032,35 @@ async function connectToLiveKitRoom(channelName, onCredentials = null) {
             if (!shouldPlayChannelNotification()) return;
             if (report.action === 'joined') playVoiceJoinSound();
             else playLiveStartSound();
+            return;
+          }
+          if (topic === 'badiscord-youtube-music') {
+            if (
+              report.type !== 'badiscord-youtube-music' ||
+              participant.identity === livekitRoom?.localParticipant?.identity ||
+              livekitRoom?.state !== 'connected'
+            ) return;
+            const videoId = /^[a-zA-Z0-9_-]{11}$/.test(report.videoId || '')
+              ? report.videoId
+              : '';
+            if (report.action === 'stop') {
+              youTubeMusicPlayer?.stopVideo?.();
+              youTubeMusicVideoId = '';
+              showToast('A reprodução do YouTube foi encerrada.', '■');
+              return;
+            }
+            if (!videoId) return;
+            youTubeMusicVideoId = videoId;
+            if (youTubeMusicPlayer?.loadVideoById) {
+              youTubeMusicPlayer.loadVideoById(videoId);
+              const time = Number(report.time);
+              if (Number.isFinite(time) && time >= 0) {
+                youTubeMusicPlayer.seekTo(time, true);
+              }
+            }
+            if (report.action === 'pause') youTubeMusicPlayer?.pauseVideo?.();
+            if (report.action === 'play') youTubeMusicPlayer?.playVideo?.();
+            openYouTubeMusicModal();
             return;
           }
           if (topic !== 'badiscord-voice-rtt') return;
@@ -5887,12 +5919,116 @@ if (dockBtnStream) {
   });
 }
 
-function openActivitiesToast() {
-  playSoundEffect('bell');
-  showToast('Atividades e mini-jogos ainda não estão disponíveis nesta versão.', 'ℹ️');
+function extractYouTubeVideoId(value) {
+  const raw = String(value || '').trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(raw)) return raw;
+  try {
+    const url = new URL(raw);
+    if (url.hostname === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0]?.slice(0, 11) || '';
+    if (/(^|\.)youtube\.com$/i.test(url.hostname)) {
+      if (url.pathname.startsWith('/shorts/')) return url.pathname.split('/')[2]?.slice(0, 11) || '';
+      if (url.pathname === '/watch') return url.searchParams.get('v')?.slice(0, 11) || '';
+      if (url.pathname.startsWith('/embed/')) return url.pathname.split('/')[2]?.slice(0, 11) || '';
+    }
+  } catch (_) {}
+  return '';
 }
-if (dockBtnActivities) dockBtnActivities.addEventListener('click', openActivitiesToast);
-if (btnStageActivities) btnStageActivities.addEventListener('click', openActivitiesToast);
+
+function openYouTubeMusicModal() {
+  const modal = document.getElementById('youtubeMusicModal');
+  if (modal) modal.style.display = 'flex';
+  document.getElementById('youtubeMusicUrl')?.focus();
+}
+
+function closeYouTubeMusicModal() {
+  const modal = document.getElementById('youtubeMusicModal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function publishYouTubeMusicState(action) {
+  const room = livekitRoom;
+  if (
+    room?.state !== 'connected' ||
+    !room.localParticipant ||
+    !currentChannel ||
+    !authenticatedAccount
+  ) return;
+  try {
+    await room.localParticipant.publishData(
+      new TextEncoder().encode(JSON.stringify({
+        type: 'badiscord-youtube-music',
+        action,
+        videoId: youTubeMusicVideoId,
+        time: youTubeMusicPlayer?.getCurrentTime?.() || 0
+      })),
+      { reliable: true, topic: 'badiscord-youtube-music' }
+    );
+  } catch (error) {
+    console.warn('Não foi possível sincronizar o player do YouTube:', error);
+  }
+}
+
+if (dockBtnActivities) dockBtnActivities.addEventListener('click', openYouTubeMusicModal);
+if (btnStageActivities) btnStageActivities.addEventListener('click', openYouTubeMusicModal);
+
+document.getElementById('btnCloseYouTubeMusic')?.addEventListener('click', closeYouTubeMusicModal);
+
+document.getElementById('youtubeMusicModal')?.addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) closeYouTubeMusicModal();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && document.getElementById('youtubeMusicModal')?.style.display === 'flex') {
+    closeYouTubeMusicModal();
+  }
+});
+
+document.getElementById('youtubeMusicForm')?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const input = document.getElementById('youtubeMusicUrl');
+  const videoId = extractYouTubeVideoId(input?.value);
+  if (!videoId) {
+    showToast('Informe um link válido do YouTube.', '⚠️');
+    return;
+  }
+  youTubeMusicVideoId = videoId;
+  if (youTubeMusicPlayer?.loadVideoById) {
+    youTubeMusicPlayer.loadVideoById(videoId);
+  } else if (window.YT?.Player) {
+    youTubeMusicPlayer = new window.YT.Player('youtubeMusicPlayer', {
+      height: '270',
+      width: '480',
+      videoId,
+      playerVars: { autoplay: 1, controls: 1, rel: 0, modestbranding: 1 },
+      events: {
+        onReady: (playerEvent) => playerEvent.target.playVideo(),
+        onStateChange: (playerEvent) => {
+          if (playerEvent.data === window.YT.PlayerState.PLAYING) void publishYouTubeMusicState('play');
+          if (playerEvent.data === window.YT.PlayerState.PAUSED) void publishYouTubeMusicState('pause');
+          if (playerEvent.data === window.YT.PlayerState.ENDED) void publishYouTubeMusicState('stop');
+        }
+      }
+    });
+  }
+  showToast('Música do YouTube pronta no canal.', '▶');
+  void publishYouTubeMusicState('play');
+});
+
+document.getElementById('btnYouTubeMusicPlay')?.addEventListener('click', () => {
+  youTubeMusicPlayer?.playVideo?.();
+  void publishYouTubeMusicState('play');
+});
+
+document.getElementById('btnYouTubeMusicPause')?.addEventListener('click', () => {
+  youTubeMusicPlayer?.pauseVideo?.();
+  void publishYouTubeMusicState('pause');
+});
+
+document.getElementById('btnYouTubeMusicStop')?.addEventListener('click', () => {
+  youTubeMusicPlayer?.stopVideo?.();
+  youTubeMusicVideoId = '';
+  void publishYouTubeMusicState('stop');
+});
 
 function toggleQuickSoundboard() {
   if (!soundboardQuickPopup) return;

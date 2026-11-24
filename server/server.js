@@ -77,10 +77,10 @@ const nodeModulesDir = path.join(__dirname, '..', 'node_modules');
 app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy',
     "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; " +
-    "script-src 'self' https://www.google.com https://www.gstatic.com 'unsafe-inline'; " +
+    "script-src 'self' https://www.google.com https://www.gstatic.com https://www.youtube.com 'unsafe-inline'; " +
     "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; " +
     "media-src 'self' blob: https:; connect-src 'self' wss: https:; " +
-    "frame-src https://www.google.com https://www.gstatic.com; worker-src 'self' blob:");
+    "frame-src https://www.google.com https://www.gstatic.com https://www.youtube.com https://www.youtube-nocookie.com; worker-src 'self' blob:");
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(), payment=()');
