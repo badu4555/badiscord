@@ -63,7 +63,16 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         working-directory: android
-        run: gradle --no-daemon :app:assembleRelease
+        run: |
+          for attempt in 1 2 3; do
+            echo "Android release build attempt $attempt/3"
+            gradle --no-daemon :app:assembleRelease && exit 0
+            if [ "$attempt" -lt 3 ]; then
+              echo "Build dependency download failed. Retrying..."
+              sleep 20
+            fi
+          done
+          exit 1
 
       - name: Prepare APK release asset
         run: cp android/app/build/outputs/apk/release/app-release.apk BADISCORD-Android.apk
