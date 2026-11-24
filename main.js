@@ -5,7 +5,7 @@ const { app, BrowserWindow, ipcMain, desktopCapturer, shell, screen, clipboard }
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const APP_ORIGIN = app.isPackaged
   ? 'https://badiscord.onrender.com'
   : 'http://localhost:3000';
@@ -750,6 +750,58 @@ ipcMain.handle('stop-process-audio-capture', (event) => {
   if (!isTrustedRenderer(event)) throw new Error('Origem da captura de áudio inválida.');
   stopProcessAudioCapture();
   return true;
+});
+
+function getYMusicMetadata() {
+  if (process.platform !== 'win32') return null;
+  const PowerShell = 'powershell.exe';
+  const script = [
+    'Add-Type -AssemblyName System.Runtime.WindowsRuntime',
+    '$null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager,Windows.Media,ContentType=WindowsRuntime]',
+    '$asTaskMethods = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq "AsTask" }',
+    '$managerOp = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()',
+    '$managerGeneric = $asTaskMethods | Where-Object { $_.IsGenericMethod -and $_.GetParameters().Count -eq 1 } | Select-Object -First 1',
+    '$managerTask = $managerGeneric.MakeGenericMethod([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]).Invoke($null,@($managerOp))',
+    'if (-not $managerTask.Wait(3000)) { return }',
+    '$manager = $managerTask.Result',
+    '$session = $manager.GetSessions() | Where-Object { $_.SourceAppUserModelId -eq "io.ymusic.windows" } | Select-Object -First 1',
+    'if (-not $session) { return }',
+    '$status = $session.GetPlaybackInfo().PlaybackStatus',
+    '$propsOp = $session.TryGetMediaPropertiesAsync()',
+    '$propsType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties,Windows.Media,ContentType=WindowsRuntime]',
+    '$propsGeneric = $asTaskMethods | Where-Object { $_.IsGenericMethod -and $_.GetParameters().Count -eq 1 } | Select-Object -First 1',
+    '$propsTask = $propsGeneric.MakeGenericMethod($propsType).Invoke($null,@($propsOp))',
+    'if (-not $propsTask.Wait(3000)) { return }',
+    '$props = $propsTask.Result',
+    '[pscustomobject]@{playing=($status -eq "Playing");title=$props.Title;artist=$props.Artist;album=$props.AlbumTitle} | ConvertTo-Json -Compress'
+  ].join(';');
+  const result = spawnSync(PowerShell, ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    timeout: 5_000,
+    windowsHide: true
+  });
+  if (result.status !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout.trim());
+    if (!parsed || typeof parsed.playing !== 'boolean') return null;
+    if (!parsed.playing) return { playing: false, text: '', artwork: '', url: '' };
+    const title = String(parsed.title || '').trim();
+    const artist = String(parsed.artist || '').trim();
+    const titleLower = title.toLocaleLowerCase();
+    const artistLower = artist.toLocaleLowerCase();
+    const text = artist && titleLower.includes(artistLower)
+      ? title
+      : [artist, title].filter(Boolean).join(' - ');
+    const limitedText = text.slice(0, 160);
+    return limitedText ? { playing: true, text: limitedText, artwork: '', url: '' } : null;
+  } catch {
+    return null;
+  }
+}
+
+ipcMain.handle('get-system-media-activity', (event) => {
+  if (!isTrustedRenderer(event)) throw new Error('Origem da atividade musical inválida.');
+  return getYMusicMetadata();
 });
 
 // Handler ultra-rápido e leve para detecção de jogos em tempo real (sem gerar thumbnails pesados)

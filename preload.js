@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startProcessAudioCapture: (sourceId) => ipcRenderer.invoke('start-process-audio-capture', sourceId),
   resumeProcessAudioCapture: () => ipcRenderer.invoke('resume-process-audio-capture'),
   stopProcessAudioCapture: () => ipcRenderer.invoke('stop-process-audio-capture'),
+  getSystemMediaActivity: () => ipcRenderer.invoke('get-system-media-activity'),
   onProcessAudioChunk: (callback) => {
     const listener = (event, chunk) => callback(chunk);
     ipcRenderer.on('process-audio-chunk', listener);
