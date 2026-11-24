@@ -5468,6 +5468,27 @@ if (chatInputForm && chatInputText) {
     const text = chatInputText.value.trim();
     if (!text) return;
 
+    const youtubeCommand = /^M!P\s+(.+)$/i.exec(text);
+    if (youtubeCommand) {
+      if (currentDmFriend) {
+        showToast('Use M!P somente dentro de um canal de texto do servidor.', '⚠️');
+        return;
+      }
+      if (!currentChannel || !connectedVoiceServerId) {
+        showToast('Entre em um canal de voz antes de usar M!P.', '⚠️');
+        return;
+      }
+      const videoId = extractYouTubeVideoId(youtubeCommand[1]);
+      if (!videoId) {
+        showToast('M!P precisa receber um link válido do YouTube.', '⚠️');
+        return;
+      }
+      startYouTubeMusicFromCommand(videoId);
+      chatInputText.value = '';
+      playPopSound();
+      return;
+    }
+
     const newMsg = createChatMessage({ text });
     const wasDm = Boolean(currentDmFriend);
     const savedMessage = await saveActiveChatMessage(newMsg);
@@ -5945,6 +5966,37 @@ function closeYouTubeMusicModal() {
   if (modal) modal.style.display = 'none';
 }
 
+function startYouTubeMusicFromCommand(videoId) {
+  const normalizedVideoId = extractYouTubeVideoId(videoId);
+  if (!normalizedVideoId) {
+    showToast('M!P precisa receber um link válido do YouTube.', '⚠️');
+    return false;
+  }
+  youTubeMusicVideoId = normalizedVideoId;
+  openYouTubeMusicModal();
+  if (youTubeMusicPlayer?.loadVideoById) {
+    youTubeMusicPlayer.loadVideoById(normalizedVideoId);
+  } else if (window.YT?.Player) {
+    youTubeMusicPlayer = new window.YT.Player('youtubeMusicPlayer', {
+      height: '270',
+      width: '480',
+      videoId: normalizedVideoId,
+      playerVars: { autoplay: 1, controls: 1, rel: 0, modestbranding: 1 },
+      events: {
+        onReady: (playerEvent) => playerEvent.target.playVideo(),
+        onStateChange: (playerEvent) => {
+          if (playerEvent.data === window.YT.PlayerState.PLAYING) void publishYouTubeMusicState('play');
+          if (playerEvent.data === window.YT.PlayerState.PAUSED) void publishYouTubeMusicState('pause');
+          if (playerEvent.data === window.YT.PlayerState.ENDED) void publishYouTubeMusicState('stop');
+        }
+      }
+    });
+  }
+  showToast('M!P: música enviada para o canal de voz.', '🎵');
+  void publishYouTubeMusicState('play');
+  return true;
+}
+
 async function publishYouTubeMusicState(action) {
   const room = livekitRoom;
   if (
@@ -5991,27 +6043,7 @@ document.getElementById('youtubeMusicForm')?.addEventListener('submit', (event) 
     showToast('Informe um link válido do YouTube.', '⚠️');
     return;
   }
-  youTubeMusicVideoId = videoId;
-  if (youTubeMusicPlayer?.loadVideoById) {
-    youTubeMusicPlayer.loadVideoById(videoId);
-  } else if (window.YT?.Player) {
-    youTubeMusicPlayer = new window.YT.Player('youtubeMusicPlayer', {
-      height: '270',
-      width: '480',
-      videoId,
-      playerVars: { autoplay: 1, controls: 1, rel: 0, modestbranding: 1 },
-      events: {
-        onReady: (playerEvent) => playerEvent.target.playVideo(),
-        onStateChange: (playerEvent) => {
-          if (playerEvent.data === window.YT.PlayerState.PLAYING) void publishYouTubeMusicState('play');
-          if (playerEvent.data === window.YT.PlayerState.PAUSED) void publishYouTubeMusicState('pause');
-          if (playerEvent.data === window.YT.PlayerState.ENDED) void publishYouTubeMusicState('stop');
-        }
-      }
-    });
-  }
-  showToast('Música do YouTube pronta no canal.', '▶');
-  void publishYouTubeMusicState('play');
+  startYouTubeMusicFromCommand(videoId);
 });
 
 document.getElementById('btnYouTubeMusicPlay')?.addEventListener('click', () => {
